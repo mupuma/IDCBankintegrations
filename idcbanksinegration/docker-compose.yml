@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    depends_on:
+      - redis
+      - zicb-agent
+    ports:
+      - '3000:3000'
+    environment:
+      - NODE_ENV=production
+      - DB_HOST
+      - DB_PORT
+      - DB_USER
+      - DB_PASSWORD
+      - DB_NAME
+      - SAGE_DB_HOST
+      - SAGE_DB_PORT
+      - SAGE_DB_USER
+      - SAGE_DB_PASSWORD
+      - SAGE_DB_NAME
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  redis:
+    image: redis:7
+    ports:
+      - '6379:6379'
+
+  zicb-agent:
+    build:
+      context: ../microservices/zicb-agent-service
+    depends_on:
+      - redis
+    ports:
+      - '4001:4001'
+    environment:
+      - PORT=4001
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    volumes:
+      - zicb_data:/data
+    restart: unless-stopped
+
+
+
+volumes:
+  zicb_data:
