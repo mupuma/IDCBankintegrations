@@ -1,4 +1,5 @@
 import mysql2 from 'mysql2';
+import dotenv from 'dotenv';
 import { Sequelize } from 'sequelize-typescript';
 import { User } from '../models/internal/User';
 import { PaymentQueueRequest } from '../models/internal/PaymentQueueRequest';
