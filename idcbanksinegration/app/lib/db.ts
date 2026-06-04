@@ -5,7 +5,7 @@ import { User } from '../models/internal/User';
 import { PaymentQueueRequest } from '../models/internal/PaymentQueueRequest';
 import { CashbookReceipt } from '../models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '../models/internal/Processed_transactions';
-
+dotenv.config();
 const host = process.env.DB_HOST ?? 'localhost';
 const port = Number(process.env.DB_PORT ?? 3306);
 const username = process.env.DB_USER ?? 'root';
