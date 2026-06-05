@@ -15,10 +15,19 @@ function postKey(paymentId: string, bankCode: string) {
   return `${paymentId}:${bankCode}`;
 }
 
+type QueueStatus = 'queued' | 'processing' | 'success' | 'failed' | 'pulled';
+
 type PostedPaymentRecord = {
   bankCode: BankCode;
   queueId: string;
-  status: 'queued' | 'processing' | 'success' | 'failed' | 'pulled';
+  status: QueueStatus;
+  lastError?: string;
+  response?: unknown;
+};
+
+type QueueStatusRecord = {
+  queueId: string;
+  status: QueueStatus;
   lastError?: string;
   response?: unknown;
 };
@@ -369,7 +378,7 @@ export default function PaymentQueueDashboard() {
   const [payments, setPayments] = useState<EnrichedPayment[]>([]);
   const [selectedQueues, setSelectedQueues] = useState<Record<string, BankCode | ''>>({});
   const [transactionOverrides, setTransactionOverrides] = useState<Record<string, PaymentsResponse['transactionType']>>({});
-  const [queueStatuses, setQueueStatuses] = useState<Record<string, { queueId: string; status: 'queued' | 'processing' | 'success' | 'failed'; lastError?: string; response?: unknown }>>({});
+  const [queueStatuses, setQueueStatuses] = useState<Record<string, QueueStatusRecord>>({});
   const [postedPayments, setPostedPayments] = useState<Record<string, PostedPaymentRecord>>({});
   const [bankQueueItems, setBankQueueItems] = useState<BankQueueItem[]>([]);
   const [sourceBanks, setSourceBanks] = useState<Array<any>>([]);
@@ -440,12 +449,14 @@ export default function PaymentQueueDashboard() {
         throw new Error(data?.error || 'Could not fetch queue items.');
       }
 
-      const items = Array.isArray(data.items) ? data.items : [];
+      const items: BankQueueItem[] = Array.isArray(data.items)
+        ? (data.items as BankQueueItem[])
+        : [];
       syncPostedStatusesFromQueueItems(items);
       setBankQueueItems(
         selectedBankTab === 'ALL'
           ? items
-          : items.filter((item) => item.bankCode === selectedBankTab),
+          : items.filter((item: BankQueueItem) => item.bankCode === selectedBankTab),
       );
       return items;
     } catch (error: any) {
@@ -622,7 +633,7 @@ export default function PaymentQueueDashboard() {
         const postedRecord: PostedPaymentRecord = {
           bankCode: postedBankCode,
           queueId: String(result.queueId || ''),
-          status: result.existingStatus || 'queued',
+          status: (result.existingStatus as QueueStatus | undefined) || 'queued',
         };
         setPostedPayments((prev) => ({ ...prev, [payment.paymentId]: postedRecord }));
         setQueueStatuses((prev) => ({

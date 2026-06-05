@@ -1,5 +1,4 @@
-import type { Model, ModelStatic, Sequelize } from 'sequelize';
-import type { AbstractDataTypeConstructor } from 'sequelize/types';
+import type { DataType, Model, ModelAttributeColumnOptions, ModelStatic, Sequelize } from 'sequelize';
 
 type RegisteredModel = ModelStatic<Model> & { tableName: string };
 
@@ -13,13 +12,13 @@ async function tableExists(queryInterface: ReturnType<Sequelize['getQueryInterfa
 }
 
 function buildColumnDefinition(attribute: {
-  type: AbstractDataTypeConstructor | unknown;
+  type: unknown;
   allowNull?: boolean;
   defaultValue?: unknown;
   autoIncrement?: boolean;
-}) {
+}): ModelAttributeColumnOptions {
   return {
-    type: attribute.type as AbstractDataTypeConstructor,
+    type: attribute.type as DataType,
     allowNull: attribute.allowNull !== false,
     ...(attribute.defaultValue !== undefined ? { defaultValue: attribute.defaultValue } : {}),
     ...(attribute.autoIncrement ? { autoIncrement: attribute.autoIncrement } : {}),
