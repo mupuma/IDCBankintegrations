@@ -6,6 +6,10 @@ import { verifySessionToken } from '../../auth/login/middleware/auth';
 import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing, type BankQueueItem } from '../../../lib/bankQueue';
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
+import { IzbPayment } from '../../../models/internal/IzbPayment';
+import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
+
+const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
 export async function POST(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
@@ -37,16 +41,54 @@ export async function POST(request: NextRequest) {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+  const paymentId = resolvePaymentId(payment as { paymentId?: string }, queueId);
+
   await connectDatabase();
+
+  const existingPost = await findExistingPaymentPost(paymentId);
+  if (existingPost) {
+    return NextResponse.json(
+      {
+        success: false,
+        alreadyPosted: true,
+        error: buildAlreadyPostedMessage(existingPost, bankCode),
+        paymentId,
+        bankCode,
+        postedBankCode: existingPost.bankCode,
+        existingStatus: existingPost.status,
+        queueId: existingPost.queueId,
+      },
+      { status: 409 },
+    );
+  }
+
   await PaymentQueueRequest.create({
     queueId,
-    paymentId: String((payment as any).paymentId || queueId),
+    paymentId,
     bankCode,
     sourceBank: String(body?.sourceBank ?? null),
     paymentPayload: JSON.stringify(payment),
     status: 'queued',
     attempts: 0,
   });
+
+  // If the payment is intended for IZB, also insert into the intermediary izB pending table
+  try {
+    if (bankCode === 'IZB') {
+      const paymentDateStr = (payment as any)?.transactionDate || (payment as any)?.paymentDate || null;
+      const paymentDate = paymentDateStr ? new Date(paymentDateStr) : null;
+      await IzbPayment.create({
+        paymentId,
+        paymentDate,
+        sourceBank: String(body?.sourceBank ?? 'IZB'),
+        paymentPayload: JSON.stringify(payment),
+        status: 'queued',
+        attempts: 0,
+      });
+    }
+  } catch (err) {
+    console.error('Failed to insert IZB intermediary record', err);
+  }
 
   const queueItem = enqueuePayment(bankCode, payment, queueId, String(body?.sourceBank ?? null));
   void ensureQueueItemProcessing(queueItem.id);
@@ -116,11 +158,23 @@ export async function GET(request: NextRequest) {
   const queueId = request.nextUrl.searchParams.get('queueId');
   const bankCode = request.nextUrl.searchParams.get('bankCode') as BankCode | null;
 
+  const sourceBank = request.nextUrl.searchParams.get('sourceBank') ?? null;
+
   if (bankCode && !BANK_CODES.includes(bankCode)) {
     return NextResponse.json(
       { success: false, error: `bankCode must be one of ${BANK_CODES.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  const sessionToken = request.cookies.get('session')?.value;
+  const providedApiKey = request.headers.get('x-bank-api-key');
+
+  // If this is a bank pull (no user session but bankCode provided), require API key
+  if (!sessionToken && bankCode) {
+    if (!BANK_PULL_API_KEY || providedApiKey !== BANK_PULL_API_KEY) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
   }
 
   await connectDatabase();
@@ -145,8 +199,16 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, item });
   }
 
-  const memoryItems = bankCode ? getQueueItemsByBank(bankCode) : getAllQueueItems();
-  const records = await PaymentQueueRequest.findAll(bankCode ? { where: { bankCode } } : {});
+  let memoryItems = bankCode ? getQueueItemsByBank(bankCode) : getAllQueueItems();
+  if (sourceBank) {
+    memoryItems = memoryItems.filter((i) => (i.sourceBank ?? null) === sourceBank);
+  }
+
+  const where: any = {};
+  if (bankCode) where.bankCode = bankCode;
+  if (sourceBank) where.sourceBank = sourceBank;
+
+  const records = await PaymentQueueRequest.findAll(Object.keys(where).length ? { where } : {});
   const dbItems = records
     .map(mapQueueRecordToItem)
     .filter((item): item is BankQueueItem => item !== null);

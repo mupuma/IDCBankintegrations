@@ -53,7 +53,7 @@ export class ProcessedTransaction extends Model<ProcessedTransaction, ProcessedT
 
   @Column({
     type: DataType.INTEGER,
-    field: 'noEntries',
+    field: 'no_entries',
     allowNull: false
   })
   noEntries!: number;

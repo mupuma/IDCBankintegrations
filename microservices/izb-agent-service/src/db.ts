@@ -1,56 +1,7 @@
-import { Low, JSONFile } from 'lowdb';
-import { join } from 'path';
-
-type QueueRecord = {
-  queueId: string;
-  bankCode: string;
-  payload: any;
-  status: 'queued'|'processing'|'success'|'failed'|'queued';
-  attempts: number;
-  lastError?: string;
-  response?: any;
-  createdAt: string;
-  updatedAt: string;
-};
-
-type DB = { queue: QueueRecord[] };
-
-let db: Low<DB>;
-
-export async function initDatabase() {
-  const file = join(process.cwd(), 'izb-db.json');
-  const adapter = new JSONFile<DB>(file);
-  db = new Low<DB>(adapter);
-  await db.read();
-  db.data ||= { queue: [] };
-  await db.write();
-}
-
-export function insertQueueRequest(rec: QueueRecord) {
-  db.data!.queue.push(rec);
-  return db.write();
-}
-
-export function updateQueueRequestStatus(queueId: string, patch: Partial<QueueRecord>) {
-  const idx = db.data!.queue.findIndex(q => q.queueId === queueId);
-  if (idx === -1) return;
-  db.data!.queue[idx] = { ...db.data!.queue[idx], ...patch } as QueueRecord;
-  return db.write();
-}
-
-export function findQueueRequest(queueId: string) {
-  return db.data!.queue.find(q => q.queueId === queueId);
-}
-
-export default { initDatabase, insertQueueRequest, updateQueueRequestStatus, findQueueRequest };
 import { LowSync } from 'lowdb';
 import { JSONFileSync } from 'lowdb/node';
 
 const DB_PATH = process.env.DB_PATH || './izb-agent-db.json';
-
-type LowDbSchema = {
-  payment_queue_requests: QueueRequestRecord[];
-};
 
 export interface QueueRequestRecord {
   queueId: string;
@@ -64,6 +15,10 @@ export interface QueueRequestRecord {
   updatedAt: string;
 }
 
+type LowDbSchema = {
+  payment_queue_requests: QueueRequestRecord[];
+};
+
 const adapter = new JSONFileSync<LowDbSchema>(DB_PATH);
 const db = new LowSync<LowDbSchema>(adapter, { payment_queue_requests: [] });
 
@@ -76,6 +31,7 @@ if (!db.data) {
 export function initDatabase() {
   if (!db.data) {
     db.data = { payment_queue_requests: [] };
+    db.write();
   }
 }
 
@@ -114,7 +70,7 @@ export function updateQueueRequestStatus(
   existing.attempts = updates.attempts ?? existing.attempts;
   existing.lastError = updates.lastError ?? existing.lastError;
   if (updates.response !== undefined) {
-    existing.responsePayload = updates.response;
+    existing.responsePayload = updates.response as unknown;
   }
   existing.updatedAt = updates.updatedAt ?? new Date().toISOString();
   db.write();
@@ -122,9 +78,11 @@ export function updateQueueRequestStatus(
   return existing;
 }
 
-export function getQueueRequest(queueId: string) {
+export function findQueueRequest(queueId: string) {
   db.read();
   db.data = db.data ?? { payment_queue_requests: [] };
   const existing = db.data.payment_queue_requests.find((item) => item.queueId === queueId);
   return existing ?? null;
 }
+
+export default { initDatabase, insertQueueRequest, updateQueueRequestStatus, findQueueRequest };

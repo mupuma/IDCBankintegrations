@@ -1,5 +1,3 @@
-import fetch from 'node-fetch';
-
 const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
 
 export async function notifyAppOfQueueResult(queueId: string, result: any) {

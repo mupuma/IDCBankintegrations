@@ -1,28 +1,5 @@
-import fetch from 'node-fetch';
 import { postCashbook } from './sageClient';
 import { notifyAppOfQueueResult } from './notify';
-
-export async function sendIzbPayment(payment: any) {
-  // Build IZB-specific payload. This is a stub/mirrors ZICB structure.
-  try {
-    const payload = buildIzbPayload(payment);
-
-    // Ideally, send to IZB bank endpoint here. For now simulate with a fetch if URL provided.
-    const izbUrl = process.env.IZB_BANK_API_URL;
-    if (izbUrl) {
-      const resp = await fetch(izbUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-      if (!resp.ok) {
-        const text = await resp.text();
-        return { success: false, status: resp.status, error: text };
-      }
-    }
-
-    // Simulate bank success
-    return { success: true, status: 200, data: { posted: true } };
-  } catch (err:any) {
-    return { success: false, status: 500, error: String(err) };
-  }
-}
 
 export function buildIzbPayload(payment: any) {
   const payload = {
@@ -48,6 +25,7 @@ import type { JobResult, PaymentsResponse, IzbServicePayload } from './types';
 
 const QUEUE_URL = process.env.IZB_BANK_API_URL;
 const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
+const SOURCE_BANK_NAME = process.env.SOURCE_BANK_NAME || 'IZB';
 
 function isIzbServicePayload(value: unknown): value is IzbServicePayload {
   return (
@@ -164,6 +142,30 @@ async function postToQueue(payload: unknown): Promise<JobResult> {
 }
 
 export async function sendIzbPayment(payment: PaymentsResponse | IzbServicePayload): Promise<JobResult> {
+  // If portal APP_API_URL is configured, enqueue the payment in the portal queue
+  if (APP_API_URL) {
+    const body = isIzbServicePayload(payment)
+      ? { bankCode: 'IZB', sourceBank: SOURCE_BANK_NAME, payment: { service: payment.service, request: payment.request } }
+      : { bankCode: 'IZB', sourceBank: SOURCE_BANK_NAME, payment };
+
+    try {
+      const resp = await fetch(`${APP_API_URL}/api/v1/posted_payments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const text = await resp.text();
+      let data: unknown;
+      try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
+
+      return { success: resp.ok, status: resp.status, data, error: resp.ok ? undefined : `Portal enqueue failed: ${text}` };
+    } catch (err:any) {
+      return { success: false, status: 500, error: String(err) };
+    }
+  }
+
+  // Fallback: post to the bank queue URL if configured
   const payload = isIzbServicePayload(payment) ? { service: payment.service, request: payment.request } : buildIzbPayload(payment as PaymentsResponse, (payment as PaymentsResponse).transactionType);
   return postToQueue(payload);
 }

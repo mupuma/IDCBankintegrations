@@ -490,7 +490,7 @@ export class Cbbthd extends Model<CbbthdAttributes, CbbthdCreationAttributes> {
     cctype!: string;
 
   @Column({
-        type: DataType.BLOB,
+        type: DataType.BLOB('tiny'),
         field: 'CCNUMBER',
         allowNull: true
     })

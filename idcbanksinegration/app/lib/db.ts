@@ -63,11 +63,24 @@ import { User } from '../models/internal/User';
 import { PaymentQueueRequest } from '../models/internal/PaymentQueueRequest';
 import { CashbookReceipt } from '../models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '../models/internal/Processed_transactions';
+import { IzbPayment } from '../models/internal/IzbPayment';
+import { CashbookRequest } from '../models/internal/CashbookRequest';
+import { syncSchemaAddOnly } from './schemaSync';
 
 dotenv.config();
 
+const INTERNAL_MODELS = [
+  User,
+  PaymentQueueRequest,
+  CashbookReceipt,
+  ProcessedTransaction,
+  IzbPayment,
+  CashbookRequest,
+];
+
 // Don't initialize at top level - use a variable to hold the instance
 let sequelizeInstance: Sequelize | null = null;
+let schemaSynced = false;
 
 // Function to get or create the Sequelize instance
 function getSequelizeInstance(): Sequelize {
@@ -89,7 +102,7 @@ function getSequelizeInstance(): Sequelize {
       username,
       password,
       database,
-      models: [User, PaymentQueueRequest, CashbookReceipt, ProcessedTransaction],
+      models: INTERNAL_MODELS,
       logging: false,
       define: {
         underscored: true,
@@ -109,10 +122,22 @@ const sequelize = new Proxy({} as Sequelize, {
   }
 });
 
+async function ensureSchemaSynced(instance: Sequelize): Promise<void> {
+  if (schemaSynced || process.env.DB_SYNC === 'false') {
+    return;
+  }
+
+  // Add-only sync: creates missing tables/columns without altering existing ones
+  await syncSchemaAddOnly(instance, INTERNAL_MODELS);
+  schemaSynced = true;
+  console.log('Database schema sync completed (missing tables/columns only, no data deletion)');
+}
+
 export async function connectDatabase(): Promise<void> {
   try {
     const instance = getSequelizeInstance();
     await instance.authenticate();
+    await ensureSchemaSynced(instance);
     console.log('Database connection established successfully');
   } catch (error) {
     console.error('Unable to connect to MySQL database:', error);
@@ -124,10 +149,8 @@ export async function syncDatabase(): Promise<void> {
   try {
     const instance = getSequelizeInstance();
     await instance.authenticate();
-    if (process.env.DB_SYNC === 'true') {
-      await instance.sync({ alter: true });
-      console.log('Database sync completed');
-    }
+    schemaSynced = false;
+    await ensureSchemaSynced(instance);
   } catch (error) {
     console.error('Unable to sync MySQL database:', error);
     throw error;

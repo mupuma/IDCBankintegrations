@@ -6,6 +6,7 @@ import { verifySessionToken } from '../../auth/login/middleware/auth';
 import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing } from '../../../lib/bankQueue';
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
+import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 
 export async function POST(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
@@ -37,10 +38,30 @@ export async function POST(request: NextRequest) {
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
+  const paymentId = resolvePaymentId(payment as { paymentId?: string }, queueId);
+
   await connectDatabase();
+
+  const existingPost = await findExistingPaymentPost(paymentId);
+  if (existingPost) {
+    return NextResponse.json(
+      {
+        success: false,
+        alreadyPosted: true,
+        error: buildAlreadyPostedMessage(existingPost, bankCode),
+        paymentId,
+        bankCode,
+        postedBankCode: existingPost.bankCode,
+        existingStatus: existingPost.status,
+        queueId: existingPost.queueId,
+      },
+      { status: 409 },
+    );
+  }
+
   await PaymentQueueRequest.create({
     queueId,
-    paymentId: String((payment as any).paymentId || queueId),
+    paymentId,
     bankCode,
     paymentPayload: JSON.stringify(payment),
     status: 'queued',

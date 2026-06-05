@@ -1,9 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
+import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 
@@ -21,7 +22,12 @@ export default function PaymentQueuesPage() {
     [items, selectedBankTab],
   );
 
-  const fetchQueueItems = async () => {
+  const selectBankTab = (tab: BankCode | 'ALL') => {
+    setSelectedBankTab(tab);
+    setPage(1);
+  };
+
+  const loadQueueItems = useCallback(async (): Promise<BankQueueItem[]> => {
     setLoading(true);
     setError(null);
 
@@ -39,32 +45,23 @@ export default function PaymentQueuesPage() {
         throw new Error(data?.error || 'Could not load queue items');
       }
 
-      setItems(Array.isArray(data.items) ? data.items : []);
+      const nextItems = Array.isArray(data.items) ? data.items : [];
+      setItems(nextItems);
       setTotal(typeof data.total === 'number' ? data.total : null);
+      return nextItems;
     } catch (err: any) {
       setError(err?.message || 'Unable to load queue items');
+      return [];
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    setPage(1);
-    void fetchQueueItems();
-  }, [selectedBankTab]);
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      void fetchQueueItems();
-    }, 5000);
-    return () => window.clearInterval(interval);
   }, [selectedBankTab, page, pageSize]);
 
-  // refetch when paging changes
-  useEffect(() => {
-    void fetchQueueItems();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page, pageSize]);
+  const { refresh: refreshQueueItems } = useAdaptiveQueuePolling(loadQueueItems, [
+    selectedBankTab,
+    page,
+    pageSize,
+  ]);
 
   const statusCounts = useMemo(() => {
     return filteredItems.reduce(
@@ -96,7 +93,7 @@ export default function PaymentQueuesPage() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setSelectedBankTab('ALL')}
+                onClick={() => selectBankTab('ALL')}
                 className={`rounded-full px-4 py-2 text-xs font-semibold transition ${selectedBankTab === 'ALL' ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
               >
                 All Banks
@@ -105,7 +102,7 @@ export default function PaymentQueuesPage() {
                 <button
                   key={code}
                   type="button"
-                  onClick={() => setSelectedBankTab(code)}
+                  onClick={() => selectBankTab(code)}
                   className={`rounded-full px-4 py-2 text-xs font-semibold transition ${selectedBankTab === code ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
                 >
                   {code}
@@ -114,7 +111,7 @@ export default function PaymentQueuesPage() {
             </div>
             <button
               type="button"
-              onClick={fetchQueueItems}
+              onClick={() => void refreshQueueItems()}
               className="inline-flex items-center justify-center rounded-2xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
             >
               Refresh

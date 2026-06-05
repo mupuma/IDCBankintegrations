@@ -1,4 +1,5 @@
-import { connectSageDatabase } from '@/app/lib/sageDb';
+import { Op } from 'sequelize';
+import sageSequelize, { connectSageDatabase } from '@/app/lib/sageDb';
 import { connectDatabase } from '@/app/lib/db';
 import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '@/app/models/internal/Processed_transactions';
@@ -10,6 +11,10 @@ import { Cboptio } from '@/app/models/sage_entities/Cboptio';
 import { Arcus } from '@/app/models/sage_entities/Arcus';
 import type { EntryDetails, ReceiptRequest } from '@/app/models/dtos';
 
+const MAX_STATUS_MESSAGE_LENGTH = 255;
+const SAGE_BINARY_FIELD_LENGTH = 32;
+const EMPTY_SAGE_BINARY = Buffer.alloc(SAGE_BINARY_FIELD_LENGTH, 0);
+
 const safeString = (value: unknown, length: number): string => {
   if (value === undefined || value === null) {
     return '';
@@ -17,6 +22,9 @@ const safeString = (value: unknown, length: number): string => {
   const text = String(value);
   return text.length > length ? text.substring(0, length) : text;
 };
+
+const truncateStatusMessage = (message: string): string =>
+  safeString(message, MAX_STATUS_MESSAGE_LENGTH);
 
 const padNumericString = (value: string | number, length: number): string => {
   const text = String(value ?? '');
@@ -88,11 +96,78 @@ async function existingCashbookReference(reference: string): Promise<boolean> {
   return Boolean(existing);
 }
 
-async function getCustomer(customerNo: string) {
-  if (!customerNo) {
+type SageCustomer = Pick<Arcus, 'idcust' | 'namecust'>;
+
+function customerFromRow(row: {
+  idcust?: string | null;
+  namecust?: string | null;
+  IDCUST?: string | null;
+  NAMECUST?: string | null;
+} | null | undefined): SageCustomer | null {
+  if (!row) {
     return null;
   }
-  return Arcus.findByPk(customerNo);
+
+  const idcust = String(row.idcust ?? row.IDCUST ?? '').trim();
+  const namecust = String(row.namecust ?? row.NAMECUST ?? '').trim();
+  if (!idcust && !namecust) {
+    return null;
+  }
+
+  return { idcust, namecust };
+}
+
+function customerFromModel(model: Arcus | null): SageCustomer | null {
+  if (!model) {
+    return null;
+  }
+
+  // TS class fields shadow Sequelize getters; read plain values instead.
+  const plain = model.get({ plain: true }) as { idcust?: string; namecust?: string };
+  return customerFromRow(plain);
+}
+
+async function getCustomer(customerNo: string): Promise<SageCustomer | null> {
+  const normalized = String(customerNo || '').trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const ArcusModel = sageSequelize.models.Arcus as typeof Arcus | undefined;
+  if (ArcusModel) {
+    const modelCandidates = [
+      await ArcusModel.findByPk(normalized),
+      await ArcusModel.findOne({ where: { idcust: normalized } }),
+      await ArcusModel.findOne({
+        where: { idcust: { [Op.like]: `${normalized}%` } },
+      }),
+    ];
+
+    for (const candidate of modelCandidates) {
+      const customer = customerFromModel(candidate);
+      if (customer?.namecust) {
+        return customer;
+      }
+    }
+  }
+
+  const [rows] = await sageSequelize.query(
+    'SELECT TOP 1 IDCUST, NAMECUST FROM ARCUS WHERE RTRIM(IDCUST) = :customerNo OR IDCUST LIKE :customerPattern',
+    {
+      replacements: {
+        customerNo: normalized,
+        customerPattern: `${normalized}%`,
+      },
+    },
+  ) as [Array<{ IDCUST: string; NAMECUST: string }>, unknown];
+
+  const customer = customerFromRow(rows?.[0]);
+  if (!customer?.namecust) {
+    console.warn(`Sage customer not found for customerNo=${normalized}`);
+    return null;
+  }
+
+  return customer;
 }
 
 function formatEntryNo(entryNo: number): string {
@@ -165,7 +240,8 @@ async function insertCbbtdt(details: EntryDetails[], batchId: string, customerNo
 
   for (const detail of details) {
     const detailAmount = Number(detail.amount ?? 0);
-    const isCredit = String(detail.DrCr || '').toUpperCase() === 'C';
+    const drCr = String(detail.DrCr || '').toUpperCase();
+    const isCredit = drCr === 'CR' || drCr === 'C';
     const dtlAmount = isCredit ? -detailAmount : detailAmount;
 
     await Cbbtdt.create({
@@ -284,7 +360,15 @@ async function insertCbbtdt(details: EntryDetails[], batchId: string, customerNo
       txtotrc: 0,
       txallrc: 0,
       txexp1rc: 0,
+      txexp2rc: 0,
+      txexp3rc: 0,
+      txexp4rc: 0,
+      txexp5rc: 0,
       txrec1rc: 0,
+      txrec2rc: 0,
+      txrec3rc: 0,
+      txrec4rc: 0,
+      txrec5rc: 0,
       txbse1hc: 0,
       txbse2hc: 0,
       txbse3hc: 0,
@@ -381,7 +465,7 @@ async function insertCbbtms(details: EntryDetails[], batchId: string, customerNo
       ftmiscuniq: 0,
       brn: '',
       idn: '',
-      accountenc: Buffer.from([]),
+      accountenc: EMPTY_SAGE_BINARY,
       emailsent: 0,
     });
   }
@@ -391,17 +475,15 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string) {
   const date = getCurrentDate();
   const time = getCurrentTime();
   const monthYear = getMonthYear();
-  const customer = await getCustomer(receipt.entries?.[0]?.customerNo ?? '');
-  const customerCode = customer?.idcust ?? '';
-  const customerName = customer?.namecust ?? 'Unidentified Deposit';
 
   for (const entry of receipt.entries) {
+    const customer = await getCustomer(entry.customerNo ?? '');
+    const customerCode = customer?.idcust ?? '';
+    const customerName = customer?.namecust || 'Unidentified Deposit';
     const amount = Number(entry.amount ?? 0);
     const reference = safeString(entry.referenceNo ?? receipt.transactionId, 22);
     const period = safeString(monthYear.month, 2);
     const fiscyr = safeString(monthYear.year, 4);
-    const bytes = Buffer.alloc(32, 0);
-
     await insertCbbtdt(entry.details, batchId, entry.customerNo);
     await insertCbbtms(entry.details, batchId, entry.customerNo);
 
@@ -465,7 +547,7 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string) {
       swinterco: 1,
       fiscyr,
       cctype: '',
-      ccnumber: bytes,
+      ccnumber: EMPTY_SAGE_BINARY,
       ccname: '',
       ccexp: 0,
       ccauthcode: '',
@@ -604,41 +686,117 @@ async function updateProcessedTransaction(receipt: ReceiptRequest, statusCode: n
   });
 }
 
-export async function processCashbookReceipt(receipt: ReceiptRequest) {
-  await connectSageDatabase();
-  await connectDatabase();
+async function finalizeLocalCashbookSuccess(
+  localReceipt: CashbookReceipt,
+  receipt: ReceiptRequest,
+  message: string,
+) {
+  const statusMessage = truncateStatusMessage(message);
+  try {
+    await localReceipt.update({ status: 'success', statusMessage, processedDate: new Date() });
+  } catch (error) {
+    console.error('Failed to update local cashbook receipt after Sage success', error);
+  }
 
-  const localReceipt = await CashbookReceipt.create({
-    transactionId: receipt.transactionId,
+  try {
+    await updateProcessedTransaction(receipt, 200, statusMessage);
+  } catch (error) {
+    console.error('Failed to update processed transaction after Sage success', error);
+  }
+}
+
+export type CashbookProcessResult =
+  | { success: true; receiptId: number; batchId: string; status: 'success'; message: string }
+  | { success: false; alreadyProcessed: true; receiptId?: number }
+  | { success: false; receiptId: number; error: string };
+
+export function isCashbookAlreadyProcessed(
+  result: CashbookProcessResult,
+): result is { success: false; alreadyProcessed: true; receiptId?: number } {
+  return !result.success && 'alreadyProcessed' in result;
+}
+
+export function isCashbookProcessError(
+  result: CashbookProcessResult,
+): result is { success: false; receiptId: number; error: string } {
+  return !result.success && 'error' in result;
+}
+
+const ACTIVE_LOCAL_RECEIPT_STATUSES = new Set(['pending', 'processing', 'success']);
+
+async function persistLocalCashbookReceipt(
+  receipt: ReceiptRequest,
+  existingReceipt: CashbookReceipt | null,
+): Promise<CashbookReceipt> {
+  const payload = {
     bankCode: receipt.bankCode,
-    description: receipt.description,
+    description: safeString(receipt.description, 255),
     noEntries: receipt.noEntries,
     creditAmount: receipt.creditAmount,
     debitAmount: receipt.debitAmount,
     paymentPayload: JSON.stringify(receipt),
     status: 'pending',
+    statusMessage: undefined as string | undefined,
+    processedDate: undefined as Date | undefined,
+  };
+
+  if (existingReceipt) {
+    await existingReceipt.update(payload);
+    return existingReceipt;
+  }
+
+  return CashbookReceipt.create({
+    transactionId: receipt.transactionId,
+    ...payload,
+  });
+}
+
+export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<CashbookProcessResult> {
+  // Always persist the bank payload locally before any Sage work.
+  await connectDatabase();
+
+  const existingProcessed = await ProcessedTransaction.findByPk(receipt.transactionId);
+  if (existingProcessed?.statusCode === 200) {
+    return { success: false, alreadyProcessed: true };
+  }
+
+  const existingReceipt = await CashbookReceipt.findOne({
+    where: { transactionId: receipt.transactionId },
   });
 
+  if (existingReceipt && ACTIVE_LOCAL_RECEIPT_STATUSES.has(existingReceipt.status)) {
+    return { success: false, alreadyProcessed: true, receiptId: existingReceipt.id };
+  }
+
+  const localReceipt = await persistLocalCashbookReceipt(receipt, existingReceipt);
+
+  let sagePosted = false;
+  let batchId = '';
+
   try {
+    await connectSageDatabase();
+
     if (await existingCashbookReference(receipt.transactionId)) {
-      const message = `Cashbook transaction ${receipt.transactionId} already exists`;
+      const message = 'Already Reported';
       await localReceipt.update({ status: 'failed', statusMessage: message, processedDate: new Date() });
-      await updateProcessedTransaction(receipt, -1, message);
-      return {
-        success: false,
-        receiptId: localReceipt.id,
-        error: message,
-      };
+      try {
+        await updateProcessedTransaction(receipt, 409, message);
+      } catch (error) {
+        console.error('Failed to record duplicate cashbook transaction', error);
+      }
+      return { success: false, alreadyProcessed: true, receiptId: localReceipt.id };
     }
 
-    const batchId = await getNextBatchId();
+    await localReceipt.update({ status: 'processing' });
+
+    batchId = await getNextBatchId();
     await insertCbbctl(receipt, batchId);
     await insertCbbthd(receipt, batchId);
     await updateCashbookOptions(batchId);
+    sagePosted = true;
 
     const message = `Cashbook transaction inserted into Sage batch ${batchId}`;
-    await localReceipt.update({ status: 'success', statusMessage: message, processedDate: new Date() });
-    await updateProcessedTransaction(receipt, 200, message);
+    await finalizeLocalCashbookSuccess(localReceipt, receipt, message);
 
     return {
       success: true,
@@ -648,13 +806,42 @@ export async function processCashbookReceipt(receipt: ReceiptRequest) {
       message,
     };
   } catch (error: any) {
-    const message = error?.message ?? String(error);
-    await localReceipt.update({ status: 'failed', statusMessage: message, processedDate: new Date() });
-    await updateProcessedTransaction(receipt, -1, message);
+    const rawMessage = error?.message ?? String(error);
+    const statusMessage = truncateStatusMessage(rawMessage);
+
+    if (sagePosted) {
+      const successMessage = batchId
+        ? `Cashbook transaction inserted into Sage batch ${batchId}`
+        : 'Cashbook transaction saved to Sage';
+      await finalizeLocalCashbookSuccess(localReceipt, receipt, successMessage);
+      console.error('Sage cashbook posted but follow-up bookkeeping failed', error);
+      return {
+        success: true,
+        receiptId: localReceipt.id,
+        batchId,
+        status: 'success',
+        message: successMessage,
+      };
+    }
+
+    try {
+      await localReceipt.update({ status: 'failed', statusMessage, processedDate: new Date() });
+    } catch (updateError) {
+      console.error('Failed to record cashbook failure on local receipt', updateError);
+    }
+
+    try {
+      await updateProcessedTransaction(receipt, -1, statusMessage);
+    } catch (updateError) {
+      console.error('Failed to record cashbook failure', updateError);
+    }
+
+    console.error('Cashbook Sage processing failed', error);
+
     return {
       success: false,
       receiptId: localReceipt.id,
-      error: message,
+      error: statusMessage,
     };
   }
 }

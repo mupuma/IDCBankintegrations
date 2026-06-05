@@ -355,7 +355,7 @@ export class Cbbtm extends Model<Cbbtm, CbbtmCreationAttributes> {
   idn!: string;
 
   @Column({
-    type: DataType.BLOB,
+    type: DataType.BLOB('tiny'),
     field: 'ACCOUNTENC',
     allowNull: false
   })

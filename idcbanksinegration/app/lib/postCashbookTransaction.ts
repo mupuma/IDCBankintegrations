@@ -1,19 +1,27 @@
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import {
   isCashbookAlreadyProcessed,
   isCashbookProcessError,
   processCashbookReceipt,
-} from '../../../lib/cashbookService';
+} from '@/app/lib/cashbookService';
 import {
   cashbookConflictResponse,
   cashbookErrorResponse,
   cashbookInvalidRequestResponse,
   cashbookSavedResponse,
   normalizeReceiptRequest,
-} from '../../../lib/cashbookContract';
+} from '@/app/lib/cashbookContract';
 
-export async function POST(request: NextRequest) {
+const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
+
+export async function postCashbookTransaction(request: NextRequest) {
+  const providedApiKey = request.headers.get('x-bank-api-key');
+  const sessionToken = request.cookies.get('session')?.value;
+
+  if (!sessionToken && (!BANK_PULL_API_KEY || providedApiKey !== BANK_PULL_API_KEY)) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   let body: unknown;
   try {
     body = await request.json();
@@ -32,7 +40,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await processCashbookReceipt(receipt);
+  let result;
+  try {
+    result = await processCashbookReceipt(receipt);
+  } catch (error: any) {
+    console.error('Unhandled cashbook processing error', error);
+    return NextResponse.json(
+      cashbookErrorResponse(error?.message ?? 'Unexpected cashbook processing error'),
+      { status: 500 },
+    );
+  }
 
   if (result.success) {
     return NextResponse.json(cashbookSavedResponse(), { status: 200 });

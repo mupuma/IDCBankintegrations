@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
@@ -8,6 +9,19 @@ import { buildIzbPayload, buildZanacoPayload, buildZicbPayload } from '@/app/lib
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
+const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled']);
+
+function postKey(paymentId: string, bankCode: string) {
+  return `${paymentId}:${bankCode}`;
+}
+
+type PostedPaymentRecord = {
+  bankCode: BankCode;
+  queueId: string;
+  status: 'queued' | 'processing' | 'success' | 'failed' | 'pulled';
+  lastError?: string;
+  response?: unknown;
+};
 
 interface EnrichedPayment extends PaymentsResponse {
   bank: any;
@@ -356,6 +370,7 @@ export default function PaymentQueueDashboard() {
   const [selectedQueues, setSelectedQueues] = useState<Record<string, BankCode | ''>>({});
   const [transactionOverrides, setTransactionOverrides] = useState<Record<string, PaymentsResponse['transactionType']>>({});
   const [queueStatuses, setQueueStatuses] = useState<Record<string, { queueId: string; status: 'queued' | 'processing' | 'success' | 'failed'; lastError?: string; response?: unknown }>>({});
+  const [postedPayments, setPostedPayments] = useState<Record<string, PostedPaymentRecord>>({});
   const [bankQueueItems, setBankQueueItems] = useState<BankQueueItem[]>([]);
   const [sourceBanks, setSourceBanks] = useState<Array<any>>([]);
   const [selectedSources, setSelectedSources] = useState<Record<string, string>>({});
@@ -386,74 +401,62 @@ export default function PaymentQueueDashboard() {
     setTimeout(() => setMessage(null), 4000);
   };
 
-  const pollQueueStatus = async (queueId: string, paymentId: string) => {
-    try {
-      const statusResponse = await fetch(`/api/v1/posted_payments?queueId=${encodeURIComponent(queueId)}`);
-      const statusData = await statusResponse.json();
+  const syncPostedStatusesFromQueueItems = (items: BankQueueItem[]) => {
+    const postedByPayment: Record<string, PostedPaymentRecord> = {};
 
-      if (!statusResponse.ok || !statusData?.success) {
-        setQueueStatuses((prev) => ({
-          ...prev,
-          [paymentId]: {
-            queueId,
-            status: 'failed',
-            lastError: statusData?.error || 'Failed to poll queue status',
-          },
-        }));
-        return;
-      }
-
-      const item = statusData.item;
-      setQueueStatuses((prev) => ({
-        ...prev,
-        [paymentId]: {
-          queueId,
+    setQueueStatuses((prev) => {
+      const next = { ...prev };
+      for (const item of items) {
+        if (!item.paymentId || !item.bankCode || !ACTIVE_POST_STATUSES.has(item.status)) {
+          continue;
+        }
+        const key = postKey(item.paymentId, item.bankCode);
+        next[key] = {
+          queueId: item.id,
           status: item.status,
           lastError: item.lastError,
           response: item.response,
-        },
-      }));
-
-      setBankQueueItems((prev) => {
-        const existing = prev.find((queueItem) => queueItem.id === item.id);
-        if (existing) {
-          return prev.map((queueItem) => queueItem.id === item.id ? item : queueItem);
-        }
-        return [item, ...prev];
-      });
-
-      if (item.status === 'queued' || item.status === 'processing') {
-        setTimeout(() => pollQueueStatus(queueId, paymentId), 3000);
+        };
+        postedByPayment[item.paymentId] = {
+          bankCode: item.bankCode,
+          queueId: item.id,
+          status: item.status,
+          lastError: item.lastError,
+          response: item.response,
+        };
       }
-    } catch (error: any) {
-      setQueueStatuses((prev) => ({
-        ...prev,
-        [paymentId]: {
-          queueId,
-          status: 'failed',
-          lastError: String(error),
-        },
-      }));
-    }
+      return next;
+    });
+
+    setPostedPayments(postedByPayment);
   };
 
-  const fetchQueueItems = async () => {
+  const loadQueueItems = useCallback(async (): Promise<BankQueueItem[]> => {
     setQueueLoading(true);
     try {
-      const searchParam = selectedBankTab === 'ALL' ? '' : `?bankCode=${encodeURIComponent(selectedBankTab)}`;
-      const response = await fetch(`/api/v1/posted_payments${searchParam}`);
+      const response = await fetch('/api/v1/posted_payments');
       const data = await response.json();
       if (!response.ok || !data?.success) {
         throw new Error(data?.error || 'Could not fetch queue items.');
       }
 
-      setBankQueueItems(Array.isArray(data.items) ? data.items : []);
+      const items = Array.isArray(data.items) ? data.items : [];
+      syncPostedStatusesFromQueueItems(items);
+      setBankQueueItems(
+        selectedBankTab === 'ALL'
+          ? items
+          : items.filter((item) => item.bankCode === selectedBankTab),
+      );
+      return items;
     } catch (error: any) {
       console.error('Failed to load queue items', error);
+      return [];
     } finally {
       setQueueLoading(false);
     }
-  };
+  }, [selectedBankTab]);
+
+  const { refresh: refreshQueueItems } = useAdaptiveQueuePolling(loadQueueItems, [selectedBankTab]);
 
   const fetchProcessedTransactions = async () => {
     setProcessedLoading(true);
@@ -507,8 +510,8 @@ export default function PaymentQueueDashboard() {
       setPayments(rows);
       setSelectedQueues({});
       setTransactionOverrides({});
-      setQueueStatuses({});
       setValidationResults({});
+      await refreshQueueItems();
       setMessage(`Loaded ${rows.length} payment records.`);
     } catch (error: any) {
       console.error(error);
@@ -587,6 +590,13 @@ export default function PaymentQueueDashboard() {
       return;
     }
 
+    const existingPost = postedPayments[payment.paymentId];
+    if (existingPost && ACTIVE_POST_STATUSES.has(existingPost.status)) {
+      setMessage(`Payment already posted to ${existingPost.bankCode}. Each payment can only be sent to one bank.`);
+      clearMessage();
+      return;
+    }
+
     const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
     const validation = validatePayment(effectivePayment, bankCode, effectiveType);
@@ -606,15 +616,46 @@ export default function PaymentQueueDashboard() {
       });
 
       const result = await response.json();
+      if (response.status === 409 && result?.alreadyPosted) {
+        const postedBankCode = (result.postedBankCode || bankCode) as BankCode;
+        const statusKey = postKey(payment.paymentId, postedBankCode);
+        const postedRecord: PostedPaymentRecord = {
+          bankCode: postedBankCode,
+          queueId: String(result.queueId || ''),
+          status: result.existingStatus || 'queued',
+        };
+        setPostedPayments((prev) => ({ ...prev, [payment.paymentId]: postedRecord }));
+        setQueueStatuses((prev) => ({
+          ...prev,
+          [statusKey]: {
+            queueId: postedRecord.queueId,
+            status: postedRecord.status,
+            lastError: undefined,
+          },
+        }));
+        setSelectedQueues((prev) => ({ ...prev, [payment.paymentId]: postedBankCode }));
+        setMessage(result?.error || 'Payment has already been posted.');
+        clearMessage();
+        return;
+      }
+
       if (!response.ok || !result.success) {
         throw new Error(result?.error || 'Queue push failed');
       }
 
       const queueId = String(result.queueId || '');
       const queueItem = result.item;
+      const statusKey = postKey(payment.paymentId, bankCode);
+      const postedRecord: PostedPaymentRecord = {
+        bankCode,
+        queueId,
+        status: 'queued',
+        response: queueItem?.response,
+      };
+      setPostedPayments((prev) => ({ ...prev, [payment.paymentId]: postedRecord }));
       setQueueStatuses((prev) => ({
         ...prev,
-        [payment.paymentId]: {
+        [statusKey]: {
           queueId,
           status: 'queued',
           lastError: undefined,
@@ -626,7 +667,7 @@ export default function PaymentQueueDashboard() {
         setBankQueueItems((prev) => [queueItem, ...prev.filter((item) => item.id !== queueItem.id)]);
       }
 
-      pollQueueStatus(queueId, payment.paymentId);
+      void refreshQueueItems();
       setMessage('Payment queued for async processing.');
       clearMessage();
     } catch (error: any) {
@@ -641,15 +682,6 @@ export default function PaymentQueueDashboard() {
     fetchProcessedTransactions();
     fetchSourceBanks();
   }, []);
-
-  useEffect(() => {
-    fetchQueueItems();
-  }, [selectedBankTab]);
-
-  useEffect(() => {
-    const interval = setInterval(() => fetchQueueItems(), 5000);
-    return () => clearInterval(interval);
-  }, [selectedBankTab]);
 
   return (
     <div className="min-h-screen">
@@ -723,10 +755,20 @@ export default function PaymentQueueDashboard() {
               ) : (
                 pagedPayments.map((payment) => {
                   const validation = validationResults[payment.paymentId];
-                  const selectedBank = selectedQueues[payment.paymentId] || '';
-                  const queueStatus = queueStatuses[payment.paymentId];
+                  const posted = postedPayments[payment.paymentId];
+                  const postedBank = posted?.bankCode;
+                  const selectedBank = postedBank || selectedQueues[payment.paymentId] || '';
+                  const statusKey = selectedBank ? postKey(payment.paymentId, selectedBank) : '';
+                  const queueStatus = posted
+                    ? { queueId: posted.queueId, status: posted.status, lastError: posted.lastError, response: posted.response }
+                    : statusKey
+                      ? queueStatuses[statusKey]
+                      : undefined;
                   const selectedType = transactionOverrides[payment.paymentId] ?? payment.transactionType;
                   const isQueued = queueStatus?.status === 'queued' || queueStatus?.status === 'processing';
+                  const isAlreadyPosted = Boolean(
+                    posted && ACTIVE_POST_STATUSES.has(posted.status),
+                  );
 
                   return (
                     <tr key={payment.paymentId} className="hover:bg-slate-50/50 transition-colors group">
@@ -772,7 +814,8 @@ export default function PaymentQueueDashboard() {
                         <select
                           value={selectedBank}
                           onChange={(event) => handleQueueChange(payment.paymentId, event.target.value as BankCode)}
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+                          disabled={isAlreadyPosted}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <option value="">Select queue</option>
                           {BANK_CODES.map((code) => (
@@ -810,10 +853,10 @@ export default function PaymentQueueDashboard() {
                           <button
                             type="button"
                             onClick={() => handlePush(payment)}
-                            className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all outline-none"
-                            disabled={!selectedBank || !validation?.valid || isQueued}
+                            className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+                            disabled={!selectedBank || !validation?.valid || isQueued || isAlreadyPosted}
                           >
-                            Push
+                            {isAlreadyPosted ? 'Posted' : 'Push'}
                           </button>
                           <button
                             type="button"
@@ -829,9 +872,10 @@ export default function PaymentQueueDashboard() {
                           </div>
                         ) : null}
                         {queueStatus ? (
-                          <div className="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
-                            <div className="font-semibold mb-1">Queue status:</div>
+                          <div className={`mt-3 rounded-2xl border p-3 text-xs ${isAlreadyPosted ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-slate-200 bg-slate-50 text-slate-700'}`}>
+                            <div className="font-semibold mb-1">{isAlreadyPosted ? 'Posted to bank' : 'Queue status'}:</div>
                             <div>Status: <span className="font-semibold">{queueStatus.status}</span></div>
+                            {postedBank ? <div className="mt-1">Bank: <span className="font-semibold">{postedBank}</span></div> : null}
                             {queueStatus.lastError ? <div className="mt-1 text-rose-700">Error: {queueStatus.lastError}</div> : null}
                           </div>
                         ) : null}

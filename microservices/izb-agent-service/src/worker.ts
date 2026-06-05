@@ -1,7 +1,6 @@
 import dotenv from 'dotenv';
 import { buildWorker, queueScheduler } from './queue';
 import { notifyAppOfQueueResult, sendIzbPayment } from './izbAgent';
-import { postCashbook } from './sageClient';
 import { initDatabase, updateQueueRequestStatus } from './db';
 import type { JobResult } from './types';
 
@@ -32,52 +31,7 @@ const worker = buildWorker(async (job) => {
   try {
     const result = await sendIzbPayment(payload.payment as any);
 
-    // if bank post succeeded, attempt to post cashbook to portal
-    if (result.success) {
-      try {
-        const payment = payload.payment as any;
-        const transactionId = payload.queueId || payment?.paymentId || `izb-${Date.now()}`;
-        const amount = Number(payment?.amount || 0);
-        const currency = payment?.currency || payment?.currencyCode || 'ZMW';
-
-        const receipt = {
-          transactionId,
-          bankCode: 'IZB',
-          Description: payment?.remarks || payment?.transactionReference || 'IZB cashbook posting',
-          noEntries: 1,
-          creditAmount: amount,
-          debitAmount: amount,
-          entries: [
-            {
-              entryNo: 1,
-              referenceNo: payment?.transactionReference || transactionId,
-              customerNo: payment?.vendorId || undefined,
-              noDetails: 1,
-              amount,
-              currency,
-              details: [
-                {
-                  entryDescription: payment?.remarks || payment?.transactionReference || 'Auto-post',
-                  accountId: process.env.SAGE_CASHBOOK_DEFAULT_ACCOUNT || '4000',
-                  amount,
-                  DrCr: 'Cr',
-                  detailNo: 1,
-                },
-              ],
-            },
-          ],
-        };
-
-        const sageResp = await postCashbook(receipt as any);
-        if (!sageResp.ok) {
-          console.warn('Portal cashbook post failed', sageResp.status, sageResp.text);
-        } else {
-          console.log('Portal cashbook queued', transactionId);
-        }
-      } catch (sageErr) {
-        console.error('Portal cashbook posting error', sageErr);
-      }
-    }
+    // NOTE: cashbook posting is handled by the bank posting receipts back to the portal.
 
     if (queueId) {
       updateQueueRequestStatus(queueId, {
