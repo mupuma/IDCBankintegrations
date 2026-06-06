@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import type { PaymentsResponse, BankCode } from '../../../models/dtos';
 import { BANK_CODES } from '../../../lib/banks';
-import { verifySessionToken } from '../../auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '../../../lib/rbac';
+import { PERMISSIONS } from '../../../lib/permissions';
+import { logAuditEvent } from '../../../lib/auditLog';
 import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing, type BankQueueItem } from '../../../lib/bankQueue';
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
@@ -12,12 +14,8 @@ import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.PAYMENTS_POST);
+  if (isAuthError(auth)) return auth;
 
   const body = await request.json();
   const bankCode = String(body?.bankCode ?? '').toUpperCase() as BankCode;
@@ -92,6 +90,29 @@ export async function POST(request: NextRequest) {
 
   const queueItem = enqueuePayment(bankCode, payment, queueId, String(body?.sourceBank ?? null));
   void ensureQueueItemProcessing(queueItem.id);
+
+  const paymentRef =
+    (payment as { paymentId?: string; transactionReference?: string; vendorName?: string }).paymentId ||
+    (payment as { transactionReference?: string }).transactionReference ||
+    paymentId;
+
+  await logAuditEvent({
+    userId: auth.id,
+    username: auth.username,
+    action: 'PAYMENT_POSTED',
+    resourceType: 'payment',
+    resourceId: paymentId,
+    summary: `${auth.username} posted payment ${paymentRef} to ${bankCode}`,
+    details: {
+      queueId,
+      paymentId,
+      bankCode,
+      sourceBank: body?.sourceBank ?? null,
+      vendorName: (payment as { vendorName?: string }).vendorName ?? null,
+      amount: (payment as { amount?: number | string }).amount ?? null,
+    },
+    request,
+  });
 
   // If this is a successful call to enqueue a payment, also create a cashbook record
   // in the central portal database for later processing by the Sage connector.
@@ -175,6 +196,11 @@ export async function GET(request: NextRequest) {
     if (!BANK_PULL_API_KEY || providedApiKey !== BANK_PULL_API_KEY) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+  } else if (sessionToken) {
+    const auth = await requirePermission(request, PERMISSIONS.PAYMENTS_READ);
+    if (isAuthError(auth)) return auth;
+  } else if (!sessionToken && !bankCode) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
   await connectDatabase();

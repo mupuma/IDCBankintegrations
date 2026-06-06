@@ -27,6 +27,7 @@ export async function ensureDefaultAdmin(): Promise<void> {
           username: DEFAULT_ADMIN_USERNAME,
           password: DEFAULT_ADMIN_PASSWORD,
           role: DEFAULT_ADMIN_ROLE,
+          isActive: true,
         });
         console.log(`Default admin user created: ${DEFAULT_ADMIN_USERNAME}`);
         return;

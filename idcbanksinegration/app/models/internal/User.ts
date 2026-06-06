@@ -17,10 +17,12 @@ interface UserAttributes {
   username: string;
   password: string;
   role: string;
+  isActive: boolean;
 }
 
-interface UserCreationAttributes extends Omit<UserAttributes, 'id'> {
+interface UserCreationAttributes extends Omit<UserAttributes, 'id' | 'isActive'> {
   id?: number;
+  isActive?: boolean;
 }
 
 @Table({
@@ -59,9 +61,17 @@ export class User extends Model<User, UserCreationAttributes> {
     type: DataType.STRING(50),
     field: 'role',
     allowNull: false,
-    defaultValue: 'USER' // Default role if not specified
+    defaultValue: 'OPERATOR',
   })
   declare role: string;
+
+  @Column({
+    type: DataType.BOOLEAN,
+    field: 'is_active',
+    allowNull: false,
+    defaultValue: true,
+  })
+  declare isActive: boolean;
 
   // Hash password before creating
   @BeforeCreate

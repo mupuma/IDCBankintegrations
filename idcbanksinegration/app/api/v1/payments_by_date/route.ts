@@ -1,4 +1,5 @@
-import { verifySessionToken } from '@/app/api/auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '@/app/lib/rbac';
+import { PERMISSIONS } from '@/app/lib/permissions';
 import { connectSageDatabase } from '@/app/lib/sageDb';
 import { PaymentsResponse, PaymentsRequest } from '@/app/models/dtos';
 import { Appym } from '@/app/models/sage_entities/Appym';
@@ -86,12 +87,8 @@ function normalizePayment(appym: any, bank: any, remarks: string): PaymentsRespo
 }
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.PAYMENTS_READ);
+  if (isAuthError(auth)) return auth;
 
   try {
     await connectSageDatabase();

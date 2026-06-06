@@ -1,18 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { verifySessionToken } from '../../auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '../../../lib/rbac';
+import { PERMISSIONS } from '../../../lib/permissions';
 import { connectSageDatabase } from '../../../lib/sageDb';
 import { Apven } from '../../../models/sage_entities/Apven';
 import { Venbank } from '../../../models/sage_entities/Venbank';
 import { Op } from 'sequelize';
 
 export async function GET(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_READ);
+  if (isAuthError(auth)) return auth;
 
   try {
     await connectSageDatabase();

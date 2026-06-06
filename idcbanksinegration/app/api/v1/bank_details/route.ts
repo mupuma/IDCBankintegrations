@@ -3,7 +3,9 @@
 //pull bank details from mssql database
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { verifySessionToken } from '../../auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '../../../lib/rbac';
+import { PERMISSIONS } from '../../../lib/permissions';
+import { logAuditEvent } from '../../../lib/auditLog';
 import { Venbank } from '../../../models/sage_entities/Venbank';
 import { Op } from 'sequelize';
 import { connectSageDatabase } from '../../../lib/sageDb';
@@ -22,12 +24,8 @@ function normalizeVenbank(bank: any) {
 }
 
 export async function GET(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_READ);
+  if (isAuthError(auth)) return auth;
 
   await connectSageDatabase();
   
@@ -71,12 +69,8 @@ export async function GET(request: NextRequest) {
 
 //create
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_WRITE);
+  if (isAuthError(auth)) return auth;
   
   try {
     await connectSageDatabase();
@@ -91,6 +85,22 @@ export async function POST(request: NextRequest) {
     }
     
     const bank = await Venbank.create(body);
+
+    await logAuditEvent({
+      userId: auth.id,
+      username: auth.username,
+      action: 'BANK_DETAILS_CREATED',
+      resourceType: 'vendor_bank',
+      resourceId: String(bank.id),
+      summary: `${auth.username} created bank details for vendor ${body.vendorid}`,
+      details: {
+        vendorId: body.vendorid,
+        accountName: body.accname,
+        bankId: bank.id,
+      },
+      request,
+    });
+
     return NextResponse.json(normalizeVenbank(bank), { status: 201 });
   } catch (error: any) {
     console.error('Error creating bank record:', error);

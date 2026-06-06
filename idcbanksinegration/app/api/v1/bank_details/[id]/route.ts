@@ -1,6 +1,8 @@
 // app/api/bank_details/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySessionToken } from '@/app/api/auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '@/app/lib/rbac';
+import { PERMISSIONS } from '@/app/lib/permissions';
+import { logAuditEvent } from '@/app/lib/auditLog';
 import { connectSageDatabase } from '@/app/lib/sageDb';
 import { Venbank } from '@/app/models/sage_entities/Venbank';
 
@@ -21,12 +23,8 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_WRITE);
+  if (isAuthError(auth)) return auth;
   
   try {
     await connectSageDatabase();
@@ -41,6 +39,18 @@ export async function PUT(
     
     // Fetch updated record
     const updatedBank = await Venbank.findByPk(id);
+
+    await logAuditEvent({
+      userId: auth.id,
+      username: auth.username,
+      action: 'BANK_DETAILS_UPDATED',
+      resourceType: 'vendor_bank',
+      resourceId: String(id),
+      summary: `${auth.username} updated bank details #${id} (vendor ${bank.vendorid})`,
+      details: { bankId: id, vendorId: bank.vendorid, changes: body },
+      request,
+    });
+
     return NextResponse.json(normalizeVenbank(updatedBank));
   } catch (error: any) {
     console.error('Error updating bank record:', error);
@@ -55,12 +65,8 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-  
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_WRITE);
+  if (isAuthError(auth)) return auth;
   
   try {
     await connectSageDatabase();
@@ -69,8 +75,21 @@ export async function DELETE(
     if (!bank) {
       return NextResponse.json({ error: 'Bank record not found' }, { status: 404 });
     }
-    
+
+    const vendorId = bank.vendorid;
     await bank.destroy();
+
+    await logAuditEvent({
+      userId: auth.id,
+      username: auth.username,
+      action: 'BANK_DETAILS_DELETED',
+      resourceType: 'vendor_bank',
+      resourceId: String(id),
+      summary: `${auth.username} deleted bank details #${id} (vendor ${vendorId})`,
+      details: { bankId: id, vendorId },
+      request,
+    });
+
     return NextResponse.json({ message: 'Deleted successfully' });
   } catch (error: any) {
     console.error('Error deleting bank record:', error);
