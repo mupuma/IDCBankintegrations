@@ -117,10 +117,10 @@
         },
         "queueId": "f7fe4948-7c78-4b34-acdb-c18cbf6ca87f"
       },
-      "status": "queued",
-      "attempts": 9,
+      "status": "failed",
+      "attempts": 10,
       "createdAt": "2026-06-03T07:57:48.454Z",
-      "updatedAt": "2026-06-05T14:23:06.599Z",
+      "updatedAt": "2026-06-05T19:35:14.358Z",
       "lastError": "TypeError: fetch failed"
     },
     {
@@ -156,10 +156,10 @@
         },
         "queueId": "3af7c997-75f0-4480-a885-a050831af33c"
       },
-      "status": "queued",
-      "attempts": 9,
+      "status": "failed",
+      "attempts": 10,
       "createdAt": "2026-06-03T08:10:21.003Z",
-      "updatedAt": "2026-06-05T14:23:06.614Z",
+      "updatedAt": "2026-06-05T19:35:14.467Z",
       "lastError": "TypeError: fetch failed"
     },
     {
@@ -195,10 +195,10 @@
         },
         "queueId": "a13d055a-4334-4f7a-8cfb-59eea969aaaf"
       },
-      "status": "queued",
-      "attempts": 8,
+      "status": "failed",
+      "attempts": 10,
       "createdAt": "2026-06-03T09:35:54.021Z",
-      "updatedAt": "2026-06-05T13:51:18.904Z",
+      "updatedAt": "2026-06-06T00:15:36.255Z",
       "lastError": "TypeError: fetch failed"
     }
   ]

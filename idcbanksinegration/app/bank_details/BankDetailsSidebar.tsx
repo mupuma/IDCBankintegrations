@@ -102,10 +102,13 @@ function NavLink({
 export default function BankDetailsSidebar() {
   const pathname = usePathname();
   const router = useRouter();
-  const { user, hasPermission } = usePortalUser();
+  const { user, loading, hasPermission } = usePortalUser();
 
-  const visibleCore = coreNavItems.filter((item) => hasPermission(item.permission));
-  const visibleAdmin = adminNavItems.filter((item) => hasPermission(item.permission));
+  const canAccess = (permission: Permission) =>
+    loading || hasPermission(permission);
+
+  const visibleCore = coreNavItems.filter((item) => canAccess(item.permission));
+  const visibleAdmin = adminNavItems.filter((item) => canAccess(item.permission));
 
   const initials = user?.username
     ? user.username.slice(0, 2).toUpperCase()
@@ -113,7 +116,10 @@ export default function BankDetailsSidebar() {
 
   const handleLogout = async () => {
     try {
-      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'include',
+      });
       if (response.ok) router.push('/login');
     } catch (error) {
       console.error('Logout failed', error);

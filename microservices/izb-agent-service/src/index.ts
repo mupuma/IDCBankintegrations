@@ -78,8 +78,6 @@ function mapItem(it: unknown) {
 app.post('/api/v1/payments/by_date', async (req, res) => {
   try {
     const providedKey = String(req.headers['x-api-key'] || '');
-    console.log('providedKey', providedKey);
-    console.log('AGENT_API_KEY', AGENT_API_KEY);
     if (!AGENT_API_KEY || providedKey !== AGENT_API_KEY) {
       return res.status(401).json({ error: 'Unauthorized from IZB Agent Service' });
     }
@@ -173,5 +171,5 @@ app.get('/health', (_req, res) => {
 
 app.listen(port, () => {
   console.log(`IZB agent service running on http://localhost:${port}`);
-  console.log('Bank-facing: POST /postCBTxn, POST /payments/by_date');
+  console.log('Bank-facing: POST /api/v1/postCBTxn, POST /api/v1/payments/by_date');
 });
