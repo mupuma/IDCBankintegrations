@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react'; // ← FIX 1: Added useCallback
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -49,7 +49,6 @@ function BaseModal({ open, onClose, title, icon, children, footer }: BaseModalPr
     <AnimatePresence>
       {open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 overflow-y-auto">
-          {/* Backdrop Blur Layer */}
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -57,8 +56,6 @@ function BaseModal({ open, onClose, title, icon, children, footer }: BaseModalPr
             className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm"
             onClick={onClose}
           />
-
-          {/* Modal Container */}
           <motion.div
             initial={{ scale: 0.95, opacity: 0, y: 25 }}
             animate={{ scale: 1, opacity: 1, y: 0 }}
@@ -66,7 +63,6 @@ function BaseModal({ open, onClose, title, icon, children, footer }: BaseModalPr
             transition={{ type: 'spring', duration: 0.4 }}
             className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col relative z-[101] overflow-hidden border border-slate-100"
           >
-            {/* Header */}
             <div className="px-6 py-5 border-b border-slate-100 flex justify-between items-center bg-white sticky top-0 z-10">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-slate-50 text-slate-700 border border-slate-100 rounded-xl">
@@ -83,13 +79,9 @@ function BaseModal({ open, onClose, title, icon, children, footer }: BaseModalPr
                 </svg>
               </button>
             </div>
-
-            {/* Content Field Body */}
             <div className="p-6 overflow-y-auto bg-slate-50/40 space-y-5">
               {children}
             </div>
-
-            {/* Action Bar Base */}
             <div className="px-6 py-4 border-t border-slate-100 bg-white flex justify-end gap-3 sticky bottom-0 z-10">
               {footer}
             </div>
@@ -173,21 +165,18 @@ function BankViewModal({ open, onClose, data }: { open: boolean; onClose: () => 
           <DataField label="Account Name" value={data.accname} />
         </div>
       </DisplayCard>
-
       <DisplayCard title="Banking & SWIFT Details" accentColor="emerald">
         <DataField label="Bank ID" value={data.bankid} />
         <DataField label="Sort Code" value={data.sortcde} isMono />
         <DataField label="Branch Location" value={data.brnch} />
         <DataField label="SWIFT Code" value={data.swiftcde} isMono />
       </DisplayCard>
-
       <DisplayCard title="Physical Address Details" accentColor="violet">
-        <DataField label="Plot No" value={data.physicalAddress?.plotNo} />
-        <DataField label="Street Name" value={data.physicalAddress?.streetName} />
-        <DataField label="Town/City" value={data.physicalAddress?.town} />
+        <DataField label="Plot No" value={data.physicalAddress?.plotNo || ''} />
+        <DataField label="Street Name" value={data.physicalAddress?.streetName || ''} />
+        <DataField label="Town/City" value={data.physicalAddress?.town || ''} />
         <DataField label="Country of Origin" value={data.countryOfOrigin} />
       </DisplayCard>
-
       <DisplayCard title="Contact Information" accentColor="amber">
         <DataField label="Email Address" value={data.email} />
         <DataField label="Phone Number" value={data.phoneNumber} />
@@ -338,7 +327,6 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
             <input type="text" required className={formInputStyle} placeholder="e.g. Enterprise Solutions Corp" value={formData.accname} onChange={handleChange('accname')} />
           </div>
         </DisplayCard>
-
         <DisplayCard title="Banking & SWIFT Details" accentColor="emerald">
           <div>
             <label className={labelStyle}>Bank ID</label>
@@ -357,7 +345,6 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
             <input type="text" className={`${formInputStyle} font-mono`} placeholder="e.g. ABBYGB2L" value={formData.swiftcde} onChange={handleChange('swiftcde')} />
           </div>
         </DisplayCard>
-
         <DisplayCard title="Physical Address & Contact Details" accentColor="violet">
           <div>
             <label className={labelStyle}>Plot No</label>
@@ -401,13 +388,15 @@ export default function BankManagementPage() {
   const [filterVendor, setFilterVendor] = useState('');
   const [vendorOptions, setVendorOptions] = useState<string[]>([]);
   
-  // Modals Visibility
+  // FIX 2: Added debounced state variables
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+  const [debouncedFilterVendor, setDebouncedFilterVendor] = useState('');
+  
   const [openForm, setOpenForm] = useState(false);
   const [openViewModal, setOpenViewModal] = useState(false);
   const [editingBank, setEditingBank] = useState<Venbank | null>(null);
   const [viewingBank, setViewingBank] = useState<Venbank | null>(null);
   
-  // Custom Toast Notification States
   const [notification, setNotification] = useState<Notification>({
     show: false, message: '', type: '',
   });
@@ -424,35 +413,76 @@ export default function BankManagementPage() {
     router.push('/login');
   };
 
-  const fetchBanks = async () => {
+  // Debounce search and filter inputs
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [searchTerm]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedFilterVendor(filterVendor);
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [filterVendor]);
+
+  // Reset page when search/filter changes
+  useEffect(() => {
+    setPage(0);
+  }, [debouncedSearchTerm, debouncedFilterVendor]);
+
+  const fetchBanks = useCallback(async () => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
-        page: (page + 1).toString(),
+        page: page.toString(), // 0-indexed
         limit: rowsPerPage.toString(),
-        ...(searchTerm && { search: searchTerm }),
-        ...(filterVendor && { vendorid: filterVendor }),
       });
+      
+      if (debouncedSearchTerm.trim()) {
+        params.append('search', debouncedSearchTerm.trim());
+      }
+      
+      if (debouncedFilterVendor.trim()) {
+        params.append('vendorid', debouncedFilterVendor.trim());
+      }
+
+      console.log('Fetching with params:', params.toString());
 
       const response = await fetch(`/api/v1/bank_details?${params}`);
       if (response.status === 401) {
         redirectToLogin();
         return;
       }
-      if (!response.ok) throw new Error('Network response failure exception.');
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Network response failure exception.');
+      }
       const data = await response.json();
       
-      setBanks(data.data || []);
-      setTotalItems(data.pagination?.totalItems || 0);
+      console.log('API Response:', data);
+      
+      if (data.success) {
+        setBanks(Array.isArray(data.data) ? data.data : []);
+        setTotalItems(data.pagination?.totalItems || 0);
+      } else {
+        setBanks([]);
+        setTotalItems(0);
+        showNotification(data.error || 'Failed to load data', 'error');
+      }
     } catch (error) {
       console.error('Fetch error:', error);
-      showNotification('Failed to load ledger configuration systems data records.', 'error');
+      showNotification('Failed to load bank records from Sage.', 'error');
+      setBanks([]);
+      setTotalItems(0);
     } finally {
       setLoading(false);
     }
-  };
+  }, [page, rowsPerPage, debouncedSearchTerm, debouncedFilterVendor, router]);
 
-  const fetchVendorOptions = async () => {
+  const fetchVendorOptions = useCallback(async () => {
     try {
       const response = await fetch('/api/v1/vendors');
       if (response.status === 401) {
@@ -466,15 +496,15 @@ export default function BankManagementPage() {
       console.error('Vendor options fetch error:', error);
       setVendorOptions([]);
     }
-  };
+  }, [router]);
 
   useEffect(() => {
     fetchBanks();
-  }, [page, rowsPerPage, searchTerm, filterVendor]);
+  }, [fetchBanks]);
 
   useEffect(() => {
     fetchVendorOptions();
-  }, []);
+  }, [fetchVendorOptions]);
 
   const handleDelete = async (id: number) => {
     if (confirm('Are you sure you want to permanently remove this financial distribution record?')) {
@@ -529,9 +559,13 @@ export default function BankManagementPage() {
     }
   };
 
+  const startItem = banks.length > 0 ? page * rowsPerPage + 1 : 0;
+  const endItem = Math.min((page + 1) * rowsPerPage, totalItems);
+  const hasNext = (page + 1) * rowsPerPage < totalItems;
+
   return (
     <>
-      {/* Dynamic Alert Banner Toast Notification Display */}
+      {/* Toast Notification */}
       <AnimatePresence>
         {notification.show && (
           <motion.div
@@ -556,19 +590,19 @@ export default function BankManagementPage() {
         )}
       </AnimatePresence>
 
-      {/* Modern Dashboard Header */}
+      {/* Dashboard Header */}
       <div className="mb-8 bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl shadow-xl p-6 md:p-8 text-white relative overflow-hidden border border-slate-950">
         <div className="relative z-10 max-w-3xl">
           <span className="text-xs uppercase font-bold tracking-widest text-blue-400 bg-blue-900/40 border border-blue-800/50 px-3 py-1 rounded-full">Financial Operations</span>
-          <h1 className="text-3xl md:text-4xl font-extrabold mt-3 tracking-tight"> IDC Vendor Bank Details Ledger</h1>
+          <h1 className="text-3xl md:text-4xl font-extrabold mt-3 tracking-tight">IDC Vendor Bank Details Ledger</h1>
           <p className="text-slate-300 text-sm md:text-base font-medium mt-2 leading-relaxed opacity-90">
-            Secure tracking matrix managing global vendor disbursement configurations, nested routing arrays, branch nodes, and SWIFT clearings.
+            Secure tracking matrix managing global vendor disbursement configurations.
           </p>
         </div>
         <div className="absolute top-0 right-0 -mr-20 -mt-20 w-80 h-80 bg-blue-500/10 rounded-full blur-3xl pointer-events-none" />
       </div>
 
-      {/* Uniform Control Filtration Toolbar Layout Block */}
+      {/* Toolbar */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200/80 p-4 mb-6">
         <div className="flex flex-col md:flex-row gap-3">
           <div className="flex-1 relative">
@@ -579,10 +613,10 @@ export default function BankManagementPage() {
             </span>
             <input
               type="text"
-              placeholder="Search by corporate account names, bank identifiers, locations..."
+              placeholder="Search by account names, bank identifiers, locations..."
               className="w-full pl-10 pr-4 py-2.5 text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-slate-400 font-medium"
               value={searchTerm}
-              onChange={(e) => { setSearchTerm(e.target.value); setPage(0); }}
+              onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
           <div className="flex items-center gap-3">
@@ -591,7 +625,7 @@ export default function BankManagementPage() {
               placeholder="Filter Vendor ID"
               className="px-4 py-2.5 text-sm bg-slate-50 border border-slate-200 focus:border-blue-500 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none transition-all placeholder:text-slate-400 font-medium w-full md:w-40"
               value={filterVendor}
-              onChange={(e) => { setFilterVendor(e.target.value); setPage(0); }}
+              onChange={(e) => setFilterVendor(e.target.value)}
             />
             <button
               onClick={() => { setEditingBank(null); setOpenForm(true); }}
@@ -605,7 +639,7 @@ export default function BankManagementPage() {
             <button
               onClick={fetchBanks}
               className="p-2.5 bg-slate-100 text-slate-600 border border-slate-200/50 rounded-xl hover:bg-slate-200/70 transition-all outline-none"
-              title="Sync Global Data Arrays"
+              title="Refresh"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -615,7 +649,7 @@ export default function BankManagementPage() {
         </div>
       </div>
 
-      {/* Primary Data Ledger Matrix Container Component */}
+      {/* Table */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -683,7 +717,7 @@ export default function BankManagementPage() {
                         <button 
                           onClick={() => { setViewingBank(bank); setOpenViewModal(true); }} 
                           className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-xl transition-all outline-none"
-                          title="View Extended Record Details"
+                          title="View"
                         >
                           <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
@@ -693,7 +727,7 @@ export default function BankManagementPage() {
                         <button 
                           onClick={() => { setEditingBank(bank); setOpenForm(true); }} 
                           className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all outline-none"
-                          title="Modify Entry Structure"
+                          title="Edit"
                         >
                           <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -702,7 +736,7 @@ export default function BankManagementPage() {
                         <button 
                           onClick={() => handleDelete(bank.id)} 
                           className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all outline-none"
-                          title="Purge Object Layer"
+                          title="Delete"
                         >
                           <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -717,10 +751,14 @@ export default function BankManagementPage() {
           </table>
         </div>
 
-        {/* Uniform Grid Pagination System Component Wrapper */}
+        {/* Pagination */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs font-semibold text-slate-500">
-            Showing {banks.length > 0 ? page * rowsPerPage + 1 : 0} – {Math.min((page + 1) * rowsPerPage, totalItems)} of {totalItems} structural records
+            {banks.length > 0 ? (
+              `Showing ${startItem} – ${endItem} of ${totalItems} structural records`
+            ) : (
+              'No records found'
+            )}
           </span>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
@@ -736,13 +774,13 @@ export default function BankManagementPage() {
             <div className="flex gap-1">
               <button
                 disabled={page === 0 || loading}
-                onClick={() => setPage(p => p - 1)}
+                onClick={() => setPage(p => Math.max(0, p - 1))}
                 className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
               </button>
               <button
-                disabled={(page + 1) * rowsPerPage >= totalItems || loading}
+                disabled={!hasNext || loading}
                 onClick={() => setPage(p => p + 1)}
                 className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
               >
@@ -753,7 +791,7 @@ export default function BankManagementPage() {
         </div>
       </div>
 
-      {/* Embedded Operational Modals */}
+      {/* Modals - FIX 3: These are now defined before being used */}
       <BankViewModal 
         open={openViewModal} 
         onClose={() => { setOpenViewModal(false); setViewingBank(null); }} 
@@ -769,5 +807,4 @@ export default function BankManagementPage() {
       />
     </>
   );
-
 }
