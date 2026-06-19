@@ -66,6 +66,7 @@ import { ProcessedTransaction } from '../models/internal/Processed_transactions'
 import { IzbPayment } from '../models/internal/IzbPayment';
 import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
+import { SourceAccount } from '../models/internal/SourceAccount';
 import { syncSchemaAddOnly } from './schemaSync';
 
 dotenv.config();
@@ -78,6 +79,7 @@ const INTERNAL_MODELS = [
   IzbPayment,
   CashbookRequest,
   AuditLog,
+  SourceAccount,
 ];
 
 // Don't initialize at top level - use a variable to hold the instance

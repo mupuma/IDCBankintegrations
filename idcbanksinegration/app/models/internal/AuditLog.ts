@@ -20,6 +20,9 @@ export type AuditAction =
   | 'USER_CREATED'
   | 'USER_UPDATED'
   | 'USER_DELETED'
+  | 'SOURCE_ACCOUNT_CREATED'
+  | 'SOURCE_ACCOUNT_UPDATED'
+  | 'SOURCE_ACCOUNT_DELETED'
   | 'ACCESS_DENIED';
 
 interface AuditLogAttributes {

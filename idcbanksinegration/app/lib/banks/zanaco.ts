@@ -1,7 +1,6 @@
 import type { PaymentsResponse } from '../../models/dtos';
 import { buildZanacoPayload } from './payloadBuilders';
-import { connectSageDatabase } from '@/app/lib/sageDb';
-import { Bkacct } from '@/app/models/sage_entities/Bkacct';
+import { resolveSourceBank } from '@/app/lib/sourceAccounts';
 
 const QUEUE_URL = process.env.ZANACO_BANK_API_URL;
 
@@ -35,38 +34,7 @@ async function postToQueue(payload: unknown) {
   };
 }
 
-async function resolveSourceBank(bankCode?: string | null) {
-  if (!bankCode) return null;
-  try {
-    await connectSageDatabase();
-    const bk = await Bkacct.findOne({ where: { bank: bankCode } });
-    if (!bk) return null;
-    const r = (bk as any).toJSON ? (bk as any).toJSON() : bk;
-    return {
-      bank: r.BANK || r.bank,
-      name: r.NAME || r.name,
-      accountNumber: r.BKACCT || r.bkacct,
-      addr1: r.ADDR1 || r.addr1,
-      addr2: r.ADDR2 || r.addr2,
-      addr3: r.ADDR3 || r.addr3,
-      addr4: r.ADDR4 || r.addr4,
-      city: r.CITY || r.city,
-      state: r.STATE || r.state,
-      country: r.COUNTRY || r.country,
-      postal: r.POSTAL || r.postal,
-      contact: r.CONTACT || r.contact,
-      phone: r.PHONE || r.phone,
-      fax: r.FAX || r.fax,
-      transit: r.TRANSIT || r.transit,
-      idacct: r.IDACCT || r.idacct,
-    };
-  } catch (err) {
-    console.warn('Failed to resolve source bank', err);
-    return null;
-  }
-}
-
-export function createZanacoPayload(payment: PaymentsResponse, sourceBank?: any) {
+export function createZanacoPayload(payment: PaymentsResponse, sourceBank?: { accountNumber?: string | null; transit?: string | null; name?: string | null }) {
   return buildZanacoPayload(payment, payment.transactionType, sourceBank);
 }
 

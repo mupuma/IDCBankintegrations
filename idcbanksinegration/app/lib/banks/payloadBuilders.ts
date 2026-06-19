@@ -5,6 +5,16 @@ function formatDate(value: string | Date) {
   return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 }
 
+function normalizeString(value: unknown) {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  return '';
+}
+
 function buildCommonRequest(payment: PaymentsResponse, source?: any) {
   const payDate = formatDate(payment.transactionDate);
   const amount = Number(payment.amount ?? 0);
@@ -12,9 +22,9 @@ function buildCommonRequest(payment: PaymentsResponse, source?: any) {
   const transferRef = payment.transactionReference || '';
   const remarks = payment.remarks || transferRef;
   const senderName = payment.accountName || payment.vendorId || 'SageSystem';
-  const srcAcc = source?.accountNumber || payment.accountNumber || '';
-  const srcBranch = source?.transit || payment.branchCode || '';
-  const srcName = source?.name || senderName;
+  const srcAcc = normalizeString(source?.accountNumber);
+  const srcBranch = normalizeString(source?.transit);
+  const srcName = normalizeString(source?.name) || senderName;
 
   return {
     payDate,
@@ -75,8 +85,8 @@ export function buildIzbPayload(payment: PaymentsResponse, transactionType: Paym
         transferTyp: transactionType === 'DDACCT' ? 'DDACC' : transactionType,
         destAcc: requestBase.accountNumber,
         destBranch: requestBase.branchCode,
-        srcAcc: requestBase.srcAcc || requestBase.accountNumber,
-        srcBranch: requestBase.srcBranch || requestBase.branchCode,
+        srcAcc: requestBase.srcAcc,
+        srcBranch: requestBase.srcBranch,
         srcName: requestBase.srcName,
       },
     };
@@ -113,8 +123,8 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
         transferTyp: transactionType === 'DDACCT' ? 'DDACC' : transactionType,
         destAcc: requestBase.accountNumber,
         destBranch: requestBase.branchCode,
-        srcAcc: requestBase.srcAcc || requestBase.accountNumber,
-        srcBranch: requestBase.srcBranch || requestBase.branchCode,
+        srcAcc: requestBase.srcAcc,
+        srcBranch: requestBase.srcBranch,
         srcName: requestBase.srcName,
       },
     };

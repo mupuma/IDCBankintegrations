@@ -9,7 +9,7 @@ dotenv.config();
 initDatabase();
 
 const worker = buildWorker(async (job) => {
-  const payload = job.data as { payment: unknown; queueId?: string };
+  const payload = job.data as { payment: unknown; queueId?: string; sourceBank?: string | null };
   if (!payload?.payment) {
     throw new Error('Job missing payment payload');
   }

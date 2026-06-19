@@ -8,6 +8,7 @@ import { logAuditEvent } from '../../../lib/auditLog';
 import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing, type BankQueueItem } from '../../../lib/bankQueue';
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
+import { resolveSourceBank } from '../../../lib/banks/zicb';
 import { IzbPayment } from '../../../models/internal/IzbPayment';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 
@@ -20,6 +21,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const bankCode = String(body?.bankCode ?? '').toUpperCase() as BankCode;
   const payment = body?.payment as PaymentsResponse | undefined;
+  const sourceBankCode = body?.sourceBank ? String(body.sourceBank).trim() : null;
 
   if (!BANK_CODES.includes(bankCode)) {
     return NextResponse.json(
@@ -35,6 +37,109 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // FIX: ZICB source bank validation with TRIM
+  if (bankCode === 'ZICB') {
+    console.log(`🔴 ZICB validation for sourceBank: ${sourceBankCode}`);
+
+    // Check 1: sourceBank must exist
+    if (!sourceBankCode) {
+      console.error('❌ ZICB payment REJECTED: sourceBank missing');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'sourceBank is REQUIRED for ZICB payments. Please provide a valid source bank code.'
+        },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const source = await resolveSourceBank(sourceBankCode);
+      console.log(`Source bank resolved:`, source);
+
+      // Check 2: source must exist (not null)
+      if (!source) {
+        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" not found`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" not found in system.`,
+            sourceBankCode
+          },
+          { status: 404 },
+        );
+      }
+
+      // --- FIX: TRIM ALL VALUES ---
+      const srcAcc = source.accountNumber?.toString().trim() || '';
+      const srcBranch = source.transit?.toString().trim() || '';
+      const srcName = source.name?.toString().trim() || '';
+
+      console.log(`Trimmed values:`, { srcAcc, srcBranch, srcName });
+
+      // Check 3: srcAcc must not be empty after trimming
+      if (!srcAcc || srcAcc.length === 0) {
+        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" has empty account number`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number. Please update the source bank details.`,
+            sourceBankCode,
+            providedValues: {
+              accountNumber: source.accountNumber,
+              transit: source.transit,
+              name: source.name
+            }
+          },
+          { status: 400 },
+        );
+      }
+
+      // Check 4: srcBranch must not be empty after trimming
+      if (!srcBranch || srcBranch.length === 0) {
+        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" has empty branch/transit code`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid branch/transit code. Please update the source bank details.`,
+            sourceBankCode,
+            providedValues: {
+              accountNumber: source.accountNumber,
+              transit: source.transit,
+              name: source.name
+            }
+          },
+          { status: 400 },
+        );
+      }
+
+      // All checks passed - populate payment with TRIMMED values
+      console.log(`✅ Source bank validated. Populating payment with:`, {
+        srcAcc,
+        srcBranch,
+        srcName
+      });
+
+      // Set the trimmed values (OVERWRITE, don't just set if empty)
+      (payment as any).srcAcc = srcAcc;
+      (payment as any).srcBranch = srcBranch;
+      (payment as any).srcName = srcName || 'ZICB';
+
+      console.log('✅ ZICB validation PASSED. Payment enriched with source bank details.');
+
+    } catch (err) {
+      console.error('💥 Error resolving source bank:', err);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Internal error while resolving source bank details. Payment cannot be posted.'
+        },
+        { status: 500 },
+      );
+    }
+  }
+
+  // ... rest of your code continues here ...
   const queueId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -118,7 +223,8 @@ export async function POST(request: NextRequest) {
   // in the central portal database for later processing by the Sage connector.
   // We'll insert a simple cashbook task into the DB if payment looks like a receipt.
   try {
-    const isReceipt = (payment?.transactionType || '').toLowerCase().includes('rec') || (payment?.transactionReference || '').toLowerCase().includes('receipt') || false;
+    const isReceipt = (payment?.transactionType || '').toLowerCase().includes('rec') || 
+                      (payment?.transactionReference || '').toLowerCase().includes('receipt') || false;
     if (isReceipt) {
       await PaymentQueueRequest.create({
         queueId: `${queueId}-cb`,
@@ -142,7 +248,6 @@ export async function POST(request: NextRequest) {
     item: queueItem,
   });
 }
-
 function mapQueueRecordToItem(record: PaymentQueueRequest): BankQueueItem | null {
   let payment: PaymentsResponse;
   try {

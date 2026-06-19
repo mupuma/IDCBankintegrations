@@ -6,7 +6,8 @@ export type PhysicalAddress = {
 
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
 
-export type PaymentsResponse = { //To be used by IZB to pull payments onto banking platform
+export type PaymentsResponse = {
+    paymentId: any; //To be used by IZB to pull payments onto banking platform
 
     accountNumber: string;
     amount: number;

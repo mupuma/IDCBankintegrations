@@ -1,59 +1,13 @@
 import type { PaymentsResponse } from '../../models/dtos';
 import { buildZicbPayload } from './payloadBuilders';
-import { connectSageDatabase } from '@/app/lib/sageDb';
-import { Bkacct } from '@/app/models/sage_entities/Bkacct';
+import { resolveSourceBank } from '@/app/lib/sourceAccounts';
+
+export { resolveSourceBank };
 
 const QUEUE_URL = process.env.ZICB_BANK_API_URL;
-const DEFAULT_SOURCE_ACCOUNT = process.env.ZICB_SOURCE_ACCOUNT ?? '';
-const DEFAULT_SOURCE_BRANCH = process.env.ZICB_SOURCE_BRANCH ?? '';
-const DEFAULT_USER_NAME = process.env.ZICB_USER_NAME ?? 'SageSystem';
-const DEFAULT_CUSTOMER_ID = process.env.ZICB_CUSTOMER_ID ?? '';
-const DEFAULT_IP_ADDRESS = process.env.ZICB_IP_ADDRESS ?? '0.0.0.0';
 
-async function resolveSourceBank(bankCode?: string | null) {
-  if (!bankCode) return null;
-  try {
-    await connectSageDatabase();
-    const bk = await Bkacct.findOne({ where: { bank: bankCode } });
-    if (!bk) return null;
-    const r = (bk as any).toJSON ? (bk as any).toJSON() : bk;
-    return {
-      bank: r.BANK || r.bank,
-      name: r.NAME || r.name,
-      accountNumber: r.BKACCT || r.bkacct,
-      addr1: r.ADDR1 || r.addr1,
-      addr2: r.ADDR2 || r.addr2,
-      addr3: r.ADDR3 || r.addr3,
-      addr4: r.ADDR4 || r.addr4,
-      city: r.CITY || r.city,
-      state: r.STATE || r.state,
-      country: r.COUNTRY || r.country,
-      postal: r.POSTAL || r.postal,
-      contact: r.CONTACT || r.contact,
-      phone: r.PHONE || r.phone,
-      fax: r.FAX || r.fax,
-      transit: r.TRANSIT || r.transit,
-      idacct: r.IDACCT || r.idacct,
-    };
-  } catch (err) {
-    console.warn('Failed to resolve source bank', err);
-    return null;
-  }
-}
-
-function mergeZicbDefaults(payment: PaymentsResponse, source?: any) {
-  let p = { ...payment };
-  if (source?.accountNumber) {
-    p.accountNumber = p.accountNumber || source.accountNumber || DEFAULT_SOURCE_ACCOUNT;
-  } else if (DEFAULT_SOURCE_ACCOUNT) {
-    p.accountNumber = p.accountNumber || DEFAULT_SOURCE_ACCOUNT;
-  }
-
-  if (source?.transit) {
-    p.branchCode = p.branchCode || source.transit || DEFAULT_SOURCE_BRANCH;
-  } else if (DEFAULT_SOURCE_BRANCH) {
-    p.branchCode = p.branchCode || DEFAULT_SOURCE_BRANCH;
-  }
+function mergeZicbDefaults(payment: PaymentsResponse, source?: { name?: string | null }) {
+  const p = { ...payment };
 
   if (source?.name) {
     p.accountName = p.accountName || source.name;

@@ -817,9 +817,28 @@ export default function PaymentQueueDashboard() {
                         >
                           <option value="">Select source</option>
                           {sourceBanks.map((b) => (
-                            <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>{b.bank} — {b.name}{b.accountNumber ? ` (${b.accountNumber})` : ''}</option>
+                            <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>
+                              {b.bank} — {b.name || 'Unnamed'}
+                              {b.accountNumber ? ` (${b.accountNumber})` : ' (no account)'}
+                              {b.detailsComplete === false ? ' ⚠' : ''}
+                            </option>
                           ))}
                         </select>
+                        {(() => {
+                          const selected = sourceBanks.find(
+                            (b: { bank?: string; detailsComplete?: boolean }) =>
+                              (b.bank || '').toString().toUpperCase() === (selectedSources[payment.paymentId] || '').toString().toUpperCase(),
+                          );
+                          if (!selected || selected.detailsComplete !== false) return null;
+                          return (
+                            <p className="mt-2 text-[11px] text-amber-700">
+                              Source account details are incomplete.{' '}
+                              <a href="/bank_details/source_accounts" className="font-semibold underline">
+                                Add details
+                              </a>
+                            </p>
+                          );
+                        })()}
 
                         <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mt-4 mb-2">Target queue</label>
                         <select

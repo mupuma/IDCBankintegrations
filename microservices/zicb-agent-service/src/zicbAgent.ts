@@ -71,6 +71,9 @@ function buildPayload(payment: PaymentsResponse) {
   const payCurrency = merged.currency || merged.currencyCode || 'ZMW';
   const payDate = merged.transactionDate || new Date().toISOString().slice(0, 10);
   const transferRef = merged.transactionReference || '';
+  const srcAcc = merged.srcAcc?.trim() || merged.accountNumber;
+  const srcBranch = merged.srcBranch?.trim() || merged.branchCode;
+  const srcName = merged.srcName?.trim() || merged.accountName || merged.vendorId || DEFAULT_USER_NAME;
 
   if (merged.transactionType === 'INT') {
     return {
@@ -98,14 +101,15 @@ function buildPayload(payment: PaymentsResponse) {
       userName: merged.accountName,
       customerId: merged.vendorId,
       ipAddress: merged.ipAddress,
-      srcAcc: merged.accountNumber,
+      srcAcc,
       destAcc: merged.accountNumber,
       amount,
       destCurrency: payCurrency,
       srcCurrency: payCurrency,
       payCurrency,
       destBranch: merged.branchCode,
-      srcBranch: merged.branchCode,
+      srcBranch,
+      srcName,
       bankName: merged.bankName || 'ZICB',
       sortCode: merged.sortCode || '',
       remarks: merged.remarks || transferRef,

@@ -27,6 +27,9 @@ export interface PaymentsResponse {
   phoneNumber?: string;
   physicalAddress?: PhysicalAddress;
   ipAddress?: string;
+  srcAcc?: string;
+  srcBranch?: string;
+  srcName?: string;
 }
 
 export interface ZicbServicePayload {
@@ -36,7 +39,7 @@ export interface ZicbServicePayload {
 }
 
 export type PaymentJobPayload =
-  | { bankCode: BankCode; payment: PaymentsResponse; queueId?: string }
+  | { bankCode: BankCode; payment: PaymentsResponse; queueId?: string; sourceBank?: string | null }
   | ZicbServicePayload;
 
 export type JobResult = {
