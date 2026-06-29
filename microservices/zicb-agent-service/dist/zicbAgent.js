@@ -9,6 +9,7 @@ const DEFAULT_SOURCE_BRANCH = process.env.ZICB_SOURCE_BRANCH ?? '';
 const DEFAULT_USER_NAME = process.env.ZICB_USER_NAME ?? 'SageSystem';
 const DEFAULT_CUSTOMER_ID = process.env.ZICB_CUSTOMER_ID ?? '';
 const DEFAULT_IP_ADDRESS = process.env.ZICB_IP_ADDRESS ?? '0.0.0.0';
+const MOCK_SUCCESS_RESPONSE = process.env.ZICB_MOCK_SUCCESS_RESPONSE === 'true';
 function mergeDefaults(payment) {
     return {
         ...payment,
@@ -36,7 +37,7 @@ const notifyAppOfQueueResult = async (queueId, result) => {
         const response = await fetch(callbackUrl, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 queueId,
@@ -62,6 +63,9 @@ function buildPayload(payment) {
     const payCurrency = merged.currency || merged.currencyCode || 'ZMW';
     const payDate = merged.transactionDate || new Date().toISOString().slice(0, 10);
     const transferRef = merged.transactionReference || '';
+    const srcAcc = merged.srcAcc?.trim() || merged.accountNumber;
+    const srcBranch = merged.srcBranch?.trim() || merged.branchCode;
+    const srcName = merged.srcName?.trim() || merged.accountName || merged.vendorId || DEFAULT_USER_NAME;
     if (merged.transactionType === 'INT') {
         return {
             service: 'ZB8628',
@@ -87,14 +91,15 @@ function buildPayload(payment) {
             userName: merged.accountName,
             customerId: merged.vendorId,
             ipAddress: merged.ipAddress,
-            srcAcc: merged.accountNumber,
+            srcAcc,
             destAcc: merged.accountNumber,
             amount,
             destCurrency: payCurrency,
             srcCurrency: payCurrency,
             payCurrency,
             destBranch: merged.branchCode,
-            srcBranch: merged.branchCode,
+            srcBranch,
+            srcName,
             bankName: merged.bankName || 'ZICB',
             sortCode: merged.sortCode || '',
             remarks: merged.remarks || transferRef,
@@ -115,16 +120,46 @@ function buildPayload(payment) {
         },
     };
 }
+function buildPositiveResponse(payload) {
+    const request = payload.request;
+    const transferRef = String(request.transferRef || request.referenceNo || `ZICB-${Date.now()}`);
+    const transactionId = `ZICB-${transferRef}`;
+    return {
+        responseCode: '00',
+        responseMessage: 'Payment completed successfully',
+        status: 'SUCCESS',
+        bankCode: 'ZICB',
+        service: payload.service,
+        transactionId,
+        transferRef,
+        amount: request.amount,
+        currency: request.payCurrency || request.destCurrency || request.srcCurrency || 'ZMW',
+        completedAt: new Date().toISOString(),
+    };
+}
 async function sendZicbPayment(payment) {
-    if (!QUEUE_URL) {
+    if (!QUEUE_URL && !MOCK_SUCCESS_RESPONSE) {
         throw new Error('Missing ZICB_BANK_API_URL environment variable');
     }
     const payload = isZicbServicePayload(payment)
         ? { service: payment.service, request: payment.request }
         : buildPayload(payment);
     const body = JSON.stringify(payload);
+    if (MOCK_SUCCESS_RESPONSE) {
+        const data = buildPositiveResponse(payload);
+        console.info('[ZICB] mock success response enabled', data);
+        return {
+            success: true,
+            status: 200,
+            data,
+        };
+    }
+    const queueUrl = QUEUE_URL;
+    if (!queueUrl) {
+        throw new Error('Missing ZICB_BANK_API_URL environment variable');
+    }
     console.debug('[ZICB] sendZicbPayment request', {
-        queueUrl: QUEUE_URL,
+        queueUrl,
         payloadType: isZicbServicePayload(payment) ? 'servicePayload' : 'PaymentsResponse',
         payloadSummary: {
             service: isZicbServicePayload(payment) ? payment.service : undefined,
@@ -136,15 +171,19 @@ async function sendZicbPayment(payment) {
     let response;
     let text = '';
     try {
-        response = await fetch(QUEUE_URL, {
+        response = await fetch(queueUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+                'Content-Type': 'application/json',
+                "Authkey": process.env.AUTH_KEY || '',
+                "ServiceKey": process.env.SERVICE_ID || '',
+            },
             body,
         });
     }
     catch (fetchError) {
         console.error('[ZICB] fetch failed', {
-            queueUrl: QUEUE_URL,
+            queueUrl,
             error: fetchError,
             payload: JSON.parse(body),
         });

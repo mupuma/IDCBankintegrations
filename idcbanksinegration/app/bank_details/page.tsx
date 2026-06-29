@@ -594,7 +594,7 @@ export default function BankManagementPage() {
       <div className="mb-8 bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl shadow-xl p-6 md:p-8 text-white relative overflow-hidden border border-slate-950">
         <div className="relative z-10 max-w-3xl">
           <span className="text-xs uppercase font-bold tracking-widest text-blue-400 bg-blue-900/40 border border-blue-800/50 px-3 py-1 rounded-full">Financial Operations</span>
-          <h1 className="text-3xl md:text-4xl font-extrabold mt-3 tracking-tight">IDC Vendor Bank Details Ledger</h1>
+          <h1 className="text-3xl md:text-4xl font-extrabold mt-3 tracking-tight">Vendor Bank Details Ledger</h1>
           <p className="text-slate-300 text-sm md:text-base font-medium mt-2 leading-relaxed opacity-90">
             Secure tracking matrix managing global vendor disbursement configurations.
           </p>

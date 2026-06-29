@@ -68,5 +68,6 @@ Request body:
 - `ZICB_USER_NAME` - Default username for ZICB payloads
 - `ZICB_CUSTOMER_ID` - Default customer ID for ZICB payloads
 - `ZICB_IP_ADDRESS` - Default IP address for ZICB payloads
+- `ZICB_MOCK_SUCCESS_RESPONSE` - Set to `true` to return a positive ZICB completion response without calling the live bank API. Useful for testing the Sage cashbook post and app callback success path.
 - `JOB_ATTEMPTS` - Number of BullMQ retry attempts
 - `JOB_BACKOFF_MS` - Retry backoff interval in milliseconds

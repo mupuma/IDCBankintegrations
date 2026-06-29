@@ -6,6 +6,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
 const queue_1 = require("./queue");
 const zicbAgent_1 = require("./zicbAgent");
+const sageClient_1 = require("./sageClient");
 const db_1 = require("./db");
 dotenv_1.default.config();
 (0, db_1.initDatabase)();
@@ -29,6 +30,52 @@ const worker = (0, queue_1.buildWorker)(async (job) => {
     }
     try {
         const result = await (0, zicbAgent_1.sendZicbPayment)(payload.payment);
+        // if bank post succeeded, attempt to post cashbook to Sage
+        if (result.success) {
+            try {
+                const payment = payload.payment;
+                const transactionId = payload.queueId || payment?.paymentId || `zicb-${Date.now()}`;
+                const amount = Number(payment?.amount || 0);
+                const currency = payment?.currency || payment?.currencyCode || 'ZMW';
+                const receipt = {
+                    transactionId,
+                    bankCode: 'ZICB',
+                    Description: payment?.remarks || payment?.transactionReference || 'ZICB cashbook posting',
+                    noEntries: 1,
+                    creditAmount: amount,
+                    debitAmount: amount,
+                    entries: [
+                        {
+                            entryNo: 1,
+                            referenceNo: payment?.transactionReference || transactionId,
+                            customerNo: payment?.vendorId || undefined,
+                            noDetails: 1,
+                            amount,
+                            currency,
+                            details: [
+                                {
+                                    entryDescription: payment?.remarks || payment?.transactionReference || 'Auto-post',
+                                    accountId: process.env.SAGE_CASHBOOK_DEFAULT_ACCOUNT || '4000',
+                                    amount,
+                                    DrCr: 'Cr',
+                                    detailNo: 1,
+                                },
+                            ],
+                        },
+                    ],
+                };
+                const sageResp = await (0, sageClient_1.postCashbook)(receipt);
+                if (!sageResp.ok) {
+                    console.warn('Sage cashbook post failed', sageResp.status, sageResp.text);
+                }
+                else {
+                    console.log('Sage cashbook posted', transactionId);
+                }
+            }
+            catch (sageErr) {
+                console.error('Sage cashbook posting error', sageErr);
+            }
+        }
         if (queueId) {
             (0, db_1.updateQueueRequestStatus)(queueId, {
                 status: result.success ? 'success' : (hasMoreRetries ? 'queued' : 'failed'),

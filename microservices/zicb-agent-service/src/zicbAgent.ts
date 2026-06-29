@@ -7,6 +7,7 @@ const DEFAULT_SOURCE_BRANCH = process.env.ZICB_SOURCE_BRANCH ?? '';
 const DEFAULT_USER_NAME = process.env.ZICB_USER_NAME ?? 'SageSystem';
 const DEFAULT_CUSTOMER_ID = process.env.ZICB_CUSTOMER_ID ?? '';
 const DEFAULT_IP_ADDRESS = process.env.ZICB_IP_ADDRESS ?? '0.0.0.0';
+const MOCK_SUCCESS_RESPONSE = process.env.ZICB_MOCK_SUCCESS_RESPONSE === 'true';
 
 function mergeDefaults(payment: PaymentsResponse): PaymentsResponse {
   return {
@@ -131,8 +132,27 @@ function buildPayload(payment: PaymentsResponse) {
   };
 }
 
+function buildPositiveResponse(payload: ZicbServicePayload) {
+  const request = payload.request;
+  const transferRef = String(request.transferRef || request.referenceNo || `ZICB-${Date.now()}`);
+  const transactionId = `ZICB-${transferRef}`;
+
+  return {
+    responseCode: '00',
+    responseMessage: 'Payment completed successfully',
+    status: 'SUCCESS',
+    bankCode: 'ZICB',
+    service: payload.service,
+    transactionId,
+    transferRef,
+    amount: request.amount,
+    currency: request.payCurrency || request.destCurrency || request.srcCurrency || 'ZMW',
+    completedAt: new Date().toISOString(),
+  };
+}
+
 export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePayload): Promise<JobResult> {
-  if (!QUEUE_URL) {
+  if (!QUEUE_URL && !MOCK_SUCCESS_RESPONSE) {
     throw new Error('Missing ZICB_BANK_API_URL environment variable');
   }
 
@@ -141,8 +161,24 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
     : buildPayload(payment);
   const body = JSON.stringify(payload);
 
+  if (MOCK_SUCCESS_RESPONSE) {
+    const data = buildPositiveResponse(payload);
+    console.info('[ZICB] mock success response enabled', data);
+
+    return {
+      success: true,
+      status: 200,
+      data,
+    };
+  }
+
+  const queueUrl = QUEUE_URL;
+  if (!queueUrl) {
+    throw new Error('Missing ZICB_BANK_API_URL environment variable');
+  }
+
   console.debug('[ZICB] sendZicbPayment request', {
-    queueUrl: QUEUE_URL,
+    queueUrl,
     payloadType: isZicbServicePayload(payment) ? 'servicePayload' : 'PaymentsResponse',
     payloadSummary: {
       service: isZicbServicePayload(payment) ? payment.service : undefined,
@@ -155,7 +191,7 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
   let response;
   let text = '';
   try {
-    response = await fetch(QUEUE_URL, {
+    response = await fetch(queueUrl, {
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
@@ -166,7 +202,7 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
     });
   } catch (fetchError) {
     console.error('[ZICB] fetch failed', {
-      queueUrl: QUEUE_URL,
+      queueUrl,
       error: fetchError,
       payload: JSON.parse(body),
     });

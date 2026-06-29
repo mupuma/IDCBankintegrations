@@ -25,6 +25,7 @@ app.post('/payments', async (req, res) => {
     const body = req.body;
     const queueId = body?.queueId
         || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    const sourceBank = body?.sourceBank;
     if (isZicbServicePayload(body)) {
         await (0, db_1.insertQueueRequest)({
             queueId,
@@ -35,7 +36,7 @@ app.post('/payments', async (req, res) => {
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         });
-        const job = await queue_1.paymentQueue.add('send-zicb-payment', { payment: body, queueId }, {
+        const job = await queue_1.paymentQueue.add('send-zicb-payment', { payment: body, queueId, sourceBank }, {
             attempts: Number(process.env.JOB_ATTEMPTS || 3),
             backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
             removeOnComplete: true,
@@ -60,7 +61,7 @@ app.post('/payments', async (req, res) => {
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
     });
-    const job = await queue_1.paymentQueue.add('send-zicb-payment', { payment, queueId }, {
+    const job = await queue_1.paymentQueue.add('send-zicb-payment', { payment, queueId, sourceBank }, {
         attempts: Number(process.env.JOB_ATTEMPTS || 3),
         backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
         removeOnComplete: true,
