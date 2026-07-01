@@ -10,6 +10,7 @@ import { buildIzbPayload, buildZanacoPayload, buildZicbPayload } from '@/app/lib
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
 const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled']);
+const BANK_PROCESSED_STATUSES = new Set(['success']);
 
 function postKey(paymentId: string, bankCode: string) {
   return `${paymentId}:${bankCode}`;
@@ -399,9 +400,16 @@ export default function PaymentQueueDashboard() {
     [previewPaymentId, payments],
   );
 
-  const totalPages = Math.max(1, Math.ceil(payments.length / pageSize));
+  const visiblePayments = useMemo(
+    () => payments.filter((payment) => {
+      const posted = postedPayments[payment.paymentId];
+      return !posted || !BANK_PROCESSED_STATUSES.has(posted.status);
+    }),
+    [payments, postedPayments],
+  );
+  const totalPages = Math.max(1, Math.ceil(visiblePayments.length / pageSize));
   const effectivePage = Math.min(currentPage, totalPages);
-  const pagedPayments = payments.slice((effectivePage - 1) * pageSize, effectivePage * pageSize);
+  const pagedPayments = visiblePayments.slice((effectivePage - 1) * pageSize, effectivePage * pageSize);
   const filteredQueueItems = selectedBankTab === 'ALL'
     ? bankQueueItems
     : bankQueueItems.filter((item) => item.bankCode === selectedBankTab);
@@ -757,7 +765,7 @@ export default function PaymentQueueDashboard() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {payments.length === 0 ? (
+              {visiblePayments.length === 0 ? (
                 <tr>
                   <td colSpan={5} className="px-6 py-16 text-center text-sm font-semibold text-slate-400">
                     No payment records found for the chosen date range.
@@ -930,7 +938,7 @@ export default function PaymentQueueDashboard() {
 
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs font-semibold text-slate-500">
-            Showing {payments.length > 0 ? (effectivePage - 1) * pageSize + 1 : 0} – {Math.min(effectivePage * pageSize, payments.length)} of {payments.length} payment records
+            Showing {visiblePayments.length > 0 ? (effectivePage - 1) * pageSize + 1 : 0} – {Math.min(effectivePage * pageSize, visiblePayments.length)} of {visiblePayments.length} payment records
           </span>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
