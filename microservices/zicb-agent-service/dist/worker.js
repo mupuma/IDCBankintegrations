@@ -94,11 +94,12 @@ const worker = (0, queue_1.buildWorker)(async (job) => {
         return result;
     }
     catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         if (queueId) {
             (0, db_1.updateQueueRequestStatus)(queueId, {
                 status: hasMoreRetries ? 'queued' : 'failed',
                 attempts,
-                lastError: String(error),
+                lastError: errorMessage,
                 updatedAt: new Date().toISOString(),
             });
         }
@@ -106,7 +107,7 @@ const worker = (0, queue_1.buildWorker)(async (job) => {
             await (0, zicbAgent_1.notifyAppOfQueueResult)(payload.queueId, {
                 success: false,
                 status: error?.status ?? 500,
-                error: String(error),
+                error: errorMessage,
             });
         }
         throw error;

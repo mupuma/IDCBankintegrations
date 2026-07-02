@@ -167,8 +167,72 @@ export function buildZicbPayload(payment: PaymentsResponse, transactionType: Pay
   return {
     service: 'BNK9900',
     request: {
-      ...baseRequest,
+      userName: 'SageSystem',
+      customerId: baseRequest.customerId,
+      ipAddress: '0.0.0.0',
+      srcAcc: baseRequest.srcAcc,
+      destAcc,
+      amount,
+      destCurrency: payCurrency,
+      srcCurrency: payCurrency,
+      payCurrency,
       transferTyp: transactionType === 'DDACCT' ? 'DDACC' : transactionType,
+      destBranch,
+      srcBranch: baseRequest.srcBranch,
+      bankName: baseRequest.bankName,
+      sortCode: baseRequest.sortCode,
+      remarks: baseRequest.remarks,
+      payDate,
+      beneName: baseRequest.accountName,
+      senderName: baseRequest.srcName,
+      senderEmail: baseRequest.email,
+      sendermobileno: baseRequest.phoneNumber,
+      beneEmail: baseRequest.email,
+      beneMobileNo: baseRequest.phoneNumber,
+      senderAddress1,
+      senderAddress2,
+      senderAddress3,
+      swiftCode: baseRequest.swiftCode,
+      transferRef,
     },
   };
+}
+
+export function validateZicbPayload(payload: { service: string; request: Record<string, unknown> }) {
+  const errors: string[] = [];
+  const request = payload.request;
+  const value = (field: string) => String(request[field] ?? '').trim();
+  const requireFields = (fields: string[]) => fields.forEach((field) => {
+    if (!value(field)) errors.push(`request.${field} is required`);
+  });
+  const validateDate = () => {
+    const date = value('payDate');
+    const parsed = new Date(`${date}T00:00:00Z`);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== date) {
+      errors.push('request.payDate must be a valid YYYY-MM-DD date');
+    }
+  };
+  const amount = Number(request.amount);
+  if (!Number.isFinite(amount) || amount <= 0) errors.push('request.amount must be a positive number');
+
+  if (payload.service === 'ZB8628') {
+    requireFields(['destAcc', 'destBranch', 'payDate', 'payCurrency', 'remarks', 'transferRef']);
+    validateDate();
+    if (!/^[A-Z]{3}$/.test(value('payCurrency').toUpperCase())) errors.push('request.payCurrency must be a three-letter currency code');
+    return errors;
+  }
+
+  if (payload.service !== 'BNK9900') return ['service must be ZB8628 or BNK9900'];
+  requireFields([
+    'userName', 'customerId', 'ipAddress', 'srcAcc', 'destAcc', 'destCurrency',
+    'srcCurrency', 'payCurrency', 'transferTyp', 'destBranch', 'srcBranch',
+    'bankName', 'sortCode', 'remarks', 'payDate', 'beneName', 'senderName',
+    'senderAddress1', 'senderAddress2', 'senderAddress3',
+  ]);
+  if (!['RTGS', 'DDACC'].includes(value('transferTyp').toUpperCase())) errors.push('request.transferTyp must be RTGS or DDACC');
+  validateDate();
+  for (const field of ['destCurrency', 'srcCurrency', 'payCurrency']) {
+    if (!/^[A-Z]{3}$/.test(value(field).toUpperCase())) errors.push(`request.${field} must be a three-letter currency code`);
+  }
+  return errors;
 }

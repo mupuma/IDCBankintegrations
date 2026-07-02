@@ -1,4 +1,6 @@
-import type { JobResult, PaymentsResponse } from './types';
+import 'dotenv/config';
+import type { JobResult, PaymentsResponse, ZicbServicePayload } from './types';
+import { assertValidZicbPayload, isZicbServicePayload } from './zicbValidation';
 
 const QUEUE_URL = process.env.ZICB_BANK_API_URL;
 const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
@@ -12,27 +14,12 @@ const MOCK_SUCCESS_RESPONSE = process.env.ZICB_MOCK_SUCCESS_RESPONSE === 'true';
 function mergeDefaults(payment: PaymentsResponse): PaymentsResponse {
   return {
     ...payment,
-    accountNumber: payment.accountNumber || DEFAULT_SOURCE_ACCOUNT,
-    branchCode: payment.branchCode || DEFAULT_SOURCE_BRANCH,
     accountName: payment.accountName || DEFAULT_USER_NAME,
     vendorId: payment.vendorId || DEFAULT_CUSTOMER_ID,
     ipAddress: payment.ipAddress || DEFAULT_IP_ADDRESS,
+    srcAcc: payment.srcAcc || DEFAULT_SOURCE_ACCOUNT,
+    srcBranch: payment.srcBranch || DEFAULT_SOURCE_BRANCH,
   };
-}
-
-export interface ZicbServicePayload {
-  service: string;
-  request: Record<string, unknown>;
-}
-
-function isZicbServicePayload(value: unknown): value is ZicbServicePayload {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as any).service === 'string' &&
-    typeof (value as any).request === 'object' &&
-    (value as any).request !== null
-  );
 }
 
 export const notifyAppOfQueueResult = async (queueId: string, result: JobResult) => {
@@ -99,7 +86,7 @@ function buildPayload(payment: PaymentsResponse) {
   return {
     service: 'BNK9900',
     request: {
-      userName: merged.accountName,
+      userName: DEFAULT_USER_NAME,
       customerId: merged.vendorId,
       ipAddress: merged.ipAddress,
       srcAcc,
@@ -116,7 +103,7 @@ function buildPayload(payment: PaymentsResponse) {
       remarks: merged.remarks || transferRef,
       payDate,
       beneName: merged.accountName,
-      senderName: merged.accountName || merged.vendorId,
+      senderName: srcName,
       senderEmail: merged.email || '',
       sendermobileno: merged.phoneNumber || '',
       beneEmail: '',
@@ -130,6 +117,21 @@ function buildPayload(payment: PaymentsResponse) {
       transferRef,
     },
   };
+}
+
+export function prepareZicbPayload(payment: PaymentsResponse | ZicbServicePayload): ZicbServicePayload {
+  const payload = isZicbServicePayload(payment)
+    ? { service: payment.service.trim(), request: { ...payment.request } }
+    : buildPayload(payment);
+
+  if (payload.service === 'BNK9900') {
+    if (process.env.ZICB_USER_NAME) payload.request.userName = DEFAULT_USER_NAME;
+    if (process.env.ZICB_IP_ADDRESS) payload.request.ipAddress = DEFAULT_IP_ADDRESS;
+    payload.request.transferTyp = String(payload.request.transferTyp ?? '').trim().toUpperCase();
+  }
+
+  assertValidZicbPayload(payload);
+  return payload;
 }
 
 function buildPositiveResponse(payload: ZicbServicePayload) {
@@ -151,14 +153,36 @@ function buildPositiveResponse(payload: ZicbServicePayload) {
   };
 }
 
+function readBankMessage(data: unknown) {
+  if (!data || typeof data !== 'object') return '';
+  const body = data as Record<string, unknown>;
+  const nested = body.response && typeof body.response === 'object'
+    ? body.response as Record<string, unknown>
+    : undefined;
+  for (const value of [
+    body.responseMessage, body.message, body.error, body.description,
+    nested?.responseMessage, nested?.message, nested?.error, nested?.description,
+  ]) {
+    if (typeof value === 'string' && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function isBankBusinessFailure(data: unknown) {
+  if (!data || typeof data !== 'object') return false;
+  const body = data as Record<string, unknown>;
+  const status = String(body.status ?? '').trim().toUpperCase();
+  const responseCode = String(body.responseCode ?? '').trim().toUpperCase();
+  return ['FAILED', 'FAILURE', 'ERROR', 'REJECTED', 'DECLINED'].includes(status)
+    || Boolean(responseCode && !['00', '0', 'SUCCESS'].includes(responseCode));
+}
+
 export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePayload): Promise<JobResult> {
   if (!QUEUE_URL && !MOCK_SUCCESS_RESPONSE) {
     throw new Error('Missing ZICB_BANK_API_URL environment variable');
   }
 
-  const payload = isZicbServicePayload(payment)
-    ? { service: payment.service, request: payment.request }
-    : buildPayload(payment);
+  const payload = prepareZicbPayload(payment);
   const body = JSON.stringify(payload);
 
   if (MOCK_SUCCESS_RESPONSE) {
@@ -170,6 +194,10 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
       status: 200,
       data,
     };
+  }
+
+  if (!process.env.AUTH_KEY?.trim()) {
+    throw new Error('Missing AUTH_KEY environment variable');
   }
 
   const queueUrl = QUEUE_URL;
@@ -195,8 +223,7 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
       method: 'POST',
       headers: { 
         'Content-Type': 'application/json',
-        "Authkey": process.env.AUTH_KEY || '',
-        "ServiceKey": process.env.SERVICE_ID || '',
+        'AuthKey': process.env.AUTH_KEY || '',
       },
       body,
     });
@@ -233,7 +260,11 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
     data = text;
   }
 
-  if (!response.ok) {
+  const businessFailure = isBankBusinessFailure(data);
+  const success = response.ok && !businessFailure;
+  const bankMessage = readBankMessage(data);
+
+  if (!success) {
     console.error('[ZICB] queue request failed', {
       status: response.status,
       statusText: response.statusText,
@@ -243,9 +274,11 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
   }
 
   return {
-    success: response.ok,
+    success,
     status: response.status,
     data,
-    error: response.ok ? undefined : `ZICB send failed with status ${response.status}`,
+    error: success
+      ? undefined
+      : `ZICB rejected the transfer${bankMessage ? `: ${bankMessage}` : ''} (HTTP ${response.status})`,
   };
 }

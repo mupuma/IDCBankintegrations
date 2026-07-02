@@ -1,5 +1,5 @@
 import type { PaymentsResponse } from '../../models/dtos';
-import { buildZicbPayload } from './payloadBuilders';
+import { buildZicbPayload, validateZicbPayload } from './payloadBuilders';
 import { resolveSourceBank } from '@/app/lib/sourceAccounts';
 
 export { resolveSourceBank };
@@ -56,6 +56,10 @@ export async function createZicbPayload(payment: PaymentsResponse, sourceBank?: 
 export async function sendZicbPayment(payment: PaymentsResponse, queueId?: string, sourceBank?: string | null) {
   const src = sourceBank ? await resolveSourceBank(sourceBank) : null;
   const payload = buildZicbPayload(mergeZicbDefaults(payment, src || undefined), payment.transactionType, src || undefined);
+  const validationErrors = validateZicbPayload(payload);
+  if (validationErrors.length) {
+    throw new Error(`Invalid ZICB payload: ${validationErrors.join('; ')}`);
+  }
 
   if (queueId) {
     return postToQueue({ ...payload, queueId });

@@ -99,11 +99,12 @@ const worker = buildWorker(async (job) => {
 
     return result;
   } catch (error: any) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
     if (queueId) {
       updateQueueRequestStatus(queueId, {
         status: hasMoreRetries ? 'queued' : 'failed',
         attempts,
-        lastError: String(error),
+        lastError: errorMessage,
         updatedAt: new Date().toISOString(),
       });
     }
@@ -111,7 +112,7 @@ const worker = buildWorker(async (job) => {
       await notifyAppOfQueueResult(payload.queueId, {
         success: false,
         status: error?.status ?? 500,
-        error: String(error),
+        error: errorMessage,
       });
     }
     throw error;

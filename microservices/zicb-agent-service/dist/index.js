@@ -8,25 +8,28 @@ const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const queue_1 = require("./queue");
 const db_1 = require("./db");
+const zicbValidation_1 = require("./zicbValidation");
+const zicbAgent_1 = require("./zicbAgent");
 dotenv_1.default.config();
 (0, db_1.initDatabase)();
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 4001);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
-function isZicbServicePayload(value) {
-    return (typeof value === 'object' &&
-        value !== null &&
-        typeof value.service === 'string' &&
-        typeof value.request === 'object' &&
-        value.request !== null);
-}
 app.post('/payments', async (req, res) => {
     const body = req.body;
     const queueId = body?.queueId
         || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     const sourceBank = body?.sourceBank;
-    if (isZicbServicePayload(body)) {
+    if ((0, zicbValidation_1.isZicbServicePayload)(body)) {
+        const validationErrors = (0, zicbValidation_1.validateZicbPayload)(body);
+        if (validationErrors.length) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid ZICB payload',
+                validationErrors,
+            });
+        }
         await (0, db_1.insertQueueRequest)({
             queueId,
             bankCode: 'ZICB',
@@ -51,6 +54,17 @@ app.post('/payments', async (req, res) => {
     }
     if (!payment || typeof payment !== 'object') {
         return res.status(400).json({ success: false, error: 'payment object is required' });
+    }
+    try {
+        (0, zicbAgent_1.prepareZicbPayload)(payment);
+    }
+    catch (error) {
+        const validationErrors = error.validationErrors;
+        return res.status(400).json({
+            success: false,
+            error: 'Invalid ZICB payment',
+            validationErrors: validationErrors ?? [String(error)],
+        });
     }
     await (0, db_1.insertQueueRequest)({
         queueId,

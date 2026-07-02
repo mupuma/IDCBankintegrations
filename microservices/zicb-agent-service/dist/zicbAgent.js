@@ -1,7 +1,10 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.notifyAppOfQueueResult = void 0;
+exports.prepareZicbPayload = prepareZicbPayload;
 exports.sendZicbPayment = sendZicbPayment;
+require("dotenv/config");
+const zicbValidation_1 = require("./zicbValidation");
 const QUEUE_URL = process.env.ZICB_BANK_API_URL;
 const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
 const DEFAULT_SOURCE_ACCOUNT = process.env.ZICB_SOURCE_ACCOUNT ?? '';
@@ -13,19 +16,12 @@ const MOCK_SUCCESS_RESPONSE = process.env.ZICB_MOCK_SUCCESS_RESPONSE === 'true';
 function mergeDefaults(payment) {
     return {
         ...payment,
-        accountNumber: payment.accountNumber || DEFAULT_SOURCE_ACCOUNT,
-        branchCode: payment.branchCode || DEFAULT_SOURCE_BRANCH,
         accountName: payment.accountName || DEFAULT_USER_NAME,
         vendorId: payment.vendorId || DEFAULT_CUSTOMER_ID,
         ipAddress: payment.ipAddress || DEFAULT_IP_ADDRESS,
+        srcAcc: payment.srcAcc || DEFAULT_SOURCE_ACCOUNT,
+        srcBranch: payment.srcBranch || DEFAULT_SOURCE_BRANCH,
     };
-}
-function isZicbServicePayload(value) {
-    return (typeof value === 'object' &&
-        value !== null &&
-        typeof value.service === 'string' &&
-        typeof value.request === 'object' &&
-        value.request !== null);
 }
 const notifyAppOfQueueResult = async (queueId, result) => {
     if (!APP_API_URL) {
@@ -88,7 +84,7 @@ function buildPayload(payment) {
     return {
         service: 'BNK9900',
         request: {
-            userName: merged.accountName,
+            userName: DEFAULT_USER_NAME,
             customerId: merged.vendorId,
             ipAddress: merged.ipAddress,
             srcAcc,
@@ -105,7 +101,7 @@ function buildPayload(payment) {
             remarks: merged.remarks || transferRef,
             payDate,
             beneName: merged.accountName,
-            senderName: merged.accountName || merged.vendorId,
+            senderName: srcName,
             senderEmail: merged.email || '',
             sendermobileno: merged.phoneNumber || '',
             beneEmail: '',
@@ -119,6 +115,20 @@ function buildPayload(payment) {
             transferRef,
         },
     };
+}
+function prepareZicbPayload(payment) {
+    const payload = (0, zicbValidation_1.isZicbServicePayload)(payment)
+        ? { service: payment.service.trim(), request: { ...payment.request } }
+        : buildPayload(payment);
+    if (payload.service === 'BNK9900') {
+        if (process.env.ZICB_USER_NAME)
+            payload.request.userName = DEFAULT_USER_NAME;
+        if (process.env.ZICB_IP_ADDRESS)
+            payload.request.ipAddress = DEFAULT_IP_ADDRESS;
+        payload.request.transferTyp = String(payload.request.transferTyp ?? '').trim().toUpperCase();
+    }
+    (0, zicbValidation_1.assertValidZicbPayload)(payload);
+    return payload;
 }
 function buildPositiveResponse(payload) {
     const request = payload.request;
@@ -137,13 +147,36 @@ function buildPositiveResponse(payload) {
         completedAt: new Date().toISOString(),
     };
 }
+function readBankMessage(data) {
+    if (!data || typeof data !== 'object')
+        return '';
+    const body = data;
+    const nested = body.response && typeof body.response === 'object'
+        ? body.response
+        : undefined;
+    for (const value of [
+        body.responseMessage, body.message, body.error, body.description,
+        nested?.responseMessage, nested?.message, nested?.error, nested?.description,
+    ]) {
+        if (typeof value === 'string' && value.trim())
+            return value.trim();
+    }
+    return '';
+}
+function isBankBusinessFailure(data) {
+    if (!data || typeof data !== 'object')
+        return false;
+    const body = data;
+    const status = String(body.status ?? '').trim().toUpperCase();
+    const responseCode = String(body.responseCode ?? '').trim().toUpperCase();
+    return ['FAILED', 'FAILURE', 'ERROR', 'REJECTED', 'DECLINED'].includes(status)
+        || Boolean(responseCode && !['00', '0', 'SUCCESS'].includes(responseCode));
+}
 async function sendZicbPayment(payment) {
     if (!QUEUE_URL && !MOCK_SUCCESS_RESPONSE) {
         throw new Error('Missing ZICB_BANK_API_URL environment variable');
     }
-    const payload = isZicbServicePayload(payment)
-        ? { service: payment.service, request: payment.request }
-        : buildPayload(payment);
+    const payload = prepareZicbPayload(payment);
     const body = JSON.stringify(payload);
     if (MOCK_SUCCESS_RESPONSE) {
         const data = buildPositiveResponse(payload);
@@ -154,18 +187,21 @@ async function sendZicbPayment(payment) {
             data,
         };
     }
+    if (!process.env.AUTH_KEY?.trim()) {
+        throw new Error('Missing AUTH_KEY environment variable');
+    }
     const queueUrl = QUEUE_URL;
     if (!queueUrl) {
         throw new Error('Missing ZICB_BANK_API_URL environment variable');
     }
     console.debug('[ZICB] sendZicbPayment request', {
         queueUrl,
-        payloadType: isZicbServicePayload(payment) ? 'servicePayload' : 'PaymentsResponse',
+        payloadType: (0, zicbValidation_1.isZicbServicePayload)(payment) ? 'servicePayload' : 'PaymentsResponse',
         payloadSummary: {
-            service: isZicbServicePayload(payment) ? payment.service : undefined,
-            requestKeys: isZicbServicePayload(payment) ? Object.keys(payment.request) : Object.keys(payload.request),
-            amount: isZicbServicePayload(payment) ? undefined : payment.amount,
-            accountNumber: isZicbServicePayload(payment) ? undefined : payment.accountNumber,
+            service: (0, zicbValidation_1.isZicbServicePayload)(payment) ? payment.service : undefined,
+            requestKeys: (0, zicbValidation_1.isZicbServicePayload)(payment) ? Object.keys(payment.request) : Object.keys(payload.request),
+            amount: (0, zicbValidation_1.isZicbServicePayload)(payment) ? undefined : payment.amount,
+            accountNumber: (0, zicbValidation_1.isZicbServicePayload)(payment) ? undefined : payment.accountNumber,
         },
     });
     let response;
@@ -175,8 +211,7 @@ async function sendZicbPayment(payment) {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                "Authkey": process.env.AUTH_KEY || '',
-                "ServiceKey": process.env.SERVICE_ID || '',
+                'AuthKey': process.env.AUTH_KEY || '',
             },
             body,
         });
@@ -213,7 +248,10 @@ async function sendZicbPayment(payment) {
         });
         data = text;
     }
-    if (!response.ok) {
+    const businessFailure = isBankBusinessFailure(data);
+    const success = response.ok && !businessFailure;
+    const bankMessage = readBankMessage(data);
+    if (!success) {
         console.error('[ZICB] queue request failed', {
             status: response.status,
             statusText: response.statusText,
@@ -222,9 +260,11 @@ async function sendZicbPayment(payment) {
         });
     }
     return {
-        success: response.ok,
+        success,
         status: response.status,
         data,
-        error: response.ok ? undefined : `ZICB send failed with status ${response.status}`,
+        error: success
+            ? undefined
+            : `ZICB rejected the transfer${bankMessage ? `: ${bankMessage}` : ''} (HTTP ${response.status})`,
     };
 }

@@ -94,7 +94,7 @@ export async function processQueueItem(queueId: string) {
       item.status = item.attempts < MAX_RETRIES ? 'queued' : 'failed';
     }
   } catch (error: any) {
-    item.lastError = String(error);
+    item.lastError = error instanceof Error ? error.message : String(error);
     item.status = item.attempts < MAX_RETRIES ? 'queued' : 'failed';
   }
 

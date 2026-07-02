@@ -65,6 +65,37 @@ type BankValidationRule = {
   customValidators?: Array<(payment: EnrichedPayment) => string | null>;
 };
 
+const ZICB_FIELD_LABELS: Record<string, string> = {
+  userName: 'ZICB user name',
+  customerId: 'customer/vendor ID',
+  ipAddress: 'sender IP address',
+  srcAcc: 'source account',
+  destAcc: 'beneficiary account',
+  destCurrency: 'beneficiary currency',
+  srcCurrency: 'source currency',
+  payCurrency: 'payment currency',
+  transferTyp: 'transfer type',
+  destBranch: 'beneficiary branch',
+  srcBranch: 'source branch',
+  bankName: 'beneficiary bank name',
+  sortCode: 'bank sort code',
+  remarks: 'payment remarks',
+  payDate: 'payment date',
+  beneName: 'beneficiary name',
+  senderName: 'sender name',
+  senderAddress1: 'sender street address',
+  senderAddress2: 'sender town/area',
+  senderAddress3: 'sender plot or additional address',
+};
+
+function formatZicbValidationIssue(issue: unknown) {
+  const message = String(issue ?? '').trim();
+  const match = message.match(/^request\.([A-Za-z0-9_]+)\s+(.*)$/);
+  if (!match) return message;
+  const label = ZICB_FIELD_LABELS[match[1]] || match[1];
+  return `${label.charAt(0).toUpperCase()}${label.slice(1)} ${match[2]}.`;
+}
+
 const BANK_VALIDATION_CONFIG: Record<BankCode, BankValidationRule> = {
   IZB: {
     required: [
@@ -621,7 +652,7 @@ export default function PaymentQueueDashboard() {
     const validation = validatePayment(effectivePayment, bankCode, effectiveType);
     if (!validation.valid) {
       setValidationResults((prev) => ({ ...prev, [payment.paymentId]: validation }));
-      setMessage('Payment contains validation problems. Fix before pushing.');
+      setMessage(`Payment cannot be submitted: ${validation.errors.join('; ')}`);
       clearMessage();
       return;
     }
@@ -659,7 +690,17 @@ export default function PaymentQueueDashboard() {
       }
 
       if (!response.ok || !result.success) {
-        throw new Error(result?.error || 'Queue push failed');
+        const validationErrors = Array.isArray(result?.validationErrors)
+          ? result.validationErrors.map(formatZicbValidationIssue)
+          : [];
+        if (validationErrors.length) {
+          setValidationResults((prev) => ({
+            ...prev,
+            [payment.paymentId]: { valid: false, errors: validationErrors },
+          }));
+          throw new Error(`ZICB transfer cannot be submitted: ${validationErrors.join(' ')}`);
+        }
+        throw new Error(result?.error || 'The payment could not be submitted to the selected bank queue.');
       }
 
       const queueId = String(result.queueId || '');

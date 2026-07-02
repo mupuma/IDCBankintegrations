@@ -508,10 +508,10 @@
         "queueId": "3883c488-cdd4-4fc2-96cb-95255472b2a6"
       },
       "status": "queued",
-      "attempts": 8,
+      "attempts": 9,
       "createdAt": "2026-06-26T11:04:29.373Z",
-      "updatedAt": "2026-06-26T13:18:38.185Z",
-      "lastError": "TypeError: fetch failed"
+      "updatedAt": "2026-07-02T07:12:02.092Z",
+      "lastError": "Invalid ZICB payload: request.destAcc is required; request.destCurrency is required; request.srcCurrency is required; request.destBranch is required; request.beneName is required; request.senderAddress1 is required; request.senderAddress2 is required; request.senderAddress3 is required; request.destCurrency must be a three-letter currency code; request.srcCurrency must be a three-letter currency code"
     },
     {
       "queueId": "e53764ab-fc1d-427a-b173-c05e80cf2851",
@@ -547,10 +547,10 @@
         "queueId": "e53764ab-fc1d-427a-b173-c05e80cf2851"
       },
       "status": "queued",
-      "attempts": 6,
+      "attempts": 7,
       "createdAt": "2026-06-26T13:27:03.203Z",
-      "updatedAt": "2026-06-26T13:59:09.062Z",
-      "lastError": "TypeError: fetch failed"
+      "updatedAt": "2026-07-02T07:12:02.077Z",
+      "lastError": "Invalid ZICB payload: request.destAcc is required; request.destCurrency is required; request.srcCurrency is required; request.destBranch is required; request.beneName is required; request.senderAddress1 is required; request.senderAddress2 is required; request.senderAddress3 is required; request.destCurrency must be a three-letter currency code; request.srcCurrency must be a three-letter currency code"
     },
     {
       "queueId": "c85bcd9b-42b5-4184-a1d0-b64d846a9bcc",
@@ -586,10 +586,10 @@
         "queueId": "c85bcd9b-42b5-4184-a1d0-b64d846a9bcc"
       },
       "status": "queued",
-      "attempts": 5,
+      "attempts": 7,
       "createdAt": "2026-06-26T13:43:50.560Z",
-      "updatedAt": "2026-06-26T13:59:45.529Z",
-      "lastError": "TypeError: fetch failed"
+      "updatedAt": "2026-07-02T07:44:03.041Z",
+      "lastError": "Invalid ZICB payload: request.destAcc is required; request.destCurrency is required; request.srcCurrency is required; request.destBranch is required; request.beneName is required; request.senderAddress1 is required; request.senderAddress2 is required; request.senderAddress3 is required; request.destCurrency must be a three-letter currency code; request.srcCurrency must be a three-letter currency code"
     }
   ]
 }

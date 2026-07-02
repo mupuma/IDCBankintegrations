@@ -11,6 +11,7 @@ import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueReques
 import { resolveSourceBank } from '../../../lib/banks/zicb';
 import { IzbPayment } from '../../../models/internal/IzbPayment';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
+import { buildZicbPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -124,6 +125,15 @@ export async function POST(request: NextRequest) {
       (payment as any).srcAcc = srcAcc;
       (payment as any).srcBranch = srcBranch;
       (payment as any).srcName = srcName || 'ZICB';
+
+      const zicbPayload = buildZicbPayload(payment, payment.transactionType, source);
+      const validationErrors = validateZicbPayload(zicbPayload);
+      if (validationErrors.length) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid ZICB transfer', validationErrors },
+          { status: 400 },
+        );
+      }
 
       console.log('✅ ZICB validation PASSED. Payment enriched with source bank details.');
 

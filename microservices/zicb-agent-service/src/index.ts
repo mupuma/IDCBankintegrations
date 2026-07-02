@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { paymentQueue } from './queue';
 import { initDatabase, insertQueueRequest } from './db';
 import type { PaymentJobPayload, PaymentsResponse } from './types';
+import { isZicbServicePayload, validateZicbPayload } from './zicbValidation';
+import { prepareZicbPayload } from './zicbAgent';
 
 dotenv.config();
 initDatabase();
@@ -14,16 +16,6 @@ const port = Number(process.env.PORT || 4001);
 app.use(cors());
 app.use(express.json());
 
-function isZicbServicePayload(value: unknown): value is { service: string; request: Record<string, unknown> } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as any).service === 'string' &&
-    typeof (value as any).request === 'object' &&
-    (value as any).request !== null
-  );
-}
-
 app.post('/payments', async (req, res) => {
   const body = req.body as PaymentJobPayload | unknown;
   const queueId = (body as { queueId?: unknown })?.queueId as string | undefined
@@ -32,6 +24,14 @@ app.post('/payments', async (req, res) => {
   const sourceBank = (body as { sourceBank?: unknown })?.sourceBank as string | undefined;
 
   if (isZicbServicePayload(body)) {
+    const validationErrors = validateZicbPayload(body);
+    if (validationErrors.length) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid ZICB payload',
+        validationErrors,
+      });
+    }
     await insertQueueRequest({
       queueId,
       bankCode: 'ZICB',
@@ -61,6 +61,17 @@ app.post('/payments', async (req, res) => {
 
   if (!payment || typeof payment !== 'object') {
     return res.status(400).json({ success: false, error: 'payment object is required' });
+  }
+
+  try {
+    prepareZicbPayload(payment);
+  } catch (error) {
+    const validationErrors = (error as Error & { validationErrors?: string[] }).validationErrors;
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid ZICB payment',
+      validationErrors: validationErrors ?? [String(error)],
+    });
   }
 
   await insertQueueRequest({
