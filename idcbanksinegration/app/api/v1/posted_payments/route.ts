@@ -5,13 +5,27 @@ import { BANK_CODES } from '../../../lib/banks';
 import { isAuthError, requirePermission } from '../../../lib/rbac';
 import { PERMISSIONS } from '../../../lib/permissions';
 import { logAuditEvent } from '../../../lib/auditLog';
-import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing, type BankQueueItem } from '../../../lib/bankQueue';
-import { connectDatabase } from '../../../lib/db';
+import {
+  enqueuePayment,
+  getQueueItem,
+  getAllQueueItems,
+  getQueueItemsByBank,
+  ensureQueueItemProcessing,
+  isStaleProcessingRecord,
+  rehydrateAndProcessQueueRecord,
+  type BankQueueItem,
+} from '../../../lib/bankQueue';
+import { connectDatabase, getSequelize } from '../../../lib/db';
+import { createHash } from 'node:crypto';
+import { PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
 import { resolveSourceBank } from '../../../lib/banks/zicb';
 import { IzbPayment } from '../../../models/internal/IzbPayment';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 import { buildZicbPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
+import { getBankIntegration } from '@/app/lib/bankIntegrations';
+import { h2hEnabled } from '@/app/lib/zicb/config';
+import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -39,6 +53,21 @@ export async function POST(request: NextRequest) {
   }
 
   // FIX: ZICB source bank validation with TRIM
+  if (bankCode === 'ZICB' && h2hEnabled()) {
+    if (!sourceBankCode) return NextResponse.json({ error: 'A source account is required' }, { status: 400 });
+    try {
+      const source = await resolveSourceBank(sourceBankCode);
+      if (!source?.accountNumber || !source.transit) return NextResponse.json({ error: 'Source account details are incomplete' }, { status: 400 });
+      const result = await enqueueH2h(payment, sourceBankCode);
+      await logAuditEvent({ userId: auth.id, username: auth.username, action: 'PAYMENT_POSTED', resourceType: 'payment',
+        resourceId: result.paymentId, correlationId: result.queueId, summary: `${auth.username} queued a ZICB H2H payment`,
+        details: { reference: result.reference, prcn: result.prcn_number }, request });
+      return NextResponse.json({ success: true, ...result, dispatchStrategy: 'h2h-ledger' }, { status: 202 });
+    } catch (error) {
+      return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Unable to queue H2H payment' }, { status: error instanceof LedgerError ? error.status : 400 });
+    }
+  }
+
   if (bankCode === 'ZICB') {
     console.log(`🔴 ZICB validation for sourceBank: ${sourceBankCode}`);
 
@@ -175,15 +204,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  await PaymentQueueRequest.create({
-    queueId,
-    paymentId,
-    bankCode,
-    sourceBank: String(body?.sourceBank ?? null),
-    paymentPayload: JSON.stringify(payment),
-    status: 'queued',
-    attempts: 0,
-  });
+  try {
+    const db = await getSequelize();
+    await db.transaction(async transaction => {
+      await PaymentDispatchReservation.create({ paymentKey: createHash('sha256').update(paymentId).digest('hex'), queueId, bankCode }, { transaction });
+      await PaymentQueueRequest.create({ queueId, paymentId, bankCode, sourceBank: sourceBankCode,
+        paymentPayload: JSON.stringify(payment), status: 'queued', attempts: 0 }, { transaction });
+    });
+  } catch (error: any) {
+    if (error?.name === 'SequelizeUniqueConstraintError') return NextResponse.json({ success: false, error: 'This payment already has a bank dispatch reservation', alreadyPosted: true, paymentId }, { status: 409 });
+    throw error;
+  }
 
   // If the payment is intended for IZB, also insert into the intermediary izB pending table
   try {
@@ -193,7 +224,7 @@ export async function POST(request: NextRequest) {
       await IzbPayment.create({
         paymentId,
         paymentDate,
-        sourceBank: String(body?.sourceBank ?? 'IZB'),
+        sourceBank: sourceBankCode ?? 'IZB',
         paymentPayload: JSON.stringify(payment),
         status: 'queued',
         attempts: 0,
@@ -203,8 +234,12 @@ export async function POST(request: NextRequest) {
     console.error('Failed to insert IZB intermediary record', err);
   }
 
-  const queueItem = enqueuePayment(bankCode, payment, queueId, String(body?.sourceBank ?? null));
-  void ensureQueueItemProcessing(queueItem.id);
+  const queueItem = enqueuePayment(bankCode, payment, queueId, sourceBankCode);
+  const integration = getBankIntegration(bankCode);
+  let latestQueueItem = queueItem;
+  if (integration.dispatchStrategy === 'portal-push') {
+    latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
+  }
 
   const paymentRef =
     (payment as { paymentId?: string; transactionReference?: string; vendorName?: string }).paymentId ||
@@ -217,12 +252,13 @@ export async function POST(request: NextRequest) {
     action: 'PAYMENT_POSTED',
     resourceType: 'payment',
     resourceId: paymentId,
+    correlationId: queueId,
     summary: `${auth.username} posted payment ${paymentRef} to ${bankCode}`,
     details: {
       queueId,
       paymentId,
       bankCode,
-      sourceBank: body?.sourceBank ?? null,
+      sourceBank: sourceBankCode,
       vendorName: (payment as { vendorName?: string }).vendorName ?? null,
       amount: (payment as { amount?: number | string }).amount ?? null,
     },
@@ -239,8 +275,8 @@ export async function POST(request: NextRequest) {
       await PaymentQueueRequest.create({
         queueId: `${queueId}-cb`,
         paymentId: String((payment as any).paymentId || `${queueId}-cb`),
-        bankCode,
-        sourceBank: String(body?.sourceBank ?? null),
+          bankCode,
+          sourceBank: sourceBankCode,
         paymentPayload: JSON.stringify({ type: 'cashbook', originalQueueId: queueId, payment }),
         status: 'queued',
         attempts: 0,
@@ -253,9 +289,10 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     success: true,
-    queueId: queueItem.id,
-    status: queueItem.status,
-    item: queueItem,
+    queueId: latestQueueItem.id,
+    status: latestQueueItem.status,
+    item: latestQueueItem,
+    dispatchStrategy: integration.dispatchStrategy,
   });
 }
 function mapQueueRecordToItem(record: PaymentQueueRequest): BankQueueItem | null {
@@ -320,10 +357,53 @@ export async function GET(request: NextRequest) {
 
   await connectDatabase();
 
+  const portalPushBanks = BANK_CODES.filter(
+    (code) => getBankIntegration(code).dispatchStrategy === 'portal-push',
+  );
+
+  if (portalPushBanks.length) {
+    const candidateWhere: any = {
+      bankCode: portalPushBanks,
+      status: ['queued', 'processing'],
+    };
+    if (bankCode) candidateWhere.bankCode = bankCode;
+    if (sourceBank) candidateWhere.sourceBank = sourceBank;
+
+    const candidateRecords = await PaymentQueueRequest.findAll({
+      where: candidateWhere,
+      order: [['updatedAt', 'ASC']],
+      limit: Number(process.env.QUEUE_RECOVERY_BATCH_SIZE || 10),
+    });
+
+    await Promise.all(candidateRecords.map(async (record) => {
+      // Persisted protocol is authoritative across rollout and rollback.
+      if (JSON.parse(record.paymentPayload)?.h2hProtocol === 'h2h-v1') return;
+      if (record.status === 'queued') {
+        await rehydrateAndProcessQueueRecord(record);
+        return;
+      }
+
+      if (isStaleProcessingRecord(record)) {
+        await PaymentQueueRequest.update(
+          {
+            status: record.bankCode === 'ZICB' ? 'unknown' : 'failed',
+            lastError: `Timed out waiting for ${record.bankCode} agent callback. Check agent worker, APP_API_URL, and BANK_PULL_API_KEY.`,
+            lockedBy: null,
+            lockedAt: null,
+          } as any,
+          { where: { queueId: record.queueId } },
+        );
+      }
+    }));
+  }
+
   if (queueId) {
     const queueItem = getQueueItem(queueId);
     if (queueItem) {
-      await ensureQueueItemProcessing(queueId);
+      const integration = getBankIntegration(queueItem.bankCode);
+      if (integration.dispatchStrategy === 'portal-push') {
+        await ensureQueueItemProcessing(queueId);
+      }
       return NextResponse.json({ success: true, item: queueItem });
     }
 
@@ -354,13 +434,15 @@ export async function GET(request: NextRequest) {
     .map(mapQueueRecordToItem)
     .filter((item): item is BankQueueItem => item !== null);
 
-  const mergedItems = [...memoryItems];
-  const existingIds = new Set(memoryItems.map((item) => item.id));
-  for (const item of dbItems) {
-    if (!existingIds.has(item.id)) {
-      mergedItems.push(item);
-    }
+  const mergedById = new Map<string, BankQueueItem>();
+  for (const item of memoryItems) {
+    mergedById.set(item.id, item);
   }
+  for (const item of dbItems) {
+    // Persisted rows are authoritative because agents report results to the DB.
+    mergedById.set(item.id, item);
+  }
+  const mergedItems = Array.from(mergedById.values());
 
   // sort by updatedAt descending for sensible paging order
   mergedItems.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());

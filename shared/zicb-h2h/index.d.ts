@@ -1,0 +1,17 @@
+export type Channel = 'INTERNAL' | 'RTGS' | 'DDACC';
+export type State = 'queued' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'failed' | 'rejected' | 'needs_review';
+export type Outcome = { state: State; error?: string; bankRef?: string; rawStatus?: string; details?: unknown };
+export type Batch = { reference: string; count: number; region_code: string; total_amount: number; transactions: Array<Record<string, any>> };
+export const CHANNELS: Channel[];
+export const PATHS: Record<Channel, string>;
+export function channelFor(type: unknown): Channel;
+export function validDate(value: unknown): boolean;
+export function units(value: unknown, scale?: number): bigint;
+export function paymentErrors(payment: any, scale?: number): string[];
+export function buildBatch(payment: any, options: { reference: string; prcn: string; regionCode: string; amountScale?: number }): Batch;
+export function validateBatch(channel: Channel, batch: unknown, scale?: number): string[];
+export function submissionOutcome(httpStatus: number, body: unknown): Outcome;
+export function itemOutcome(item: unknown, channel: Channel): Outcome;
+export function statusOutcome(body: unknown, batch: Batch, channel: Channel): Outcome;
+export function callbackErrors(body: unknown): string[];
+export function mergeOutcome(current: State, incoming: State): State;

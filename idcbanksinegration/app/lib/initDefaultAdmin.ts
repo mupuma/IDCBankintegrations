@@ -56,5 +56,3 @@ export async function ensureDefaultAdmin(): Promise<void> {
   return adminInitPromise;
 }
 
-// Trigger creation during module initialization when this file is imported.
-void ensureDefaultAdmin();

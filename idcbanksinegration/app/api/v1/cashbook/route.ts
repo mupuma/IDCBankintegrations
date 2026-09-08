@@ -9,6 +9,7 @@ import {
   cashbookConflictResponse,
   cashbookErrorResponse,
   cashbookInvalidRequestResponse,
+  cashbookResponseEnvelope,
   cashbookSavedResponse,
   normalizeReceiptRequest,
 } from '../../../lib/cashbookContract';
@@ -35,16 +36,16 @@ export async function POST(request: NextRequest) {
   const result = await processCashbookReceipt(receipt);
 
   if (result.success) {
-    return NextResponse.json(cashbookSavedResponse(), { status: 200 });
+    return NextResponse.json(cashbookResponseEnvelope(cashbookSavedResponse()), { status: 200 });
   }
 
   if (isCashbookAlreadyProcessed(result)) {
-    return NextResponse.json(cashbookConflictResponse(), { status: 409 });
+    return NextResponse.json(cashbookResponseEnvelope(cashbookConflictResponse()), { status: 409 });
   }
 
   if (isCashbookProcessError(result)) {
-    return NextResponse.json(cashbookErrorResponse(result.error), { status: 500 });
+    return NextResponse.json(cashbookResponseEnvelope(cashbookErrorResponse(result.error)), { status: 500 });
   }
 
-  return NextResponse.json(cashbookErrorResponse('Unknown cashbook processing error'), { status: 500 });
+  return NextResponse.json(cashbookResponseEnvelope(cashbookErrorResponse('Unknown cashbook processing error')), { status: 500 });
 }

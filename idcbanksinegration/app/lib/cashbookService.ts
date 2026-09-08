@@ -1,4 +1,4 @@
-import { Op } from 'sequelize';
+import { Op, Transaction } from 'sequelize';
 import sageSequelize, { connectSageDatabase } from '@/app/lib/sageDb';
 import { connectDatabase } from '@/app/lib/db';
 import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
@@ -60,10 +60,11 @@ const getCompanyCode = (): string => {
   return safeString(process.env.SAGE_DB_COMPANY ?? process.env.SAGE_DB_NAME ?? '', 6);
 };
 
-async function getNextBatchId(): Promise<string> {
+async function getNextBatchId(transaction?: Transaction): Promise<string> {
   const lastBatch = await Cbbctl.findOne({
     order: [['batchid', 'DESC']],
     attributes: ['batchid'],
+    transaction,
     raw: true,
   }) as any;
 
@@ -72,8 +73,8 @@ async function getNextBatchId(): Promise<string> {
   return String(next).padStart(6, '0');
 }
 
-async function updateCashbookOptions(batchId: string) {
-  const cboptio = await Cboptio.findOne({ where: { optionid: 'CB01' } });
+async function updateCashbookOptions(batchId: string, transaction?: Transaction) {
+  const cboptio = await Cboptio.findOne({ where: { optionid: 'CB01' }, transaction });
   if (!cboptio) {
     return;
   }
@@ -88,11 +89,11 @@ async function updateCashbookOptions(batchId: string) {
   cboptio.audttime = getCurrentTime();
   cboptio.audtuser = 'ADMIN';
   cboptio.audtorg = getCompanyCode();
-  await cboptio.save();
+  await cboptio.save({ transaction });
 }
 
-async function existingCashbookReference(reference: string): Promise<boolean> {
-  const existing = await Cbbthd.findOne({ where: { reference } });
+async function existingCashbookReference(reference: string, transaction?: Transaction): Promise<boolean> {
+  const existing = await Cbbthd.findOne({ where: { reference }, transaction });
   return Boolean(existing);
 }
 
@@ -178,7 +179,7 @@ function formatDetailNo(detailNo: number): string {
   return padNumericString(detailNo * 2, 10);
 }
 
-async function insertCbbctl(receipt: ReceiptRequest, batchId: string) {
+async function insertCbbctl(receipt: ReceiptRequest, batchId: string, transaction?: Transaction) {
   const date = getCurrentDate();
   const time = getCurrentTime();
   const creditAmount = Number(receipt.creditAmount ?? 0);
@@ -229,10 +230,10 @@ async function insertCbbctl(receipt: ReceiptRequest, batchId: string) {
     adjamount: 0,
     userid: 'ADMIN',
     singleref: 0,
-  });
+  }, { transaction });
 }
 
-async function insertCbbtdt(details: EntryDetails[], batchId: string, customerNo: string) {
+async function insertCbbtdt(details: EntryDetails[], batchId: string, customerNo: string, transaction?: Transaction) {
   const date = getCurrentDate();
   const time = getCurrentTime();
   const customer = await getCustomer(customerNo);
@@ -402,11 +403,11 @@ async function insertCbbtdt(details: EntryDetails[], batchId: string, customerNo
       revuniq: 0,
       newrevuniq: 0,
       rvdetailno: '',
-    });
+    }, { transaction });
   }
 }
 
-async function insertCbbtms(details: EntryDetails[], batchId: string, customerNo: string) {
+async function insertCbbtms(details: EntryDetails[], batchId: string, customerNo: string, transaction?: Transaction) {
   const date = getCurrentDate();
   const time = getCurrentTime();
   const customer = await getCustomer(customerNo);
@@ -467,11 +468,11 @@ async function insertCbbtms(details: EntryDetails[], batchId: string, customerNo
       idn: '',
       accountenc: EMPTY_SAGE_BINARY,
       emailsent: 0,
-    });
+    }, { transaction });
   }
 }
 
-async function insertCbbthd(receipt: ReceiptRequest, batchId: string) {
+async function insertCbbthd(receipt: ReceiptRequest, batchId: string, transaction?: Transaction) {
   const date = getCurrentDate();
   const time = getCurrentTime();
   const monthYear = getMonthYear();
@@ -484,8 +485,8 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string) {
     const reference = safeString(entry.referenceNo ?? receipt.transactionId, 22);
     const period = safeString(monthYear.month, 2);
     const fiscyr = safeString(monthYear.year, 4);
-    await insertCbbtdt(entry.details, batchId, entry.customerNo);
-    await insertCbbtms(entry.details, batchId, entry.customerNo);
+    await insertCbbtdt(entry.details, batchId, entry.customerNo, transaction);
+    await insertCbbtms(entry.details, batchId, entry.customerNo, transaction);
 
     await Cbbthd.create({
       batchid: batchId,
@@ -657,7 +658,7 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string) {
       revuniq: 0,
       newrevuniq: 0,
       enteredby: 'ADMIN',
-    });
+    }, { transaction });
   }
 }
 
@@ -789,10 +790,8 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
 
     await localReceipt.update({ status: 'processing' });
 
-    batchId = await getNextBatchId();
-    await insertCbbctl(receipt, batchId);
-    await insertCbbthd(receipt, batchId);
-    await updateCashbookOptions(batchId);
+    const written = await writeCashbookAtomically(receipt);
+    batchId = written.batchId;
     sagePosted = true;
 
     const message = `Cashbook transaction inserted into Sage batch ${batchId}`;
@@ -844,4 +843,36 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
       error: statusMessage,
     };
   }
+}
+
+async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = false) {
+  return sageSequelize.transaction(async transaction => {
+    // Serializes batch allocation across portal processes. The lock is released
+    // automatically on commit/rollback, including after a lost connection.
+    const [rows] = await sageSequelize.query(
+      "DECLARE @lockResult int; EXEC @lockResult = sp_getapplock @Resource = 'IDC_CASHBOOK_BATCH', @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 60000; SELECT @lockResult AS lockResult;",
+      { transaction },
+    );
+    const lockResult = Array.isArray(rows) && rows.length ? Number((rows[0] as any).lockResult) : NaN;
+    if (!Number.isFinite(lockResult) || lockResult < 0) throw new Error('Unable to acquire Sage cashbook posting lock');
+    const reference = safeString(receipt.entries[0]?.referenceNo || receipt.transactionId, 22);
+    const existing = deduplicate ? await Cbbthd.findOne({ where: { reference }, transaction }) : null;
+    if (existing) return { batchId: String(existing.get('batchid')), alreadyPosted: true };
+    const batchId = await getNextBatchId(transaction);
+    await insertCbbctl(receipt, batchId, transaction);
+    await insertCbbthd(receipt, batchId, transaction);
+    await updateCashbookOptions(batchId, transaction);
+    return { batchId, alreadyPosted: false };
+  });
+}
+
+export async function postConfirmedH2hCashbook(receipt: ReceiptRequest) {
+  // The H2H ledger owns retries. A stable, 22-character reference is checked
+  // inside the same Sage transaction as all writes, so a lost commit response
+  // can be recovered without creating another cashbook entry.
+  await connectSageDatabase();
+  const result = await writeCashbookAtomically(receipt, true);
+  await connectDatabase();
+  await updateProcessedTransaction(receipt, 200, `Cashbook transaction inserted into Sage batch ${result.batchId}`);
+  return result;
 }

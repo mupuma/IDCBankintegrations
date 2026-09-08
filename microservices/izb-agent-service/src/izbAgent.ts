@@ -1,31 +1,6 @@
-import { postCashbook } from './sageClient';
-import { notifyAppOfQueueResult } from './notify';
-
-export function buildIzbPayload(payment: any) {
-  const payload = {
-    service: 'IZB-PAYMENTS',
-    request: {
-      amount: Number(payment?.amount || payment?.paymentAmount || 0),
-      currency: payment?.currency || 'ZMW',
-      destinationAccount: payment?.destinationAccount || payment?.accountNumber,
-      reference: payment?.reference || payment?.transactionReference || `IZB-${Date.now()}`,
-      vendorId: payment?.vendorId || payment?.vendor || null,
-      remarks: payment?.remarks || payment?.narrative || null,
-    },
-  };
-  return payload;
-}
-
-export async function notifyAppOfResult(queueId: string, result: any) {
-  return notifyAppOfQueueResult(queueId, result);
-}
-
-export default { sendIzbPayment, buildIzbPayload };
 import type { JobResult, PaymentsResponse, IzbServicePayload } from './types';
 
-const QUEUE_URL = process.env.IZB_BANK_API_URL;
-const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
-const SOURCE_BANK_NAME = process.env.SOURCE_BANK_NAME || 'IZB';
+const IZB_BANK_API_URL = process.env.IZB_BANK_API_URL;
 
 function isIzbServicePayload(value: unknown): value is IzbServicePayload {
   return (
@@ -37,24 +12,22 @@ function isIzbServicePayload(value: unknown): value is IzbServicePayload {
   );
 }
 
-function formatDate(value: string | Date) {
+function formatDate(value?: string | Date) {
+  if (!value) return new Date().toISOString().slice(0, 10);
   const date = new Date(value);
-  return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
+  return isNaN(date.getTime()) ? new Date().toISOString().slice(0, 10) : date.toISOString().slice(0, 10);
 }
 
 function buildCommonRequest(payment: PaymentsResponse) {
-  const payDate = formatDate(payment.transactionDate);
+  const transferRef = payment.transactionReference || payment.paymentId || `IZB-${Date.now()}`;
   const amount = Number(payment.amount ?? 0);
   const payCurrency = payment.currency || payment.currencyCode || 'ZMW';
-  const transferRef = payment.transactionReference || '';
-  const remarks = payment.remarks || transferRef;
-  const senderName = payment.accountName || payment.vendorId || 'SageSystem';
 
   return {
-    payDate,
+    payDate: formatDate(payment.transactionDate),
     amount,
     payCurrency,
-    remarks,
+    remarks: payment.remarks || transferRef,
     transferRef,
     customerId: payment.vendorId || '',
     bankName: payment.bankName || '',
@@ -70,11 +43,11 @@ function buildCommonRequest(payment: PaymentsResponse) {
     streetName: payment.physicalAddress?.streetName || '',
     town: payment.physicalAddress?.town || '',
     plotNo: payment.physicalAddress?.plotNo || '',
-    senderName,
+    senderName: payment.accountName || payment.vendorId || 'SageSystem',
   };
 }
 
-function buildIzbPayload(payment: PaymentsResponse, transactionType?: string) {
+export function buildIzbPayload(payment: PaymentsResponse, transactionType?: string): IzbServicePayload {
   const requestBase = buildCommonRequest(payment);
 
   if (transactionType === 'INT') {
@@ -111,94 +84,35 @@ function buildIzbPayload(payment: PaymentsResponse, transactionType?: string) {
   };
 }
 
-async function postToQueue(payload: unknown): Promise<JobResult> {
-  if (!QUEUE_URL) {
+async function postToIzb(payload: unknown): Promise<JobResult> {
+  if (!IZB_BANK_API_URL) {
     throw new Error('Missing IZB_BANK_API_URL environment variable');
   }
 
-  const response = await fetch(QUEUE_URL, {
+  const response = await fetch(IZB_BANK_API_URL, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
 
   const text = await response.text();
   let data: unknown;
-
-  try {
-    data = text ? JSON.parse(text) : undefined;
-  } catch {
-    data = text;
-  }
+  try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
 
   return {
     success: response.ok,
     status: response.status,
     data,
-    error: response.ok ? undefined : `IZB queue request failed with status ${response.status}`,
+    error: response.ok ? undefined : `IZB request failed with status ${response.status}`,
   };
 }
 
 export async function sendIzbPayment(payment: PaymentsResponse | IzbServicePayload): Promise<JobResult> {
-  // If portal APP_API_URL is configured, enqueue the payment in the portal queue
-  if (APP_API_URL) {
-    const body = isIzbServicePayload(payment)
-      ? { bankCode: 'IZB', sourceBank: SOURCE_BANK_NAME, payment: { service: payment.service, request: payment.request } }
-      : { bankCode: 'IZB', sourceBank: SOURCE_BANK_NAME, payment };
+  const payload = isIzbServicePayload(payment)
+    ? { service: payment.service, request: payment.request }
+    : buildIzbPayload(payment, payment.transactionType);
 
-    try {
-      const resp = await fetch(`${APP_API_URL}/api/v1/posted_payments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-
-      const text = await resp.text();
-      let data: unknown;
-      try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
-
-      return { success: resp.ok, status: resp.status, data, error: resp.ok ? undefined : `Portal enqueue failed: ${text}` };
-    } catch (err:any) {
-      return { success: false, status: 500, error: String(err) };
-    }
-  }
-
-  // Fallback: post to the bank queue URL if configured
-  const payload = isIzbServicePayload(payment) ? { service: payment.service, request: payment.request } : buildIzbPayload(payment as PaymentsResponse, (payment as PaymentsResponse).transactionType);
-  return postToQueue(payload);
+  return postToIzb(payload);
 }
 
-export const notifyAppOfQueueResult = async (queueId: string, result: JobResult) => {
-  if (!APP_API_URL) {
-    console.warn('[IZB] APP_API_URL is not configured; skipping callback to app');
-    return;
-  }
-
-  const callbackUrl = `${APP_API_URL}/api/v1/posted_payments/response`;
-  try {
-    const response = await fetch(callbackUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        queueId,
-        status: result.success ? 'success' : 'failed',
-        response: result.data,
-        error: result.error,
-        attempts: undefined,
-      }),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      console.error('[IZB] callback failed', { queueId, callbackUrl, status: response.status, text });
-    }
-  } catch (error) {
-    console.error('[IZB] callback error', { queueId, callbackUrl, error });
-  }
-};
-
-export default { sendIzbPayment };
+export default { sendIzbPayment, buildIzbPayload };

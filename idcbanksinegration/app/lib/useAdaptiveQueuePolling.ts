@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef } from 'react';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 
-const ACTIVE_QUEUE_STATUSES = new Set(['queued', 'processing']);
+const ACTIVE_QUEUE_STATUSES = new Set(['queued', 'processing', 'submitting', 'accepted', 'unknown']);
 const ACTIVE_POLL_MS = 5000;
 const IDLE_POLL_MS = 30000;
 

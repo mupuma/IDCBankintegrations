@@ -3,7 +3,7 @@ import { sendPaymentToBank } from './banks';
 import { connectDatabase } from './db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 
-export type QueueStatus = 'queued' | 'processing' | 'success' | 'failed';
+export type QueueStatus = 'queued' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
 export interface BankQueueItem {
   id: string;
@@ -23,6 +23,7 @@ const queue = new Map<string, BankQueueItem>();
 const processing = new Set<string>();
 const MAX_RETRIES = 3;
 const RETRY_DELAY_MS = 5000;
+const AGENT_CALLBACK_TIMEOUT_MS = Number(process.env.AGENT_CALLBACK_TIMEOUT_MS || 120000);
 
 export function enqueuePayment(bankCode: BankCode, payment: PaymentsResponse, queueId?: string, sourceBank?: string | null) {
   const id = queueId ?? (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -139,11 +140,54 @@ export async function ensureQueueItemProcessing(queueId: string) {
     return null;
   }
 
+  if ((item.payment as any).h2hProtocol === 'h2h-v1') return item;
+
   if (item.status === 'queued' && !processing.has(queueId)) {
-    void processQueueItem(queueId);
+    return processQueueItem(queueId);
   }
 
   return item;
+}
+
+export async function rehydrateAndProcessQueueRecord(record: PaymentQueueRequest) {
+  let payment: PaymentsResponse;
+  try {
+    payment = JSON.parse(record.paymentPayload) as PaymentsResponse;
+  } catch {
+    await PaymentQueueRequest.update(
+      {
+        status: 'failed',
+        lastError: 'Invalid saved payment payload; cannot process queue item.',
+      },
+      { where: { queueId: record.queueId } },
+    );
+    return null;
+  }
+
+  const item = enqueuePayment(
+    record.bankCode as BankCode,
+    payment,
+    record.queueId,
+    record.sourceBank ?? null,
+  );
+  item.attempts = record.attempts;
+  item.status = 'queued';
+  item.createdAt = record.createdAt.toISOString();
+  item.updatedAt = new Date().toISOString();
+
+  return processQueueItem(record.queueId);
+}
+
+export function isStaleProcessingRecord(record: PaymentQueueRequest) {
+  if (record.status !== 'processing') {
+    return false;
+  }
+
+  const updatedAt = record.updatedAt instanceof Date
+    ? record.updatedAt.getTime()
+    : new Date(record.updatedAt).getTime();
+
+  return Number.isFinite(updatedAt) && Date.now() - updatedAt > AGENT_CALLBACK_TIMEOUT_MS;
 }
 
 export async function updateQueueItemStatus(

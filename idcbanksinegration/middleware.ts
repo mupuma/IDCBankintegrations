@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { decrypt } from './app/lib/auth';
-import { clearSessionCookieOptions } from './app/lib/sessionCookie';
+import { decrypt, encrypt, getSessionMaxAgeSeconds } from './app/lib/auth';
+import { clearSessionCookieOptions, sessionCookieOptions } from './app/lib/sessionCookie';
 
 function loginRedirect(request: NextRequest) {
   const loginUrl = request.nextUrl.clone();
@@ -23,14 +23,23 @@ export async function middleware(request: NextRequest) {
   }
 
   try {
-    await decrypt(token);
+    const payload = await decrypt(token);
+    const response = NextResponse.next();
+    response.cookies.set(
+      'session',
+      await encrypt({
+        sub: payload.sub,
+        username: payload.username,
+        role: payload.role,
+      }),
+      sessionCookieOptions(getSessionMaxAgeSeconds()),
+    );
+    return response;
   } catch {
     const response = loginRedirect(request);
     response.cookies.set('session', '', clearSessionCookieOptions());
     return response;
   }
-
-  return NextResponse.next();
 }
 
 export const config = {

@@ -9,6 +9,7 @@ export interface AuditEventInput {
   action: AuditAction;
   resourceType?: string | null;
   resourceId?: string | null;
+  correlationId?: string | null;
   summary: string;
   details?: Record<string, unknown> | null;
   request?: NextRequest | null;
@@ -42,6 +43,7 @@ export async function logAuditEvent(input: AuditEventInput): Promise<void> {
       action: input.action,
       resourceType: input.resourceType ?? null,
       resourceId: input.resourceId ? String(input.resourceId) : null,
+      correlationId: input.correlationId ? String(input.correlationId) : null,
       summary: input.summary.slice(0, 500),
       details: input.details ? JSON.stringify(input.details) : null,
       ipAddress: getClientIp(input.request),

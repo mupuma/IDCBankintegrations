@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { paymentErrors } from '../../../../shared/zicb-h2h';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
@@ -9,14 +10,15 @@ import { buildIzbPayload, buildZanacoPayload, buildZicbPayload } from '@/app/lib
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
-const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled']);
-const BANK_PROCESSED_STATUSES = new Set(['success']);
+const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
+const BANK_PROCESSED_STATUSES = new Set(['success', 'paid']);
+const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || bank === 'ZICB';
 
 function postKey(paymentId: string, bankCode: string) {
   return `${paymentId}:${bankCode}`;
 }
 
-type QueueStatus = 'queued' | 'processing' | 'success' | 'failed' | 'pulled';
+type QueueStatus = BankQueueItem['status'] | 'pulled';
 
 type PostedPaymentRecord = {
   bankCode: BankCode;
@@ -332,7 +334,12 @@ function getEffectiveTransactionType(payment: EnrichedPayment, transactionOverri
   return transactionOverrides[payment.paymentId] ?? payment.transactionType;
 }
 
-function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transactionType: PaymentsResponse['transactionType']): ValidationResult {
+function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transactionType: PaymentsResponse['transactionType'], h2h = false, scale = 2): ValidationResult {
+  if (bankCode === 'ZICB' && h2h) {
+    const errors = paymentErrors({ ...payment, transactionType }, scale);
+    if (!payment.bankDetailsFound) errors.push('Vendor bank details are not available for this payment');
+    return { valid: errors.length === 0, errors };
+  }
   const errors: string[] = [];
   const rule = BANK_VALIDATION_CONFIG[bankCode];
 
@@ -413,6 +420,12 @@ export default function PaymentQueueDashboard() {
   const [queueStatuses, setQueueStatuses] = useState<Record<string, QueueStatusRecord>>({});
   const [postedPayments, setPostedPayments] = useState<Record<string, PostedPaymentRecord>>({});
   const [bankQueueItems, setBankQueueItems] = useState<BankQueueItem[]>([]);
+  const [h2hConfig, setH2hConfig] = useState<{ enabled: boolean; profiles: Record<string, { amountScale: number }> }>({ enabled: false, profiles: {} });
+  useEffect(() => {
+    let active = true;
+    fetch('/api/v1/zicb/h2h/config').then(r => r.ok ? r.json() : null).then(data => { if (active && data) setH2hConfig(data); }).catch(() => {});
+    return () => { active = false; };
+  }, []);
   const [sourceBanks, setSourceBanks] = useState<Array<any>>([]);
   const [selectedSources, setSelectedSources] = useState<Record<string, string>>({});
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
@@ -455,7 +468,7 @@ export default function PaymentQueueDashboard() {
     setQueueStatuses((prev) => {
       const next = { ...prev };
       for (const item of items) {
-        if (!item.paymentId || !item.bankCode || !ACTIVE_POST_STATUSES.has(item.status)) {
+        if (!item.paymentId || !item.bankCode || !preventsPosting(item.status, item.bankCode)) {
           continue;
         }
         const key = postKey(item.paymentId, item.bankCode);
@@ -622,7 +635,7 @@ export default function PaymentQueueDashboard() {
 
     const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
-    const result = validatePayment(effectivePayment, bankCode, effectiveType);
+    const result = validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     setValidationResults((prev) => ({ ...prev, [payment.paymentId]: result }));
     setMessage(
       result.valid
@@ -641,7 +654,7 @@ export default function PaymentQueueDashboard() {
     }
 
     const existingPost = postedPayments[payment.paymentId];
-    if (existingPost && ACTIVE_POST_STATUSES.has(existingPost.status)) {
+    if (existingPost && preventsPosting(existingPost.status, existingPost.bankCode)) {
       setMessage(`Payment already posted to ${existingPost.bankCode}. Each payment can only be sent to one bank.`);
       clearMessage();
       return;
@@ -649,7 +662,7 @@ export default function PaymentQueueDashboard() {
 
     const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
-    const validation = validatePayment(effectivePayment, bankCode, effectiveType);
+    const validation = validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     if (!validation.valid) {
       setValidationResults((prev) => ({ ...prev, [payment.paymentId]: validation }));
       setMessage(`Payment cannot be submitted: ${validation.errors.join('; ')}`);
@@ -827,7 +840,7 @@ export default function PaymentQueueDashboard() {
                   const selectedType = transactionOverrides[payment.paymentId] ?? payment.transactionType;
                   const isQueued = queueStatus?.status === 'queued' || queueStatus?.status === 'processing';
                   const isAlreadyPosted = Boolean(
-                    posted && ACTIVE_POST_STATUSES.has(posted.status),
+                    posted && preventsPosting(posted.status, posted.bankCode),
                   );
 
                   return (
@@ -915,7 +928,7 @@ export default function PaymentQueueDashboard() {
                           }}
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
                         >
-                          {TRANSACTION_TYPES.map((type) => (
+                          {TRANSACTION_TYPES.filter(type => selectedBank !== 'ZICB' || type !== 'TT').map((type) => (
                             <option key={type} value={type}>{type}</option>
                           ))}
                         </select>

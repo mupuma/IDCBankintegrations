@@ -1,5 +1,23 @@
 # ZICB Agent Service
 
+The PayBill H2H v1 implementation is selected with `ZICB_H2H_ENABLED=true` in both
+the portal and this service. It uses the portal's durable ledger rather than the
+legacy BullMQ payment sender described below. See
+[H2H setup and recovery](../../review-artifacts/ZICB-H2H-implementation.md).
+
+Run `npm test` for offline contract and recovery tests. Run `npm run build` to
+compile, then `npm start` to start the selected protocol. In H2H mode use the
+combined server entry point, not the legacy `dev:api` or `dev:worker` scripts.
+
+The Docker build context is now the repository root because both applications
+use `shared/zicb-h2h`:
+
+```powershell
+docker build -f microservices/zicb-agent-service/Dockerfile -t zicb-agent .
+```
+
+## Legacy protocol
+
 A lightweight Node microservice for receiving payments from `idcbanksinegration` and forwarding them to ZICB via BullMQ.
 
 ## Features

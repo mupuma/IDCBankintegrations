@@ -68,10 +68,14 @@ import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
 import { syncSchemaAddOnly } from './schemaSync';
+import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  ZicbH2hPayment,
+  PaymentDispatchReservation,
+  ZicbH2hEvent,
   User,
   PaymentQueueRequest,
   CashbookReceipt,
@@ -85,6 +89,8 @@ const INTERNAL_MODELS = [
 // Don't initialize at top level - use a variable to hold the instance
 let sequelizeInstance: Sequelize | null = null;
 let schemaSynced = false;
+let connectionPromise: Promise<void> | null = null;
+let connectionReady = false;
 
 // Function to get or create the Sequelize instance
 function getSequelizeInstance(): Sequelize {
@@ -138,12 +144,27 @@ async function ensureSchemaSynced(instance: Sequelize): Promise<void> {
 }
 
 export async function connectDatabase(): Promise<void> {
-  try {
+  if (connectionReady) {
+    return;
+  }
+
+  if (connectionPromise) {
+    return connectionPromise;
+  }
+
+  connectionPromise = (async () => {
     const instance = getSequelizeInstance();
     await instance.authenticate();
     await ensureSchemaSynced(instance);
+    connectionReady = true;
     console.log('Database connection established successfully');
+  })();
+
+  try {
+    await connectionPromise;
   } catch (error) {
+    connectionPromise = null;
+    connectionReady = false;
     console.error('Unable to connect to MySQL database:', error);
     throw error;
   }
@@ -155,6 +176,7 @@ export async function syncDatabase(): Promise<void> {
     await instance.authenticate();
     schemaSynced = false;
     await ensureSchemaSynced(instance);
+    connectionReady = true;
   } catch (error) {
     console.error('Unable to sync MySQL database:', error);
     throw error;

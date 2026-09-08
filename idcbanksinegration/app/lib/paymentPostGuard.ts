@@ -1,9 +1,9 @@
-import { Op } from 'sequelize';
+import { Op, type Transaction } from 'sequelize';
 import type { BankCode } from '@/app/models/dtos';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { IzbPayment } from '@/app/models/internal/IzbPayment';
 
-const ACTIVE_QUEUE_STATUSES = ['queued', 'processing', 'success'];
+const ACTIVE_QUEUE_STATUSES = ['queued', 'processing', 'success', 'submitting', 'accepted', 'unknown', 'paid', 'needs_review'];
 const ACTIVE_IZB_STATUSES = ['queued', 'processing', 'success', 'pulled'];
 
 export interface ExistingPaymentPost {
@@ -33,15 +33,21 @@ export function buildAlreadyPostedMessage(
 
 export async function findExistingPaymentPost(
   paymentId: string,
+  transaction?: Transaction,
 ): Promise<ExistingPaymentPost | null> {
   if (!paymentId) {
     return null;
   }
 
   const queueRecord = await PaymentQueueRequest.findOne({
+    transaction,
     where: {
       paymentId,
-      status: { [Op.in]: ACTIVE_QUEUE_STATUSES },
+      [Op.or]: [
+        { status: { [Op.in]: ACTIVE_QUEUE_STATUSES } },
+        // ZICB failure is not permission to create a new transfer identity.
+        { bankCode: 'ZICB' },
+      ],
     },
     order: [['updated_at', 'DESC']],
   });
@@ -56,6 +62,7 @@ export async function findExistingPaymentPost(
   }
 
   const izbRecord = await IzbPayment.findOne({
+    transaction,
     where: {
       paymentId,
       status: { [Op.in]: ACTIVE_IZB_STATUSES },

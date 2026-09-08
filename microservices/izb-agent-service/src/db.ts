@@ -1,5 +1,5 @@
-import { LowSync } from 'lowdb';
-import { JSONFileSync } from 'lowdb/node';
+import fs from 'fs';
+import path from 'path';
 
 const DB_PATH = process.env.DB_PATH || './izb-agent-db.json';
 
@@ -19,34 +19,60 @@ type LowDbSchema = {
   payment_queue_requests: QueueRequestRecord[];
 };
 
-const adapter = new JSONFileSync<LowDbSchema>(DB_PATH);
-const db = new LowSync<LowDbSchema>(adapter, { payment_queue_requests: [] });
+function defaultData(): LowDbSchema {
+  return { payment_queue_requests: [] };
+}
 
-db.read();
-if (!db.data) {
-  db.data = { payment_queue_requests: [] };
-  db.write();
+function ensureFile() {
+  const directory = path.dirname(DB_PATH);
+  if (directory && directory !== '.') {
+    fs.mkdirSync(directory, { recursive: true });
+  }
+
+  if (!fs.existsSync(DB_PATH)) {
+    fs.writeFileSync(DB_PATH, JSON.stringify(defaultData(), null, 2));
+  }
+}
+
+function readData(): LowDbSchema {
+  ensureFile();
+  const text = fs.readFileSync(DB_PATH, 'utf8');
+  if (!text.trim()) {
+    return defaultData();
+  }
+
+  try {
+    const parsed = JSON.parse(text) as Partial<LowDbSchema>;
+    return {
+      payment_queue_requests: Array.isArray(parsed.payment_queue_requests)
+        ? parsed.payment_queue_requests
+        : [],
+    };
+  } catch {
+    return defaultData();
+  }
+}
+
+function writeData(data: LowDbSchema) {
+  ensureFile();
+  fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2));
 }
 
 export function initDatabase() {
-  if (!db.data) {
-    db.data = { payment_queue_requests: [] };
-    db.write();
-  }
+  ensureFile();
 }
 
 export function insertQueueRequest(request: QueueRequestRecord) {
-  db.read();
-  db.data = db.data ?? { payment_queue_requests: [] };
-  const existingIndex = db.data.payment_queue_requests.findIndex((item) => item.queueId === request.queueId);
+  const data = readData();
+  const existingIndex = data.payment_queue_requests.findIndex((item) => item.queueId === request.queueId);
 
   if (existingIndex >= 0) {
-    db.data.payment_queue_requests[existingIndex] = request;
+    data.payment_queue_requests[existingIndex] = request;
   } else {
-    db.data.payment_queue_requests.push(request);
+    data.payment_queue_requests.push(request);
   }
 
-  db.write();
+  writeData(data);
 }
 
 export function updateQueueRequestStatus(
@@ -59,9 +85,8 @@ export function updateQueueRequestStatus(
     updatedAt?: string;
   },
 ) {
-  db.read();
-  db.data = db.data ?? { payment_queue_requests: [] };
-  const existing = db.data.payment_queue_requests.find((item) => item.queueId === queueId);
+  const data = readData();
+  const existing = data.payment_queue_requests.find((item) => item.queueId === queueId);
   if (!existing) {
     return null;
   }
@@ -70,19 +95,17 @@ export function updateQueueRequestStatus(
   existing.attempts = updates.attempts ?? existing.attempts;
   existing.lastError = updates.lastError ?? existing.lastError;
   if (updates.response !== undefined) {
-    existing.responsePayload = updates.response as unknown;
+    existing.responsePayload = updates.response;
   }
   existing.updatedAt = updates.updatedAt ?? new Date().toISOString();
-  db.write();
+  writeData(data);
 
   return existing;
 }
 
 export function findQueueRequest(queueId: string) {
-  db.read();
-  db.data = db.data ?? { payment_queue_requests: [] };
-  const existing = db.data.payment_queue_requests.find((item) => item.queueId === queueId);
-  return existing ?? null;
+  const data = readData();
+  return data.payment_queue_requests.find((item) => item.queueId === queueId) ?? null;
 }
 
 export default { initDatabase, insertQueueRequest, updateQueueRequestStatus, findQueueRequest };

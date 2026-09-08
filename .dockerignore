@@ -1,0 +1,9 @@
+**/node_modules
+**/.next
+**/dist
+**/.env*
+!**/.env.example
+!**/.env.h2h.example
+**/*-db.json
+.git
+review-artifacts

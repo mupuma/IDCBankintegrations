@@ -3,14 +3,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+require("dotenv/config");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
-const dotenv_1 = __importDefault(require("dotenv"));
 const queue_1 = require("./queue");
 const db_1 = require("./db");
 const zicbValidation_1 = require("./zicbValidation");
 const zicbAgent_1 = require("./zicbAgent");
-dotenv_1.default.config();
 (0, db_1.initDatabase)();
 const app = (0, express_1.default)();
 const port = Number(process.env.PORT || 4001);

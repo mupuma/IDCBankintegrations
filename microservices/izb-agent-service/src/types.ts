@@ -1,21 +1,3 @@
-export type PaymentJobPayload = {
-  payment?: any;
-  queueId?: string;
-};
-
-export type PaymentsResponse = {
-  paymentId?: string;
-  amount?: number;
-  currency?: string;
-  vendorId?: string;
-};
-
-export type JobResult = {
-  success: boolean;
-  status?: number;
-  error?: string;
-  data?: any;
-};
 export type BankCode = 'IZB';
 
 export interface PhysicalAddress {
@@ -44,7 +26,6 @@ export interface PaymentsResponse {
   email?: string;
   phoneNumber?: string;
   physicalAddress?: PhysicalAddress;
-  ipAddress?: string;
 }
 
 export interface IzbServicePayload {
@@ -54,7 +35,7 @@ export interface IzbServicePayload {
 }
 
 export type PaymentJobPayload =
-  | { bankCode: BankCode; payment: PaymentsResponse; queueId?: string }
+  | { bankCode: BankCode; payment: PaymentsResponse; queueId?: string; sourceBank?: string | null }
   | IzbServicePayload;
 
 export type JobResult = {

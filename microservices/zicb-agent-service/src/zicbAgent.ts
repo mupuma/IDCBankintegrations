@@ -10,6 +10,7 @@ const DEFAULT_USER_NAME = process.env.ZICB_USER_NAME ?? 'SageSystem';
 const DEFAULT_CUSTOMER_ID = process.env.ZICB_CUSTOMER_ID ?? '';
 const DEFAULT_IP_ADDRESS = process.env.ZICB_IP_ADDRESS ?? '0.0.0.0';
 const MOCK_SUCCESS_RESPONSE = process.env.ZICB_MOCK_SUCCESS_RESPONSE === 'true';
+const BANK_REQUEST_TIMEOUT_MS = Number(process.env.ZICB_BANK_REQUEST_TIMEOUT_MS || 90000);
 
 function mergeDefaults(payment: PaymentsResponse): PaymentsResponse {
   return {
@@ -33,7 +34,8 @@ export const notifyAppOfQueueResult = async (queueId: string, result: JobResult)
     const response = await fetch(callbackUrl, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'x-bank-api-key': process.env.BANK_PULL_API_KEY || '',
       },
       body: JSON.stringify({
         queueId,
@@ -218,6 +220,8 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
 
   let response;
   let text = '';
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BANK_REQUEST_TIMEOUT_MS);
   try {
     response = await fetch(queueUrl, {
       method: 'POST',
@@ -226,6 +230,7 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
         'AuthKey': process.env.AUTH_KEY || '',
       },
       body,
+      signal: controller.signal,
     });
   } catch (fetchError) {
     console.error('[ZICB] fetch failed', {
@@ -234,6 +239,8 @@ export async function sendZicbPayment(payment: PaymentsResponse | ZicbServicePay
       payload: JSON.parse(body),
     });
     throw fetchError;
+  } finally {
+    clearTimeout(timeout);
   }
 
   try {

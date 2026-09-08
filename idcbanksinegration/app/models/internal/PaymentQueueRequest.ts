@@ -19,6 +19,9 @@ interface PaymentQueueRequestAttributes {
   attempts: number;
   lastError?: string;
   responsePayload?: string;
+  lockedBy?: string | null;
+  lockedAt?: Date | null;
+  claimedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -110,4 +113,28 @@ export class PaymentQueueRequest extends Model<PaymentQueueRequest, PaymentQueue
     allowNull: true,
   })
   declare responsePayload?: string;
+
+  @AllowNull
+  @Column({
+    type: DataType.STRING(100),
+    field: 'locked_by',
+    allowNull: true,
+  })
+  declare lockedBy?: string;
+
+  @AllowNull
+  @Column({
+    type: DataType.DATE,
+    field: 'locked_at',
+    allowNull: true,
+  })
+  declare lockedAt?: Date;
+
+  @AllowNull
+  @Column({
+    type: DataType.DATE,
+    field: 'claimed_at',
+    allowNull: true,
+  })
+  declare claimedAt?: Date;
 }

@@ -192,7 +192,40 @@ interface BankFormProps {
   onClose: () => void;
   onSubmit: (data: any) => void;
   initialData?: Venbank | null;
-  vendorOptions: string[];
+  vendorOptions: VendorOption[];
+}
+
+interface VendorOption {
+  bankDetailsId?: number | null;
+  vendorid: string;
+  vendname?: string;
+  accven?: string;
+  accname?: string;
+  bankid?: string;
+  sortcde?: string;
+  brnch?: string;
+  swiftcde?: string;
+  email?: string;
+  venbankPhoneNumber?: string;
+  physicalAddress?: string;
+  countryOfOrigin?: string;
+  currency?: string;
+  phoneNumber?: string;
+  city?: string;
+  country?: string;
+  paymentCount?: number;
+  lastPaymentDate?: number | null;
+  bankDetailsStatus?: 'missing' | 'incomplete';
+}
+
+function parseVendorAddress(value?: string) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === 'object' && parsed !== null ? parsed as Partial<PhysicalAddress> : null;
+  } catch {
+    return null;
+  }
 }
 
 function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: BankFormProps) {
@@ -239,7 +272,30 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
   }, [initialData, open]);
 
   const handleChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
-    setFormData(prev => ({ ...prev, [field]: e.target.value }));
+    const value = e.target.value;
+    if (field === 'vendorid') {
+      const selected = vendorOptions.find((vendor) => vendor.vendorid === value);
+      const address = parseVendorAddress(selected?.physicalAddress);
+      setFormData(prev => ({
+        ...prev,
+        vendorid: value,
+        accven: selected?.accven || prev.accven,
+        accname: selected?.accname || selected?.vendname || prev.accname,
+        bankid: selected?.bankid || prev.bankid,
+        sortcde: selected?.sortcde || prev.sortcde,
+        brnch: selected?.brnch || prev.brnch,
+        swiftcde: selected?.swiftcde || prev.swiftcde,
+        email: selected?.email || prev.email,
+        phoneNumber: selected?.venbankPhoneNumber || selected?.phoneNumber || prev.phoneNumber,
+        streetName: address?.streetName || prev.streetName,
+        plotNo: address?.plotNo || prev.plotNo,
+        town: address?.town || selected?.city || prev.town,
+        countryOfOrigin: selected?.countryOfOrigin || selected?.country || prev.countryOfOrigin,
+      }));
+      return;
+    }
+
+    setFormData(prev => ({ ...prev, [field]: value }));
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -310,7 +366,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
               >
                 <option value="">Select vendor ID</option>
                 {vendorOptions.map((vendor) => (
-                  <option key={vendor} value={vendor}>{vendor}</option>
+                  <option key={vendor.vendorid} value={vendor.vendorid}>
+                    {vendor.vendorid}{vendor.vendname ? ` - ${vendor.vendname}` : ''}{vendor.bankDetailsStatus === 'incomplete' ? ' (complete existing)' : ''}
+                  </option>
                 ))}
               </select>
             )}
@@ -386,7 +444,7 @@ export default function BankManagementPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
-  const [vendorOptions, setVendorOptions] = useState<string[]>([]);
+  const [vendorOptions, setVendorOptions] = useState<VendorOption[]>([]);
   
   // FIX 2: Added debounced state variables
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
@@ -451,7 +509,7 @@ export default function BankManagementPage() {
 
       console.log('Fetching with params:', params.toString());
 
-      const response = await fetch(`/api/v1/bank_details?${params}`);
+      const response = await fetch(`/api/v1/bank_details?${params}`, { credentials: 'include' });
       if (response.status === 401) {
         redirectToLogin();
         return;
@@ -484,14 +542,19 @@ export default function BankManagementPage() {
 
   const fetchVendorOptions = useCallback(async () => {
     try {
-      const response = await fetch('/api/v1/vendors');
+      const response = await fetch('/api/v1/vendors', { credentials: 'include' });
       if (response.status === 401) {
         redirectToLogin();
         return;
       }
       if (!response.ok) throw new Error('Failed to load available vendor IDs.');
       const data = await response.json();
-      setVendorOptions(data.data || []);
+      const vendors = Array.isArray(data.vendors)
+        ? data.vendors
+        : Array.isArray(data.data)
+          ? data.data.map((vendorid: string) => ({ vendorid }))
+          : [];
+      setVendorOptions(vendors);
     } catch (error) {
       console.error('Vendor options fetch error:', error);
       setVendorOptions([]);
@@ -509,7 +572,10 @@ export default function BankManagementPage() {
   const handleDelete = async (id: number) => {
     if (confirm('Are you sure you want to permanently remove this financial distribution record?')) {
       try {
-        const response = await fetch(`/api/v1/bank_details/${id}`, { method: 'DELETE' });
+        const response = await fetch(`/api/v1/bank_details/${id}`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
         if (response.status === 401) {
           redirectToLogin();
           return;
@@ -529,12 +595,15 @@ export default function BankManagementPage() {
 
   const handleSubmitForm = async (formData: any) => {
     try {
-      const url = editingBank ? `/api/v1/bank_details/${editingBank.id}` : '/api/v1/bank_details';
-      const method = editingBank ? 'PUT' : 'POST';
+      const selectedVendor = vendorOptions.find((vendor) => vendor.vendorid === formData.vendorid);
+      const existingBankDetailsId = editingBank?.id ?? selectedVendor?.bankDetailsId ?? null;
+      const url = existingBankDetailsId ? `/api/v1/bank_details/${existingBankDetailsId}` : '/api/v1/bank_details';
+      const method = existingBankDetailsId ? 'PUT' : 'POST';
       
       const response = await fetch(url, {
         method,
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify(formData),
       });
 
@@ -544,11 +613,11 @@ export default function BankManagementPage() {
       }
 
       if (response.ok) {
-        showNotification(`Bank record successfully ${editingBank ? 'updated' : 'instantiated'}.`, 'success');
+        showNotification(`Bank record successfully ${existingBankDetailsId ? 'updated' : 'created'}.`, 'success');
         setOpenForm(false);
         setEditingBank(null);
         fetchBanks();
-        if (!editingBank) fetchVendorOptions();
+        fetchVendorOptions();
       } else {
         const error = await response.json();
         throw new Error(error.error || 'System transaction validation error.');

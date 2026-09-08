@@ -120,7 +120,7 @@ export default function PaymentQueuesPage() {
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
-          {(['queued', 'processing', 'success', 'failed'] as const).map((status) => (
+          {(['queued', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
             <div key={status} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">{status}</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">{statusCounts[status] ?? 0}</p>
@@ -176,7 +176,7 @@ export default function PaymentQueuesPage() {
                     <td className="px-5 py-4 text-sm text-slate-700">{item.payment.vendorId || 'N/A'}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.payment.amount.toFixed(2)} {item.payment.currency}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.payment.transactionType}</td>
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.status}</td>
+                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.status}{item.bankCode === 'ZICB' && item.response && typeof item.response === 'object' ? <div className="mt-1 text-xs font-normal">{['reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError'].map(key => { const value = (item.response as Record<string, unknown>)[key]; return value ? <div key={key}>{key}: {String(value)}</div> : null; })}</div> : null}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || '—'}</td>

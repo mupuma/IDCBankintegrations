@@ -16,7 +16,7 @@ if (redisUrl) {
 export const PAYMENT_QUEUE = process.env.IZB_QUEUE_NAME || 'izb_payments';
 
 export const paymentQueue = new Queue(PAYMENT_QUEUE, { connection });
-let queueScheduler: any;
+export let queueScheduler: any;
 try {
   queueScheduler = new JobScheduler(PAYMENT_QUEUE, { connection });
 } catch (err) {

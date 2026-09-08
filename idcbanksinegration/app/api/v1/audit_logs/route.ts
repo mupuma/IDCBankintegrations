@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
       action: row.action,
       resourceType: row.resourceType,
       resourceId: row.resourceId,
+      correlationId: row.correlationId,
       summary: row.summary,
       details,
       ipAddress: row.ipAddress,

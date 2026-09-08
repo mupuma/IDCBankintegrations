@@ -17,6 +17,14 @@ export type AuditAction =
   | 'BANK_DETAILS_UPDATED'
   | 'BANK_DETAILS_DELETED'
   | 'CASHBOOK_POSTED'
+  | 'AGENT_SEND_STARTED'
+  | 'AGENT_SEND_SUCCEEDED'
+  | 'AGENT_SEND_FAILED'
+  | 'AGENT_RETRY_SCHEDULED'
+  | 'SAGE_CASHBOOK_SUCCESS'
+  | 'SAGE_CASHBOOK_FAILED'
+  | 'SAGE_CASHBOOK_DUPLICATE'
+  | 'SAGE_CASHBOOK_BATCH'
   | 'USER_CREATED'
   | 'USER_UPDATED'
   | 'USER_DELETED'
@@ -32,6 +40,7 @@ interface AuditLogAttributes {
   action: AuditAction;
   resourceType: string | null;
   resourceId: string | null;
+  correlationId: string | null;
   summary: string;
   details: string | null;
   ipAddress: string | null;
@@ -74,6 +83,10 @@ export class AuditLog extends Model<AuditLog, AuditLogCreationAttributes> {
   @AllowNull(true)
   @Column({ type: DataType.STRING(255), field: 'resource_id', allowNull: true })
   declare resourceId: string | null;
+
+  @AllowNull(true)
+  @Column({ type: DataType.STRING(255), field: 'correlation_id', allowNull: true })
+  declare correlationId: string | null;
 
   @Column({ type: DataType.STRING(500), field: 'summary', allowNull: false })
   declare summary: string;

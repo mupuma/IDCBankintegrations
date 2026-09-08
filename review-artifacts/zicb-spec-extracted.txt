@@ -1,0 +1,2550 @@
+
+=== PDF PAGE 1 ===
+ 
+ 
+      
+ 
+ 
+ H2H 
+Payout/Disbursment 
+Integration 
+Service Consumer / Customer API Specification 
+Service Consumer / Customer API Specification 
+                                                                           Developer Reference 
+ 
+By Christopher Mwanza,  Manager – Banking IT Applications  |  External/Client Guide  v1.0  |  2026-09-03 
+
+=== PDF PAGE 2 ===
+PayBill H2H Integration  |  API Specification 
+Page 2 of 64 
+Contents 
+Contents ......................................................................................................................................................................... 2 
+1.  Introduction ............................................................................................................................................................... 5 
+1.1  The Five Services ................................................................................................................................................. 5 
+1.2  Services & Base URLs........................................................................................................................................... 5 
+1.3  Endpoints at a Glance ......................................................................................................................................... 5 
+1.4  Conventions Used in This Document .................................................................................................................. 6 
+2.  Authentication ........................................................................................................................................................... 7 
+2.1  Get Access Token ................................................................................................................................................. 7 
+Headers ................................................................................................................................................................... 7 
+Request & Response .............................................................................................................................................. 7 
+2.2  Verify Access Token ............................................................................................................................................. 9 
+Headers ................................................................................................................................................................... 9 
+Responses ............................................................................................................................................................... 9 
+SERVICE 1 OF 5 ............................................................................................................................................................. 10 
+3.1  Name Lookup .................................................................................................................................................... 10 
+Headers ................................................................................................................................................................. 10 
+Request Payload ................................................................................................................................................... 10 
+Responses ............................................................................................................................................................. 10 
+3.2  Send Money (Bulk Payout) ............................................................................................................................... 13 
+Headers ................................................................................................................................................................. 13 
+Standard Request Payload ................................................................................................................................... 13 
+Extended Request Payload (Descriptive Fields) .................................................................................................. 14 
+Responses ............................................................................................................................................................. 15 
+3.3  Participants ........................................................................................................................................................ 18 
+Headers ................................................................................................................................................................. 18 
+Responses ............................................................................................................................................................. 18 
+3.4  Transaction Status ............................................................................................................................................. 20 
+Headers ................................................................................................................................................................. 20 
+Request Payload ................................................................................................................................................... 20 
+Responses ............................................................................................................................................................. 20 
+Response Field Reference .................................................................................................................................... 22 
+3.5  Your Webhook — What NFS B2W Expects You to Build .................................................................................. 23 
+Step 1 — Callback Authentication (you issue the token) ................................................................................... 23 
+What ZICB sends you ............................................................................................................................................ 23 
+What your endpoint must return ........................................................................................................................ 23 
+Step 2 — Callback (you receive the outcome) .................................................................................................... 23 
+=== PDF PAGE 3 ===
+PayBill H2H Integration  |  API Specification 
+Page 3 of 64 
+Headers ZICB sends .............................................................................................................................................. 24 
+Payload ZICB sends ............................................................................................................................................... 24 
+What your endpoint must return ........................................................................................................................ 24 
+SERVICE 2 OF 5 ............................................................................................................................................................. 26 
+4.1  Name Lookup .................................................................................................................................................... 26 
+Headers ................................................................................................................................................................. 26 
+Request Payload ................................................................................................................................................... 26 
+Responses ............................................................................................................................................................. 26 
+Headers ................................................................................................................................................................. 30 
+Request Payload ................................................................................................................................................... 30 
+Responses ............................................................................................................................................................. 31 
+4.3  Transaction Status ............................................................................................................................................. 34 
+Headers ................................................................................................................................................................. 34 
+Request Payload ................................................................................................................................................... 34 
+Responses ............................................................................................................................................................. 34 
+4.4  Your Webhook — What Internal FT Expects You to Build ............................................................................... 36 
+The Shape You Need to Build .............................................................................................................................. 36 
+Step 1 — Callback Authentication ....................................................................................................................... 36 
+Step 2 — Callback ................................................................................................................................................. 36 
+SERVICE 3 OF 5 ............................................................................................................................................................. 38 
+5.1  Send Money ....................................................................................................................................................... 38 
+Headers ................................................................................................................................................................. 38 
+Request Payload ................................................................................................................................................... 38 
+Responses ............................................................................................................................................................. 39 
+5.2  Transaction Status ............................................................................................................................................. 43 
+Headers ................................................................................................................................................................. 43 
+Request Payload ................................................................................................................................................... 43 
+Responses ............................................................................................................................................................. 43 
+5.3  Show Other Banks' Details ................................................................................................................................ 45 
+Headers ................................................................................................................................................................. 45 
+Responses ............................................................................................................................................................. 45 
+5.4  Show Currencies ................................................................................................................................................ 46 
+Headers ................................................................................................................................................................. 46 
+Responses ............................................................................................................................................................. 46 
+5.5  Show Currency Holidays ................................................................................................................................... 47 
+Headers ................................................................................................................................................................. 47 
+Request Payload ................................................................................................................................................... 47 
+=== PDF PAGE 4 ===
+PayBill H2H Integration  |  API Specification 
+Page 4 of 64 
+Responses ............................................................................................................................................................. 47 
+5.6  Your Webhook — What RTGS Expects You to Build ........................................................................................ 49 
+Step 1 — Callback Authentication (you issue the token) ................................................................................... 49 
+Step 2 — Callback (you receive the outcome) .................................................................................................... 49 
+Headers ZICB sends .............................................................................................................................................. 49 
+Payload ZICB sends ............................................................................................................................................... 49 
+What your endpoint must return ........................................................................................................................ 50 
+SERVICE 4 OF 5 ............................................................................................................................................................. 51 
+6.1  Send Money ....................................................................................................................................................... 51 
+Headers ................................................................................................................................................................. 51 
+Responses ............................................................................................................................................................. 52 
+6.2  Transaction Status ............................................................................................................................................. 54 
+Headers ................................................................................................................................................................. 54 
+Request Payload ................................................................................................................................................... 54 
+Responses ............................................................................................................................................................. 54 
+6.3  Show Other Banks' Details, Currencies & Currency Holidays .......................................................................... 56 
+6.4  Your Webhook — What DDACC Expects You to Build ..................................................................................... 57 
+Step 1 — Callback Authentication (you issue the token) ................................................................................... 57 
+Step 2 — Callback (you receive the outcome) .................................................................................................... 57 
+Headers ZICB sends .............................................................................................................................................. 57 
+Payload ZICB sends ............................................................................................................................................... 57 
+What your endpoint must return ........................................................................................................................ 58 
+7.  Consolidated Error Reference ................................................................................................................................. 59 
+8.  Item Status Reference ............................................................................................................................................. 60 
+8.1  NFS B2W & Internal Fund Transfer ................................................................................................................... 60 
+8.2  RTGS & DDACC .................................................................................................................................................. 61 
+9.  Quick Reference ...................................................................................................................................................... 62 
+10.  Glossary ................................................................................................................................................................. 64 
+ 
+  
+=== PDF PAGE 5 ===
+PayBill H2H Integration  |  API Specification 
+Page 5 of 64 
+1.  Introduction 
+This document is the complete technical specification for every Host-to-Host (H2H) service PayBill offers. It is 
+written for the institution's own developers: it specifies exactly what to call, what to send, and what to expect back, 
+for each service your institution has been onboarded onto. 
+HOW TO READ THIS DOCUMENT: 
+Each endpoint is presented as: a coloured method-and-path banner, the headers it requires, an example request 
+payload where applicable, and then every response type, clearly labelled SUCCESS or ERROR alongside its HTTP status 
+code. For each service, a dedicated “Your Webhook” section explains exactly what you need to build to receive ZICB's 
+own notifications back. 
+ 
+1.1  The Five Services 
+Service What it does 
+Auth Issues and verifies the access token every other call depends on. 
+NFS B2W Pay many individual mobile money wallets and bank accoiunts at once, in a single batch. 
+Internal Fund Transfer Move money directly between accounts that both already sit inside ZICB. 
+RTGS Send large or time-critical payments to other banks, settled individually and immediately. 
+DDACC Another channel for sending payments to other banks, alongside RTGS. 
+ 
+1.2  Services & Base URLs 
+Each service is served from its own address. All are reachable over HTTPS; the specific host and port differ between 
+the SIT, DEV, UAT, and Production environments and will be confirmed by ZICB IT as part of onboarding. 
+Service Base URL 
+Auth https://IP/DOMAIN:PORT 
+NFS B2W https://IP/DOMAIN:PORT 
+Internal Fund Transfer https://IP/DOMAIN:PORT 
+RTGS https://IP/DOMAIN:PORT 
+DDACC https://IP/DOMAIN:PORT 
+ 
+1.3  Endpoints at a Glance 
+Method Endpoint Service 
+POST /h2h/auth/grant-type/client-credentials Auth 
+GET /h2h/auth/grant-type/client-credentials/verify-token Auth 
+=== PDF PAGE 6 ===
+PayBill H2H Integration  |  API Specification 
+Page 6 of 64 
+POST /h2h/nfs/b2w/name-lookup NFS B2W 
+POST /h2h/nfs/b2w/send-money NFS B2W 
+GET /h2h/nfs/b2w/participants NFS B2W 
+POST /h2h/nfs/b2w/transaction-status NFS B2W 
+POST /h2h/internal-ft/name-lookup Internal FT 
+POST /h2h/internal-ft/send-money Internal FT 
+POST /h2h/internal-ft/transaction-status Internal FT 
+POST /h2h/other-bank-rtgs-ft/v1/send-money RTGS 
+POST /h2h/other-bank-rtgs-ft/v1/transaction-status RTGS 
+GET /h2h/other-bank-rtgs-ft/v1/show/other-banks-details RTGS 
+GET /h2h/other-bank-rtgs-ft/v1/show/currencies RTGS 
+POST /h2h/other-bank-rtgs-ft/v1/show/currency-holidays RTGS 
+POST /h2h/other-bank-ddacc-ft/v1/send-money DDACC 
+POST /h2h/other-bank-ddacc-ft/v1/transaction-status DDACC 
+GET /h2h/other-bank-ddacc-ft/v1/show/other-banks-details DDACC 
+GET /h2h/other-bank-ddacc-ft/v1/show/currencies DDACC 
+POST /h2h/other-bank-ddacc-ft/v1/show/currency-holidays DDACC 
+ 
+1.4  Conventions Used in This Document 
+Values in ALL_CAPS_WITH_ANGLE_BRACKETS, such as <ACCESS_TOKEN> or <YOUR_CLIENT_ID>, are placeholders. 
+Replace them with your own real values — they never appear literally in a real request. All other field names, 
+structures, and example data below are shown exactly as returned by the API. 
+Every JSON example in this document is a complete, valid request or response body — copy, adapt, and use them 
+directly as a starting point for your own integration testing. 
+  
+=== PDF PAGE 7 ===
+PayBill H2H Integration  |  API Specification 
+Page 7 of 64 
+2.  Authentication 
+Every business call into any PayBill H2H service is authorised by a Bearer access token, obtained by exchanging your 
+institution's client credentials. The same token authorises calls to every service your institution is allowed to use — 
+you do not need a separate token per service. 
+Credential Used for Carried as 
+client_id / client_secret Exchanged for an access token, which authorises every 
+business call 
+JSON body, then Bearer 
+token 
+ 
+KEEP YOUR CREDENTIALS SAFE: 
+Your client_id and client_secret authorise every call your institution makes, across every service. Keep both 
+confidential and never expose them outside your own backend — treat them exactly as you would a 
+password. 
+ 
+2.1  Get Access Token 
+Exchanges your institution's client credentials for a short-lived Bearer access token. Call this first, and again 
+whenever your token expires. 
+POST /h2h/auth/grant-type/client-credentials 
+Base URL (Auth): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+ 
+Request & Response 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "client_id": "<YOUR_CLIENT_ID>", 
+  "client_secret": "<YOUR_CLIENT_SECRET>", 
+  "grant_type": "client_credentials" 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Example response body 
+{ 
+  "access_token": "<ACCESS_TOKEN>", 
+  "expires_in": 5400, 
+  "token_type": "Bearer" 
+} 
+=== PDF PAGE 8 ===
+PayBill H2H Integration  |  API Specification 
+Page 8 of 64 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Returned when client_id and client_secret don't match a known, active institution. 
+{ 
+  "error": "invalid_client", 
+  "error_description": "Invalid client credentials" 
+} 
+ 
+ 
+Field Type Required Description 
+client_id string Mandatory The unique client identifier issued to your institution. 
+client_secret string Mandatory The confidential secret issued alongside your client_id. Never 
+expose this outside your own backend. 
+grant_type string Mandatory Always the fixed value client_credentials. 
+TOKEN LIFETIME: 
+The access token returned is valid for the number of seconds given in expires_in (5,400 seconds — 90 
+minutes). Request a new token before it expires; don't wait for a call to fail.  
+  
+=== PDF PAGE 9 ===
+PayBill H2H Integration  |  API Specification 
+Page 9 of 64 
+2.2  Verify Access Token 
+Lets you confirm whether a token you're holding is still valid, and see exactly when it was issued and when it 
+expires, without needing to make a real business call first. 
+GET /h2h/auth/grant-type/client-credentials/verify-token 
+Base URL (Auth): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Authorization Bearer <ACCESS_TOKEN> 
+ 
+This is a GET request — there is no request payload; the token being checked is carried entirely in the Authorization 
+header. 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Example response body 
+{ 
+  "sub": "4176d097-c677-497c-aaf5-3fe08e051eb2", 
+  "valid": true, 
+  "payload": { 
+    "exp": 1785322931, 
+    "iat": 1785317531, 
+    "sub": "4176d097-c677-497c-aaf5-3fe08e051eb2" 
+  }, 
+  "expires_at": 1785322931, 
+  "issued_at": 1785317531 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The token's expiry time has passed. 
+{ 
+  "error": "invalid_token", 
+  "valid": false, 
+  "error_description": "Token has expired" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The token's signature doesn't match — it may be malformed, altered, or issued by a different environment. 
+{ 
+  "error": "invalid_token", 
+  "valid": false, 
+  "error_description": "Signature verification failed" 
+} 
+ 
+  
+=== PDF PAGE 10 ===
+PayBill H2H Integration  |  API Specification 
+Page 10 of 64 
+  SERVICE 1 OF 5 
+  NFS B2W — Bank to Wallet 
+NFS B2W lets your institution pay many individual mobile money wallets at once, in a single batch — used, for 
+example, to pay a large number of people directly into their mobile money accounts. 
+ 
+3.1  Name Lookup 
+Confirms who holds a wallet before you pay it — a good habit before submitting a payout, so beneficiary details 
+can be checked with the recipient prior to sending money. 
+POST /h2h/nfs/b2w/name-lookup 
+Base URL (NFS B2W): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+account_no string Mandatory The wallet number to look up. 
+participant_id string Mandatory The code identifying which mobile money network the wallet 
+belongs to (see Section 3.3). 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "account_no": "260973209370", 
+  "participant_id": "000248" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Example response body 
+{ 
+  "error": null, 
+  "message": { 
+    "account_name": "Clive SuperAgent", 
+    "account_no": "260762200160", 
+    "address": "", 
+    "message": "Account lookup successful", 
+    "nfs_code": "000", 
+    "status": "SUCCESS" 
+  }, 
+=== PDF PAGE 11 ===
+PayBill H2H Integration  |  API Specification 
+Page 11 of 64 
+  "status": "SUCCESS", 
+  "tracking_number": "121ecf4c-1e97-490e-9814-ad4c29622e9e" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "valid": false, 
+  "error_description": "Token has expired" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your institution's profile isn't configured to use NFS B2W name lookup. Contact ZICB to have it enabled. 
+{ 
+  "error": "permission_error", 
+  "valid": false, 
+  "error_description": "Unable to proceed, you are not allowed to utilize this service 
+template" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  200 OK (functional error)  
+The HTTP call itself succeeded, but the downstream lookup timed out. This is transient — safe to retry. 
+{ 
+  "error": "general_error", 
+  "message": "NFS name lookup failed: %Finch.TransportError{reason: :timeout, source: 
+%Mint.TransportError{reason: :timeout}}", 
+  "status": "ERROR", 
+  "tracking_number": "af17e344-40bd-4bb0-8e6b-22164791f382" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  200 OK (functional error)  
+A generic rejection from the receiving network. Treat as non-retryable without checking the details with the beneficiary. 
+{ 
+  "error": "111", 
+  "message": "Unable to process the request", 
+  "status": "ERROR", 
+  "tracking_number": "72520fa6-aaf2-48ce-85ff-1273dcfc2a34" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  200 OK (functional error)  
+The wallet number given doesn't exist, or is invalid at the receiving network. 
+{ 
+  "error": "199", 
+  "message": "Invalid account", 
+  "status": "ERROR", 
+  "tracking_number": "6822b4af-0b1e-4e5d-9207-6fbc24944a13" 
+} 
+=== PDF PAGE 12 ===
+PayBill H2H Integration  |  API Specification 
+Page 12 of 64 
+ 
+A NOTE ON STATUS CODES: 
+Name Lookup can report a functional failure with an HTTP 200 — the error and status fields inside the body 
+are what tell you whether the lookup actually succeeded. Always check status, not just the HTTP code.  
+  
+=== PDF PAGE 13 ===
+PayBill H2H Integration  |  API Specification 
+Page 13 of 64 
+3.2  Send Money (Bulk Payout) 
+Submits a batch of one or more payouts to be disbursed to individual mobile wallets. A batch is accepted 
+immediately; the actual disbursement of each item happens shortly afterwards, and can be followed up using 
+Transaction Status (Section 3.4) or your own webhook (Section 3.5). 
+POST /h2h/nfs/b2w/send-money 
+Base URL (NFS B2W): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Standard Request Payload 
+Field Type Required Description 
+reference string Mandatory A unique reference for this whole batch, chosen by you. Used 
+to detect and safely reject accidental duplicate submissions. 
+count integer Mandatory The number of transactions included in this batch. 
+region_code string Mandatory The region/revenue/purpose code the paying branch belongs 
+to. 
+total_amount decimal Mandatory The sum of every transaction amount in the batch — must 
+match the sum of the individual items. 
+transactions array Mandatory The list of individual payouts making up this batch. 
+Each entry inside transactions: 
+Field Type Required Description 
+prcn_number string Mandatory Your own unique reference for this individual payment 
+(Payment Requisition Confirmation Note number). 
+account_number string Mandatory The beneficiary's wallet number. 
+institution_id string Mandatory The code identifying the receiving mobile money network (see 
+Section 3.3). 
+amount decimal Mandatory The amount to pay this beneficiary. 
+is_retry 0 or 1 Mandatory Set to 1 if this item is a resubmission of a previously failed 
+payment; otherwise 0. 
+retry_count integer Mandatory How many times this specific item has already been retried. 
+ZICB allows a maximum of 10 retries per prcn_number. 
+number_of_bags integer Optional A descriptive field used by some institutions; ignored if not 
+relevant to your use case. 
+  REQUEST PAYLOAD  
+Example request body 
+=== PDF PAGE 14 ===
+PayBill H2H Integration  |  API Specification 
+Page 14 of 64 
+{ 
+  "reference": "<UNIQUE_BATCH_REFERENCE>", 
+  "count": 2, 
+  "region_code": "LS", 
+  "total_amount": 51.0, 
+  "transactions": [ 
+    { 
+      "prcn_number": "PRCN-2026-00006", 
+      "account_number": "260973209371", 
+      "institution_id": "000248", 
+      "amount": 26.0, 
+      "is_retry": 0, 
+      "retry_count": 0 
+    }, 
+    { 
+      "prcn_number": "PRCN-2026-00007", 
+      "account_number": "200000021732", 
+      "institution_id": "000240", 
+      "amount": 25.0, 
+      "number_of_bags": 5, 
+      "is_retry": 0, 
+      "retry_count": 0 
+    } 
+  ] 
+} 
+ 
+Extended Request Payload (Descriptive Fields) 
+Some institutions — such as agricultural payout programmes — attach richer descriptive detail to each transaction 
+for their own records and reconciliation. These fields are optional and simply carried through by PayBill. 
+Field Type Required Description 
+service_id string Optional A batch-level descriptive identifier specific to your programme. 
+serial_number string Optional A sequence number for this item within the batch. 
+farmer_nrc string Optional The beneficiary's national registration number, for your own 
+records. 
+farmer_name string Optional The beneficiary's name, for your own records. 
+sort_code string Optional An additional routing detail specific to your programme. 
+  REQUEST PAYLOAD  
+Example request body — extended with optional descriptive fields 
+{ 
+  "reference": "<UNIQUE_BATCH_REFERENCE>", 
+  "count": 2, 
+  "region_code": "LS", 
+  "service_id": "000248", 
+  "total_amount": 51.0, 
+  "transactions": [ 
+    { 
+      "serial_number": "1", 
+      "prcn_number": "PRCN-2026-00001", 
+      "farmer_nrc": "123456/78/1", 
+      "farmer_name": "Johnson Musukwa", 
+      "account_number": "260973209371", 
+=== PDF PAGE 15 ===
+PayBill H2H Integration  |  API Specification 
+Page 15 of 64 
+      "institution_id": "000248", 
+      "sort_code": "260001", 
+      "amount": 26.0, 
+      "number_of_bags": 5, 
+      "is_retry": 0, 
+      "retry_count": 0 
+    }, 
+    { 
+      "serial_number": "2", 
+      "prcn_number": "PRCN-2026-00001", 
+      "farmer_nrc": "123456/78/1", 
+      "farmer_name": "Angela Lihusha", 
+      "account_number": "200000021732", 
+      "institution_id": "000240", 
+      "sort_code": "260001", 
+      "amount": 25.0, 
+      "number_of_bags": 5, 
+      "is_retry": 0, 
+      "retry_count": 0 
+    } 
+  ] 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  202 Accepted  
+The batch has been received and logged; processing continues asynchronously. 
+{ 
+  "error": null, 
+  "message": "Transaction received successfully, pending processing, logged 2 items.", 
+  "status": 201, 
+  "timestamp": "2026-07-26T19:38:06", 
+  "path": "/h2h/nfs/b2w/send-money-bulk-payout" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token's signature is invalid. 
+{ 
+  "error": "invalid_token", 
+  "message": "Signature verification failed", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  409 Conflict  
+=== PDF PAGE 16 ===
+PayBill H2H Integration  |  API Specification 
+Page 16 of 64 
+The batch-level reference has already been used in a previous submission. Choose a new, unique reference. 
+{ 
+  "error": "duplicate_reference", 
+  "message": "This external transaction reference number ebea3133-8249-4a06-b203-80d2f56e7c3d 
+already exists", 
+  "status": 400, 
+  "timestamp": "2026-07-28T18:17:29", 
+  "path": "/h2h/nfs/b2w/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  409 Conflict  
+One or more prcn_number values inside the batch have already been submitted before, in a previous batch. 
+{ 
+  "error": "duplicate_invoice_items", 
+  "info": [ 
+    "260973209371", 
+    "200000021732" 
+  ], 
+  "message": "2 duplicate prcn_numbers", 
+  "status": 409, 
+  "timestamp": "2026-07-28T18:18:08", 
+  "path": "/h2h/nfs/b2w/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+One or more prcn_number values are repeated more than once within this same submission. 
+{ 
+  "error": "duplicate_prcn_numbers_in_request", 
+  "info": [ 
+    { 
+      "prcn_number": "PRCN-2026-00001", 
+      "row_indices": [ 
+        0, 
+        1 
+      ] 
+    } 
+  ], 
+  "message": "1 prcn_number(s) appear more than once in this submission", 
+  "status": 422, 
+  "timestamp": "2026-09-03T06:40:38", 
+  "path": "/h2h/nfs/b2w/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+One or more individual items failed field-level validation. Each affected item is listed with its own specific error. 
+{ 
+  "error": "items_failed_validation", 
+  "info": [ 
+    { 
+      "errors": [ 
+        { 
+          "message": "institution_id is not a recognized NFS participant", 
+          "row_key": "institution_id" 
+        } 
+=== PDF PAGE 17 ===
+PayBill H2H Integration  |  API Specification 
+Page 17 of 64 
+      ], 
+      "prcn_number": "PRCN-2026-00002", 
+      "row_index": 0 
+    }, 
+    { 
+      "errors": [ 
+        { 
+          "message": "institution_id must be at most 6 characters", 
+          "row_key": "institution_id" 
+        } 
+      ], 
+      "prcn_number": "PRCN-2026-00003", 
+      "row_index": 1 
+    } 
+  ], 
+  "message": "2 prcn_numbers items has validation errors", 
+  "status": 422, 
+  "timestamp": "2026-09-03T06:45:45", 
+  "path": "/h2h/nfs/b2w/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  403 Forbidden  
+ZICB couldn't validate the paying (source) account — often a temporary core banking timeout. Safe to retry after a short delay. 
+{ 
+  "error": "source_account_error", 
+  "message": "CBS (911): Customer lookup request timeout", 
+  "status": 403, 
+  "timestamp": "2026-07-27T19:48:28", 
+  "path": "/h2h/nfs/b2w/send-money", 
+  "h2h_tracking_number": "2910545f-12fa-4dbb-b57a-e3fe8675b773" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  503 Service Unavailable  
+A downstream banking system is temporarily unreachable. This is transient — retry with backoff. 
+{ 
+  "error": "service_unavailable", 
+  "message": "TN CBS - timeout", 
+  "status": 503, 
+  "timestamp": "2026-07-28T12:44:14", 
+  "path": "/h2h/nfs/b2w/send-money" 
+} 
+ 
+  
+=== PDF PAGE 18 ===
+PayBill H2H Integration  |  API Specification 
+Page 18 of 64 
+3.3  Participants 
+Returns the list of NFS B2W participants we currently support, along with the exact institution_id code to use for 
+each one in Name Lookup and Send Money, and the pattern their account numbers should match. 
+GET /h2h/nfs/b2w/participants 
+Base URL (NFS B2W): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Authorization Bearer <ACCESS_TOKEN> 
+This is a GET request — there is no request payload. 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+A shortened sample — call the live endpoint for the complete, current list. 
+{ 
+  "count": 11, 
+  "data": [ 
+    { 
+      "account_number_validation_mask": "^[0-9]*$", 
+      "institution_id": "000248", 
+      "institution_name": "Bevura", 
+      "type": "MNO" 
+    }, 
+    { 
+      "account_number_validation_mask": "^[0-9]*$", 
+      "institution_id": "000251", 
+      "institution_name": "LOLC Finance Zambia Limited", 
+      "type": "MNO" 
+    }, 
+    { 
+      "account_number_validation_mask": "^[0-9]*$", 
+      "institution_id": "000009", 
+      "institution_name": "Indo Zambia Bank", 
+      "type": "BANK" 
+    }, 
+    { 
+      "account_number_validation_mask": "^[0-9]*$", 
+      "institution_id": "000001", 
+      "institution_name": "ZANACO", 
+      "type": "BANK" 
+    }, 
+    { 
+      "account_number_validation_mask": "^[0-9]*$", 
+      "institution_id": "000245", 
+      "institution_name": "Airtel", 
+      "type": "MNO" 
+    } 
+  ], 
+  "status": 200, 
+  "timestamp": "2026-09-03T11:33:30", 
+  "path": "/h2h/nfs/b2w/participants" 
+} 
+ 
+=== PDF PAGE 19 ===
+PayBill H2H Integration  |  API Specification 
+Page 19 of 64 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+WHY THIS MATTERS: 
+institution_id values can change as new networks are added. Rather than hard -coding this list in your own 
+system, consider calling this endpoint periodically so your integration always has the current set.  
+  
+=== PDF PAGE 20 ===
+PayBill H2H Integration  |  API Specification 
+Page 20 of 64 
+3.4  Transaction Status 
+Looks up the current progress of a batch you previously submitted through Send Money — both the overall batch, 
+and each individual item within it. 
+POST /h2h/nfs/b2w/transaction-status 
+Base URL (NFS B2W): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+ext_batch_ref_no string Mandatory The same reference value you originally submitted in the 
+batch's reference field via Send Money. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "ext_batch_ref_no": "dd022403-504a-431a-85ff-3f867935966a" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK — still in progress  
+One item has already reached the beneficiary; the other is still queued internally. Poll again shortly. 
+{ 
+  "batch_status": "completed", 
+  "count": 2, 
+  "ext_batch_ref_no": "dd022403-504a-431a-85ff-3f867935966a", 
+  "region_code": "LS", 
+  "total_amount": 51, 
+  "transactions": [ 
+    { 
+      "account_number": "200000021732", 
+      "amount": 25, 
+      "bank_callback_reference": null, 
+      "institution_id": "000240", 
+      "is_still_processing": true, 
+      "prcn_number": "PRCN-2026-00001", 
+      "status": "completed_nfs_sc_notified" 
+    }, 
+    { 
+      "account_number": "260973209371", 
+      "amount": 26, 
+      "bank_callback_reference": null, 
+      "institution_id": "000248", 
+      "is_still_processing": true, 
+      "prcn_number": "PRCN-2026-00001", 
+=== PDF PAGE 21 ===
+PayBill H2H Integration  |  API Specification 
+Page 21 of 64 
+      "status": "wip_queue_bank_ft" 
+    } 
+  ] 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK — fully completed  
+Every item in the batch has finished processing. 
+{ 
+  "batch_status": "completed", 
+  "count": 2, 
+  "ext_batch_ref_no": "dd022403-504a-431a-85ff-3f867935966a", 
+  "region_code": "LS", 
+  "total_amount": 51, 
+  "transactions": [ 
+    { 
+      "account_number": "260973209371", 
+      "amount": 26, 
+      "bank_callback_reference": "008FRAN251560521_621011792712", 
+      "institution_id": "000248", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00001", 
+      "status": "completed_nfs_sc_notified" 
+    }, 
+    { 
+      "account_number": "200000021732", 
+      "amount": 25, 
+      "bank_callback_reference": null, 
+      "institution_id": "000240", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00001", 
+      "status": "completed_nfs_sc_notified" 
+    } 
+  ] 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  404 Not Found  
+No batch was found matching the ext_batch_ref_no supplied. 
+{ 
+  "error": "reference_not_found", 
+  "message": "No H2H NFS B2W batch found for ext_batch_ref_no 006USRT25274133004", 
+  "status": 404, 
+  "timestamp": "2026-07-29T11:32:23", 
+  "path": "/h2h/nfs/b2w/transaction-status", 
+  "h2h_tracking_number": "7fb3ea21-39fb-4087-a80f-5b83acb4e1f7" 
+} 
+ 
+=== PDF PAGE 22 ===
+PayBill H2H Integration  |  API Specification 
+Page 22 of 64 
+ 
+Response Field Reference 
+Field Type Required Description 
+batch_status string — The overall status of the batch as a whole. 
+is_still_processing boolean — true while an individual item is still moving; false once it 
+has reached a final outcome. 
+status string — The individual item's own detailed status — see the Item 
+Status Reference, Section 8. 
+bank_callback_reference string / null — ZICB's own posting reference for this item, populated 
+once available; null beforehand. 
+  
+=== PDF PAGE 23 ===
+PayBill H2H Integration  |  API Specification 
+Page 23 of 64 
+3.5  Your Webhook — What NFS B2W Expects You to Build 
+Beyond polling Transaction Status yourself, PayBill will also actively notify your own system once each item reaches 
+a final outcome — so you don't need to poll continuously. To receive this, your own backend must expose two 
+endpoints of its own, on the webhook base domain URL you gave ZICB during onboarding. 
+THE ROLE YOU NEED TO BUILD: 
+For NFS B2W, your system must implement an authentication endpoint and a callback -receiving endpoint. 
+ZICB calls the first to get a token, then calls the second, carrying that token, to tell you how each payment 
+turned out. 
+Step 1 — Callback Authentication (you issue the token) 
+Before sending a notification, ZICB authenticates against your own system, exactly like a client would against ZICB's 
+own Auth service. 
+POST /api/v1/bank/auth/token 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — an address on your own system, matching the webhook base domain 
+URL you gave ZICB 
+What ZICB sends you 
+  REQUEST PAYLOAD  
+Request body ZICB will POST to you 
+{ 
+  "username": "<YOUR_WEBHOOK_USERNAME>", 
+  "password": "<YOUR_WEBHOOK_PASSWORD>" 
+} 
+ 
+What your endpoint must return 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return a fresh token on every call — ZICB does not cache or reuse tokens between notifications. 
+{ 
+  "token": "<WEBHOOK_ACCESS_TOKEN>" 
+} 
+ 
+Field Type Required Description 
+username / 
+password 
+string — The credentials you gave ZICB for your own callback API — 
+configured on your institution's profile. 
+token string — Any Bearer-style token your system issues; ZICB will echo it 
+straight back to you in Step 2. 
+Step 2 — Callback (you receive the outcome) 
+Once an item finishes processing, ZICB calls this endpoint with the outcome for that item. 
+=== PDF PAGE 24 ===
+PayBill H2H Integration  |  API Specification 
+Page 24 of 64 
+POST /api/v1/bank/callback 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers ZICB sends 
+Header Value 
+Authorization Bearer <token from Step 1> 
+Content-Type application/json 
+Payload ZICB sends 
+Field Type Required Description 
+reference string Mandatory The batch reference this item belongs to. 
+message text Optional To pass transactional messages including reasons for failure 
+bankRef string Mandatory 
+when 
+status_code is 
+200 
+ZICB's own posting reference for this item. 
+status_code 200 or 400 Mandatory 200 means the item was DISBURSED; 400 means it FAILED. 
+prcn_number string Mandatory Your own reference for this specific item. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<BATCH_REFERENCE>", 
+  "message": "<Transactional Information>", 
+  "bankRef": "<ZICB_POSTING_REFERENCE>", 
+  "status_code": 200, 
+  "prcn_number": "PRCN-2026-00001" 
+} 
+ 
+What your endpoint must return 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return this once the notification has been accepted and recorded on your side. 
+{ 
+  "status_code": 200, 
+  "message": "success" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Respond this way if the Authorization header is missing or malformed. 
+{ 
+  "error": "unauthorized", 
+  "message": "Missing or invalid Authorization header" 
+} 
+ 
+=== PDF PAGE 25 ===
+PayBill H2H Integration  |  API Specification 
+Page 25 of 64 
+  RESPONSE  ·  ERROR  ·  400 Bad Request  
+Respond this way if a required field is missing or empty. 
+{ 
+  "error": "validation_error", 
+  "message": "reference is required and cannot be empty" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  400 Bad Request  
+Respond this way if status_code is anything other than 200 or 400. 
+{ 
+  "error": "validation_error", 
+  "message": "status_code must be 200 (DISBURSED) or 400 (FAILED), got: 500" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  400 Bad Request  
+Respond this way if status_code was 200 but bankRef was missing. 
+{ 
+  "error": "validation_error", 
+  "message": "bankRef is required when status_code is 200" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  409 Conflict  
+If you've already processed this exact reference before, respond this way rather than processing it twice. 
+{ 
+  "error": "duplicate_reference", 
+  "message": "Reference has already been processed" 
+} 
+ 
+IDEMPOTENCY, FOR YOUR OWN PROTECTION: 
+ZICB may occasionally resend the same notification — for example, after a network hiccup. Use reference to 
+detect and safely ignore a repeat, exactly as the 409 response above illustrates.  
+BUILD FOR BOTH PATHS: 
+Treat your webhook receiver and your own Transaction Status polling as complementary, not exclusive. If a 
+webhook call is ever missed, Transaction Status remains the source of truth you can always fall back on . 
+Transaction Status will have rate limit implemented, therefore; your background job should at least run once 
+every two hours to avoid being blocked. 
+  
+=== PDF PAGE 26 ===
+PayBill H2H Integration  |  API Specification 
+Page 26 of 64 
+  SERVICE 2 OF 5 
+  Internal Fund Transfer 
+Internal FT lets your institution move money directly between accounts that both already sit inside ZICB — no 
+mobile wallet, no other bank. Because it moves money entirely within ZICB's own core banking system, name 
+lookups here can return a fuller set of account details than NFS B2W's wallet lookup. 
+ 
+4.1  Name Lookup 
+Confirms an account is real and returns its holder's details before you pay it — useful for confirming a beneficiary's 
+identity ahead of a transfer. 
+POST /h2h/internal-ft/name-lookup 
+Base URL (Internal FT): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+account_no string Mandatory The ZICB account number to look up. 
+branch_code string Mandatory The ZICB branch code the account is held at. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "account_no": "1010066244206", 
+  "branch_code": "003" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK — personal account  
+The account belongs to an individual — note the full name, mobile number, and national ID fields. 
+{ 
+  "timestamp": "2026-08-06T12:04:18", 
+  "error": null, 
+  "message": { 
+    "account_category": "STAFF", 
+    "account_number": "1010XXXXXXXXX", 
+    "account_status": "O", 
+    "branch_code": "004", 
+    "cif": "0178XXX", 
+=== PDF PAGE 27 ===
+PayBill H2H Integration  |  API Specification 
+Page 27 of 64 
+    "currency": "ZMW", 
+    "first_name": " John", 
+    "fullname": "John Doe", 
+    "last_name": " Doe ", 
+    "mobile_number": "963000000", 
+    "national_id": "XXXXXX/16/1", 
+    "no_credit": "N", 
+    "no_debit": "N", 
+    "other_names": "", 
+    "passport": "", 
+    "sort_code": "1XXXX4", 
+    "status_dormant": "", 
+    "status_frozen": "N", 
+    "telephone_number": "", 
+    "tpin": "101645XXXX", 
+    "unique_id_name": "REG" 
+  }, 
+  "path": "/h2h/internal-ft/name-lookup", 
+  "status": "SUCCESS", 
+  "tracking_number": "d6d89e93-215f-48d8-b475-54a193a69feb" 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK — corporate account  
+The account belongs to a company — the name fields describe the business rather than a person. 
+{ 
+  "timestamp": "2026-08-06T12:10:49", 
+  "error": null, 
+  "message": { 
+    "account_category": "CORPORATE", 
+    "account_number": "10100XXXXX014", 
+    "account_status": "O", 
+    "branch_code": "001", 
+    "cif": "00X0XXX", 
+    "currency": "ZMW", 
+    "first_name": "", 
+    "fullname": "JI AND SONS", 
+    "last_name": "", 
+    "mobile_number": "963000000", 
+    "national_id": "", 
+    "no_credit": "N", 
+    "no_debit": "N", 
+    "other_names": "", 
+    "passport": "", 
+    "sort_code": "140001", 
+    "status_dormant": "", 
+    "status_frozen": "N", 
+    "telephone_number": "", 
+    "tpin": "100XXXXXXX", 
+    "unique_id_name": "REG", 
+    "unique_id_value": "XXXX/00/100" 
+  }, 
+  "path": "/h2h/internal-ft/name-lookup", 
+  "status": "SUCCESS", 
+  "tracking_number": "183a4bf2-2100-4490-9bb6-f4d703894c0e" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+=== PDF PAGE 28 ===
+PayBill H2H Integration  |  API Specification 
+Page 28 of 64 
+{ 
+  "error": "invalid_token", 
+  "valid": false, 
+  "error_description": "Token has expired" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your institution's profile isn't configured to use Internal FT name lookup. 
+{ 
+  "error": "permission_error", 
+  "valid": false, 
+  "error_description": "Unable to proceed, you are not allowed to utilize this service 
+template" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token isn't well-formed — check it was copied in full. 
+{ 
+  "error": "invalid_token", 
+  "message": "Malformed token \u2014 expected 3 segments", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+The account number given doesn't have the expected number of digits. 
+{ 
+  "timestamp": "2026-08-06T11:50:12", 
+  "error": "account_number_invalid", 
+  "message": "Account number must be 13 digits", 
+  "path": "/h2h/internal-ft/name-lookup", 
+  "status": "ERROR", 
+  "tracking_number": "103f6d8a-9e58-4e02-93bc-c88ff435eef3" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+ZICB's core banking system timed out. This is transient — safe to retry with the same reference/payload 
+{ 
+  "timestamp": "2026-08-06T11:57:05", 
+  "error": "service_unavailable", 
+  "message": "TN CBS - timeout", 
+  "path": "/h2h/internal-ft/name-lookup", 
+  "status": "ERROR", 
+  "tracking_number": "b188953f-9df9-45e9-b5eb-5d611b3b1e45" 
+} 
+ 
+ 
+ 
+ 
+=== PDF PAGE 29 ===
+PayBill H2H Integration  |  API Specification 
+Page 29 of 64 
+Field Type Required Description 
+account_category string — The type of account — for example STAFF, CORPORATE, or 
+SME. 
+cif string — The Customer Information File number identifying the account 
+holder. 
+fullname string — The account holder's registered name. 
+account_status string — O for an open, usable account. 
+no_credit / 
+no_debit 
+string — N under normal circumstances — Y would indicate the account 
+is currently restricted. 
+=== PDF PAGE 30 ===
+PayBill H2H Integration  |  API Specification 
+Page 30 of 64 
+2  Send Money 
+Submits a batch of one or more internal transfers. As with every send-money endpoint, a batch is accepted 
+immediately and processed shortly afterwards. 
+POST /h2h/internal-ft/send-money 
+Base URL (Internal FT): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+reference string Mandatory A unique reference for this whole batch. 
+count integer Mandatory The number of transactions in this batch. 
+region_code string Mandatory The region/revenue/purpose code the paying branch belongs 
+to. 
+total_amount decimal Mandatory The sum of every transaction amount in the batch. 
+transactions array Mandatory The list of individual transfers making up this batch. 
+Each entry inside transactions: 
+Field Type Required Description 
+prcn_number string Mandatory Your own unique reference for this individual transfer. 
+account_number string Mandatory The beneficiary's ZICB account number, 13 digit number 
+branch_code string Mandatory The ZICB branch code the beneficiary's account is held at. 
+amount decimal Mandatory The amount to transfer. 
+transaction_remarks string Mandatory A short narration. ZICB uses the prcn_number in the actual 
+narration sent, rather than this text verbatim. 
+is_retry 0 or 1 Mandatory Set to 1 if this item is a resubmission of a previously failed 
+transfer; otherwise 0. 
+retry_count integer Mandatory How many times this item has already been retried. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<UNIQUE_BATCH_REFERENCE>", 
+  "count": 2, 
+  "region_code": "LS", 
+  "total_amount": 51.0, 
+  "transactions": [ 
+    { 
+      "prcn_number": "PRCN-2026-00003", 
+=== PDF PAGE 31 ===
+PayBill H2H Integration  |  API Specification 
+Page 31 of 64 
+      "account_number": "1010XXXXXXXXX", 
+      "branch_code": "003", 
+      "amount": 26.0, 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    }, 
+    { 
+      "prcn_number": "PRCN-2026-00004", 
+      "account_number": "1010XXXXXXXXX", 
+      "branch_code": "004", 
+      "amount": 25.0, 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    } 
+  ] 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  202 Accepted  
+The batch has been received and logged; processing continues asynchronously. 
+{ 
+  "error": null, 
+  "message": "Transaction received successfully, pending processing, logged 2 items.", 
+  "status": 201, 
+  "timestamp": "2026-08-10T16:36:03", 
+  "path": "/h2h/internal-ft/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token's signature is invalid. 
+{ 
+  "error": "invalid_token", 
+  "message": "Signature verification failed", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  503 Service Unavailable  
+ZICB's core banking system is temporarily unreachable. This is transient — retry with backoff. 
+{ 
+  "error": "service_unavailable", 
+=== PDF PAGE 32 ===
+PayBill H2H Integration  |  API Specification 
+Page 32 of 64 
+  "message": "TN CBS - timeout", 
+  "status": 503, 
+  "timestamp": "2026-08-10T16:35:30", 
+  "path": "/h2h/internal-ft/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+One or more prcn_number values are repeated more than once within this same submission. 
+{ 
+  "error": "duplicate_prcn_numbers_in_request", 
+  "info": [ 
+    { 
+      "prcn_number": "PRCN-2026-00001", 
+      "row_indices": [ 
+        0, 
+        1 
+      ] 
+    } 
+  ], 
+  "message": "1 prcn_number(s) appear more than once in this submission", 
+  "status": 422, 
+  "timestamp": "2026-09-02T22:53:09", 
+  "path": "/h2h/internal-ft/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  409 Conflict  
+One or more prcn_number values have already been submitted before, in a previous batch. 
+{ 
+  "error": "duplicate_invoice_items", 
+  "info": [ 
+    "PRCN-2026-00001" 
+  ], 
+  "message": "2 duplicate prcn_numbers", 
+  "status": 409, 
+  "timestamp": "2026-09-02T22:59:13", 
+  "path": "/h2h/internal-ft/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+One or more individual items failed field-level validation, such as a missing branch_code or account_number. 
+{ 
+  "error": "items_failed_validation", 
+  "info": [ 
+    { 
+      "errors": [ 
+        { 
+          "message": "branch_code is missing", 
+          "row_key": "branch_code" 
+        } 
+      ], 
+      "prcn_number": "PRCN-2026-00003", 
+      "row_index": 0 
+    }, 
+    { 
+=== PDF PAGE 33 ===
+PayBill H2H Integration  |  API Specification 
+Page 33 of 64 
+      "errors": [ 
+        { 
+          "message": "account_number is missing", 
+          "row_key": "account_number" 
+        } 
+      ], 
+      "prcn_number": "PRCN-2026-00004", 
+      "row_index": 1 
+    } 
+  ], 
+  "message": "2 prcn_numbers items has validation errors", 
+  "status": 422, 
+  "timestamp": "2026-09-02T23:00:06", 
+  "path": "/h2h/internal-ft/send-money" 
+} 
+ 
+  
+=== PDF PAGE 34 ===
+PayBill H2H Integration  |  API Specification 
+Page 34 of 64 
+4.3  Transaction Status 
+Looks up the current progress of a batch you previously submitted through Send Money. 
+POST /h2h/internal-ft/transaction-status 
+Base URL (Internal FT): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+ext_batch_ref_no string Mandatory The same reference value originally submitted via Send Money. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "ext_batch_ref_no": "9c11a7c1-9118-4431-a70b-1e31942af72b" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Every item in the batch has finished processing. 
+{ 
+    "batch_status": "completed", 
+    "count": 2, 
+    "ext_batch_ref_no": "9c11a7c1-9118-4431-a70b-1e31942af72b", 
+    "region_code": "LS", 
+    "total_amount": 51.0, 
+    "transactions": [ 
+        { 
+            "account_number": "XXXXXXXX5XXXX", 
+            "amount": 25.0, 
+            "bank_reference": "008FRAN251561001", 
+            "branch_code": "004", 
+            "is_still_processing": false, 
+            "prcn_number": "PRCN-2026-00001", 
+            "status": "completed_fcub_ft_sc_notified" 
+        }, 
+        { 
+            "account_number": "XXXXXXXX5XXXX", 
+            "amount": 26.0, 
+            "bank_reference": "008FRAN251561002", 
+            "branch_code": "003", 
+            "is_still_processing": false, 
+            "prcn_number": "PRCN-2026-00001", 
+            "status": "completed_fcub_ft_sc_notified" 
+        } 
+    ] 
+=== PDF PAGE 35 ===
+PayBill H2H Integration  |  API Specification 
+Page 35 of 64 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  404 Not Found  
+No batch was found matching the ext_batch_ref_no supplied. 
+{ 
+  "error": "reference_not_found", 
+  "message": "No H2H Internal FT batch found for ext_batch_ref_no 006USRT25274133004", 
+  "status": 404, 
+  "timestamp": "2026-07-29T11:32:23", 
+  "path": "/h2h/internal-ft/transaction-status", 
+  "h2h_tracking_number": "7fb3ea21-39fb-4087-a80f-5b83acb4e1f7" 
+} 
+ 
+  
+=== PDF PAGE 36 ===
+PayBill H2H Integration  |  API Specification 
+Page 36 of 64 
+4.4  Your Webhook — What Internal FT Expects You to Build 
+As with NFS B2W, ZICB will actively notify your own system once each item reaches a final outcome, rather than 
+leaving you to poll continuously. The notification carries the same DISBURSED/FAILED outcome shape as every 
+other service. 
+PATH TO CONFIRM WITH ZICB: 
+For NFS B2W, RTGS, and DDACC, the callback auth and callback paths are confirmed below in each service's 
+own section, each following a consistent pattern of its own. Internal FT follows the same two -step shape — 
+authenticate, then receive a callback — but please confirm the exact path segment for Internal FT with ZICB 
+IT during onboarding, as it was not directly confirmed in the reference material used to prepare this 
+document. 
+The Shape You Need to Build 
+Whatever the exact confirmed path, your endpoint should accept the same request shape used across every 
+service: 
+Step 1 — Callback Authentication 
+  REQUEST PAYLOAD  
+Request body ZICB will POST to your own auth endpoint 
+{ 
+  "username": "<YOUR_WEBHOOK_USERNAME>", 
+  "password": "<YOUR_WEBHOOK_PASSWORD>" 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return a fresh token on every call. 
+{ 
+  "token": "<WEBHOOK_ACCESS_TOKEN>" 
+} 
+ 
+Step 2 — Callback 
+Header Value 
+Authorization Bearer <token from Step 1> 
+Content-Type application/json 
+  REQUEST PAYLOAD  
+Request body ZICB will POST to your own callback endpoint 
+{ 
+  "reference": "<BATCH_REFERENCE>", 
+  "message": "<Transactional Information/message>", 
+  "bankRef": "<ZICB_POSTING_REFERENCE>", 
+  "status_code": 200, 
+  "prcn_number": "PRCN-2026-00001" 
+} 
+ 
+=== PDF PAGE 37 ===
+PayBill H2H Integration  |  API Specification 
+Page 37 of 64 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return this once the notification has been accepted and recorded on your side. 
+{ 
+  "status_code": 200, 
+  "message": "success" 
+} 
+ 
+The full set of error responses your endpoint should be ready to return — unauthorized, missing fields, an invalid 
+status_code, a missing bankRef, and a duplicate reference — are documented in full in Section 3.5, and apply 
+identically here. 
+  
+=== PDF PAGE 38 ===
+PayBill H2H Integration  |  API Specification 
+Page 38 of 64 
+  SERVICE 3 OF 5 
+  RTGS — Other Bank RTGS FT 
+RTGS lets your institution send payments to accounts at other banks, settled individually and immediately rather 
+than bundled together — the channel built for large or time-critical payments. Because the beneficiary is at 
+another bank, each payment needs more detail than an internal transfer: the receiving bank's own identifiers, and 
+a value date. 
+ 
+5.1  Send Money 
+POST /h2h/other-bank-rtgs-ft/v1/send-money 
+Base URL (RTGS): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+reference string Mandatory A unique reference for this whole batch. 
+count integer Mandatory The number of transactions in this batch. 
+region_code string Mandatory The region/revenue/purpose code the paying branch belongs 
+to. 
+total_amount decimal Mandatory The sum of every transaction amount in the batch — must 
+exactly match the sum of the individual items, or the whole 
+batch is rejected. 
+transactions array Mandatory The list of individual payments making up this batch. 
+Each entry inside transactions: 
+Field Type Required Description 
+prcn_number string Mandatory, 
+max 35 
+characters 
+Your own unique reference for this individual payment. 
+receiver_bic string Mandatory The receiving bank's BIC/SWIFT code. 
+receiver_currency string Mandatory The currency of the payment (see Section 5.4 for 
+supported currencies). 
+receiver_sort_code string Mandatory The receiving bank branch's sort code (see Section 5.3 to 
+look these up). 
+receiver_account_number string Mandatory The beneficiary's account number at the receiving bank. 
+Length depends on destination bank. 
+=== PDF PAGE 39 ===
+PayBill H2H Integration  |  API Specification 
+Page 39 of 64 
+receiver_acc_name string Mandatory The beneficiary's name as it appears on the receiving 
+account. 
+amount decimal Mandatory The amount to pay this beneficiary. 
+transaction_value_date string Mandatory, 
+YYYY-MM-DD 
+The date the payment should value on. 
+transaction_remarks string Mandatory, 
+max 35 
+characters 
+A narration. ZICB appends the prcn_number to this when 
+the instruction is actually sent, and it will appear on the 
+paying account's own statement — useful for your own 
+reconciliation. 
+is_retry 0 or 1 Mandatory Set to 1 if this is a resubmission of a previously failed 
+payment; otherwise 0. 
+retry_count integer Mandatory How many times this item has already been retried. ZICB 
+allows a maximum of 10. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<UNIQUE_BATCH_REFERENCE>", 
+  "count": 2, 
+  "region_code": "LS", 
+  "total_amount": 51.0, 
+  "transactions": [ 
+    { 
+      "prcn_number": "PRCN-2026-00001", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_currency": "ZMW", 
+      "receiver_sort_code": "020016", 
+      "receiver_account_number": "1142662", 
+      "receiver_acc_name": "John Doe", 
+      "amount": 26.0, 
+      "transaction_value_date": "2026-08-31", 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    }, 
+    { 
+      "prcn_number": "PRCN-2026-00002", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_currency": "ZMW", 
+      "receiver_sort_code": "020016", 
+      "receiver_account_number": "1142662", 
+      "receiver_acc_name": "John Doe", 
+      "amount": 25.0, 
+      "transaction_value_date": "2026-08-31", 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    } 
+  ] 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  202 Accepted  
+The batch has been received and logged; processing continues asynchronously. 
+=== PDF PAGE 40 ===
+PayBill H2H Integration  |  API Specification 
+Page 40 of 64 
+{ 
+  "error": null, 
+  "message": "Transaction received successfully, pending processing, logged 2 items.", 
+  "status": 201, 
+  "timestamp": "2026-08-31T20:59:54", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The RTGS service path isn't recognised for your token — check the base URL and endpoint. 
+{ 
+  "error": "permission_error", 
+  "message": "Unknown service path", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your institution's profile isn't configured to use RTGS. 
+{ 
+  "error": "permission_error", 
+  "message": "Unable to proceed, you are not allowed to utilize this service", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  503 Service Unavailable  
+ZICB's core banking system is temporarily unreachable. This is transient — retry with backoff. 
+{ 
+  "error": "service_unavailable", 
+  "message": "TN CBS - timeout", 
+  "status": 503, 
+  "timestamp": "2026-08-27T04:30:24", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+An individual item is missing a required field, such as prcn_number. 
+{ 
+  "error": "items_failed_validation", 
+  "info": [ 
+    { 
+=== PDF PAGE 41 ===
+PayBill H2H Integration  |  API Specification 
+Page 41 of 64 
+      "errors": [ 
+        { 
+          "message": "prcn_number cannot be blank", 
+          "row_key": "prcn_number" 
+        } 
+      ], 
+      "prcn_number": null, 
+      "row_index": 0 
+    } 
+  ], 
+  "message": "1 prcn_numbers items has validation errors", 
+  "status": 422, 
+  "timestamp": "2026-08-27T05:43:30", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+The batch-level total_amount doesn't match the sum of the individual transaction amounts. 
+{ 
+  "error": "validation_error", 
+  "message": "Submitted total amount 51.0 not equal to checked sum of transactions 25.0", 
+  "status": 422, 
+  "timestamp": "2026-08-27T06:07:10", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+An individual item is missing the receiver's BIC code. 
+{ 
+  "error": "items_failed_validation", 
+  "info": [ 
+    { 
+      "errors": [ 
+        { 
+          "message": "receiver_bic is missing", 
+          "row_key": "receiver_bic" 
+        } 
+      ], 
+      "prcn_number": "PRCN-2026-00001", 
+      "row_index": 0 
+    } 
+  ], 
+  "message": "1 prcn_numbers items has validation errors", 
+  "status": 422, 
+  "timestamp": "2026-08-27T06:07:54", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+One or more prcn_number values are repeated more than once within this same submission. 
+{ 
+  "error": "duplicate_prcn_numbers_in_request", 
+  "info": [ 
+    { 
+=== PDF PAGE 42 ===
+PayBill H2H Integration  |  API Specification 
+Page 42 of 64 
+      "prcn_number": "PRCN-2026-00001", 
+      "row_indices": [ 
+        0, 
+        1 
+      ] 
+    } 
+  ], 
+  "message": "1 prcn_number(s) appear more than once in this submission", 
+  "status": 422, 
+  "timestamp": "2026-08-27T11:03:42", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  409 Conflict  
+One or more prcn_number values have already been submitted before, in a previous batch. 
+{ 
+  "error": "duplicate_invoice_items", 
+  "info": [ 
+    "PRCN-2026-00001" 
+  ], 
+  "message": "2 duplicate prcn_numbers", 
+  "status": 409, 
+  "timestamp": "2026-08-27T13:00:07", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/send-money" 
+} 
+ 
+  
+=== PDF PAGE 43 ===
+PayBill H2H Integration  |  API Specification 
+Page 43 of 64 
+5.2  Transaction Status 
+POST /h2h/other-bank-rtgs-ft/v1/transaction-status 
+Base URL (RTGS): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+ext_batch_ref_no string Mandatory The same reference value originally submitted via Send Money. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "ext_batch_ref_no": "677e084f-1e7a-4154-b6e3-f38624d76d83" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Every item in the batch has finished processing. Note the receiving bank's own details are echoed back for your own records. 
+{ 
+  "batch_status": "completed", 
+  "count": 2, 
+  "ext_batch_ref_no": "677e084f-1e7a-4154-b6e3-f38624d76d83", 
+  "region_code": "LS", 
+  "total_amount": 51, 
+  "transactions": [ 
+    { 
+      "amount": 26, 
+      "bank_reference": "008FRAN251561510", 
+      "currency": "ZMW", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00001", 
+      "receiver_acc_name": "John Doe", 
+      "receiver_account_number": "1142662", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_sort_code": "020016", 
+      "receiving_bank_name": "Barclays Bank Zambia Plc", 
+      "status": "completed_fcub_ft_sc_notified" 
+    }, 
+    { 
+      "amount": 25, 
+      "bank_reference": "008FRAN251561509", 
+      "currency": "ZMW", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00002", 
+      "receiver_acc_name": "John Doe", 
+      "receiver_account_number": "1142662", 
+=== PDF PAGE 44 ===
+PayBill H2H Integration  |  API Specification 
+Page 44 of 64 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_sort_code": "020016", 
+      "receiving_bank_name": "Barclays Bank Zambia Plc", 
+      "status": "completed_fcub_ft_sc_notified" 
+    } 
+  ] 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  404 Not Found  
+No batch was found matching the ext_batch_ref_no supplied. 
+{ 
+  "error": "reference_not_found", 
+  "message": "No H2H other-bank RTGS batch found for ext_batch_ref_no dd022403-504a-431a-85ff-
+3f867935966a", 
+  "status": 404, 
+  "timestamp": "2026-08-31T23:38:33", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/transaction-status", 
+  "h2h_tracking_number": "e9160eab-2811-4b54-b825-45c583d4a125" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+ 
+Field Type Required Description 
+status string — The item's own detailed status — RTGS and DDACC share 
+their own status vocabulary, distinct from NFS B2W and 
+Internal FT. See Section 8.2. 
+bank_reference string — ZICB's own posting reference once the payment has settled. 
+receiving_bank_name string — Resolved automatically from the receiver_sort_code you 
+submitted. 
+  
+=== PDF PAGE 45 ===
+PayBill H2H Integration  |  API Specification 
+Page 45 of 64 
+5.3  Show Other Banks' Details 
+Returns the directory of other local banks and branches supported by ZICB, so you can confirm or look up a 
+receiver_sort_code and receiver_bic before submitting a payment. 
+GET /h2h/other-bank-rtgs-ft/v1/show/other-banks-details 
+Base URL (RTGS): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Authorization Bearer <ACCESS_TOKEN> 
+This is a GET request — there is no request payload. 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+A shortened sample of a large directory (499 entries at the time of writing) — call the live endpoint for the complete, current list. 
+{ 
+  "count": 499, 
+  "data": [ 
+    { 
+      "address": null, 
+      "bank_code": "00", 
+      "bank_name": "Bank Of Zambia", 
+      "bic_code": "BAZAZML0", 
+      "branch_desc": "LUSAKA", 
+      "country_code": null, 
+      "sortcode": "000001" 
+    }, 
+    { 
+      "address": null, 
+      "bank_code": "01", 
+      "bank_name": "Zambia National Commercial Plc", 
+      "bic_code": "ZNCOZML0", 
+      "branch_desc": "HEAD OFFICE", 
+      "country_code": null, 
+      "sortcode": "010001" 
+    }, 
+    { 
+      "address": null, 
+      "bank_code": "01", 
+      "bank_name": "Zambia National Commercial Plc", 
+      "bic_code": "ZNCOZML0", 
+      "branch_desc": "MANDA HILL", 
+      "country_code": null, 
+      "sortcode": "010078" 
+    } 
+  ], 
+  "status": 200, 
+  "timestamp": "2026-09-01T15:44:45", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/show/other-banks-details" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The RTGS service path isn't recognised for your token. 
+=== PDF PAGE 46 ===
+PayBill H2H Integration  |  API Specification 
+Page 46 of 64 
+{ 
+  "error": "permission_error", 
+  "message": "Unknown service path", 
+  "valid": false 
+} 
+ 
+5.4  Show Currencies 
+Returns the currencies currently supported by ZICB based on currency holiday. 
+GET /h2h/other-bank-rtgs-ft/v1/show/currencies 
+Base URL (RTGS): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Authorization Bearer <ACCESS_TOKEN> 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Example response body 
+{ 
+  "count": 5, 
+  "data": [ 
+    "EUR", 
+    "GBP", 
+    "USD", 
+    "ZAR", 
+    "ZMW" 
+  ], 
+  "status": 200, 
+  "timestamp": "2026-09-01T15:44:45", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/show/currencies" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token isn't well-formed. 
+{ 
+  "error": "invalid_token", 
+  "message": "Malformed token \u2014 expected 3 segments", 
+  "valid": false 
+} 
+ 
+  
+=== PDF PAGE 47 ===
+PayBill H2H Integration  |  API Specification 
+Page 47 of 64 
+5.5  Show Currency Holidays 
+Returns the working/holiday calendar for a given currency, for the current year — useful for choosing a valid 
+transaction_value_date before submitting a payment. 
+POST /h2h/other-bank-rtgs-ft/v1/show/currency-holidays 
+Base URL (RTGS): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+currency string Mandatory The currency to check the calendar for. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "currency": "ZMW" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+A shortened sample — the real response includes one entry per calendar month. Each day is marked W (a working day) or H (a holiday). 
+{ 
+  "status": 200, 
+  "timestamp": "2026-09-01T16:15:08", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/show/currency-holidays", 
+  "currency": "ZMW", 
+  "year": 2026, 
+  "holiday_list": [ 
+    { 
+      "Jan": { 
+        "1": "H", 
+        "2": "W", 
+        "3": "H", 
+        "4": "H", 
+        "5": "W", 
+        "10": "W", 
+        "11": "H", 
+        "18": "H", 
+        "25": "H", 
+        "31": "H" 
+      } 
+    } 
+  ] 
+} 
+ 
+=== PDF PAGE 48 ===
+PayBill H2H Integration  |  API Specification 
+Page 48 of 64 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+The currency field was missing or empty. 
+{ 
+  "error": "missing_currency", 
+  "message": "currency query parameter is required and must be a non-empty string", 
+  "status": 422, 
+  "timestamp": "2026-09-01T15:59:24", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/show/currency-holidays" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  404 Not Found  
+No holiday calendar exists for the currency code supplied — double-check it's a supported currency (Section 5.4). 
+{ 
+  "error": "unknown_currency", 
+  "message": "No holiday calendar data found for currency ZMWI", 
+  "status": 404, 
+  "timestamp": "2026-09-01T16:14:27", 
+  "path": "/h2h/other-bank-rtgs-ft/v1/show/currency-holidays" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your institution's profile isn't configured to use this lookup. 
+{ 
+  "error": "profile_permission_error", 
+  "message": "L2: Unknown service path", 
+  "valid": false 
+} 
+ 
+  
+=== PDF PAGE 49 ===
+PayBill H2H Integration  |  API Specification 
+Page 49 of 64 
+5.6  Your Webhook — What RTGS Expects You to Build 
+Exactly as with NFS B2W and Internal FT, ZICB will actively notify your own system once each RTGS item reaches a 
+final outcome. The path is specific to RTGS, distinct from the other services — build these two endpoints on your 
+own webhook base domain URL. 
+Step 1 — Callback Authentication (you issue the token) 
+POST /api/v1/bank/other-bank-rtgs-ft/auth/token 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — an address on your own system, matching the webhook base domain 
+URL you gave ZICB 
+  REQUEST PAYLOAD  
+Request body ZICB will POST to you 
+{ 
+  "username": "<YOUR_WEBHOOK_USERNAME>", 
+  "password": "<YOUR_WEBHOOK_PASSWORD>" 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return a fresh token on every call — no caching or reuse on ZICB's side. 
+{ 
+  "token": "<WEBHOOK_ACCESS_TOKEN>" 
+} 
+ 
+Step 2 — Callback (you receive the outcome) 
+POST /api/v1/bank/other-bank-rtgs-ft/callback 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers ZICB sends 
+Header Value 
+Authorization Bearer <token from Step 1> 
+Content-Type application/json 
+Payload ZICB sends 
+Field Type Required Description 
+reference string Mandatory The batch reference this item belongs to. 
+message text Optional To pass transactional messages including reasons for failure 
+bankRef string Empty string if 
+FAILED 
+ZICB's own posting reference for this item; an empty string 
+when the payment failed. 
+status_code 200 or 400 Mandatory 200 means DISBURSED; 400 means FAILED. 
+prcn_number string Mandatory Your own reference for this specific item. 
+=== PDF PAGE 50 ===
+PayBill H2H Integration  |  API Specification 
+Page 50 of 64 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<BATCH_REFERENCE>", 
+  "message": "<Transactional Information/message>", 
+  "bankRef": "<ZICB_POSTING_REFERENCE>", 
+  "status_code": 200, 
+  "prcn_number": "PRCN-2026-00001" 
+} 
+ 
+What your endpoint must return 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return this once the notification has been accepted and recorded on your side. 
+{ 
+  "status_code": 200, 
+  "message": "success" 
+} 
+ 
+The full set of error responses your endpoint should be ready to return — unauthorized, missing fields, an invalid 
+status_code, a missing bankRef, and a duplicate reference — follow the same shape documented in full in Section 
+3.5. 
+  
+=== PDF PAGE 51 ===
+PayBill H2H Integration  |  API Specification 
+Page 51 of 64 
+  SERVICE 4 OF 5 
+  DDACC — Other Bank DDACC FT 
+DDACC is another channel for sending payments to accounts at other banks, alongside RTGS. Its request and 
+response shapes are identical to RTGS's own — the same receiver details, the same value date, the same reference 
+data for banks, currencies, and holidays — so this section focuses on what's specific to DDACC rather than 
+repeating the full field-by-field detail already covered in Section 5. 
+ 
+6.1  Send Money 
+POST /h2h/other-bank-ddacc-ft/v1/send-money 
+Base URL (DDACC): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+The request payload follows exactly the same shape as RTGS Send Money (Section 5.1) — reference, count, 
+region_code, total_amount, and a transactions array with prcn_number, receiver_bic, receiver_currency, 
+receiver_sort_code, receiver_account_number, receiver_acc_name, amount, transaction_value_date, 
+transaction_remarks, is_retry, and retry_count. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<UNIQUE_BATCH_REFERENCE>", 
+  "count": 2, 
+  "region_code": "LS", 
+  "total_amount": 51.0, 
+  "transactions": [ 
+    { 
+      "prcn_number": "PRCN-2026-00001", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_currency": "ZMW", 
+      "receiver_sort_code": "020016", 
+      "receiver_account_number": "1142662", 
+      "receiver_acc_name": "John Doe", 
+      "amount": 26.0, 
+      "transaction_value_date": "2026-08-31", 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    }, 
+    { 
+      "prcn_number": "PRCN-2026-00002", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_currency": "ZMW", 
+      "receiver_sort_code": "020016", 
+      "receiver_account_number": "1142662", 
+=== PDF PAGE 52 ===
+PayBill H2H Integration  |  API Specification 
+Page 52 of 64 
+      "receiver_acc_name": "John Doe", 
+      "amount": 25.0, 
+      "transaction_value_date": "2026-08-31", 
+      "transaction_remarks": "test", 
+      "is_retry": 0, 
+      "retry_count": 0 
+    } 
+  ] 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  202 Accepted  
+The batch has been received and logged; processing continues asynchronously. 
+{ 
+  "error": null, 
+  "message": "Transaction received successfully, pending processing, logged 2 items.", 
+  "status": 201, 
+  "timestamp": "2026-09-02T11:33:09", 
+  "path": "/h2h/other-bank-ddacc-ft/v1/send-money" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Authorization header wasn't a well-formed Bearer token. 
+{ 
+  "error": "invalid_token", 
+  "message": "Invalid token header", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+The Bearer token's signature is invalid. 
+{ 
+  "error": "invalid_token", 
+  "message": "Signature verification failed", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  503 Service Unavailable  
+ZICB's core banking system is temporarily unreachable. This is transient — retry with backoff. 
+=== PDF PAGE 53 ===
+PayBill H2H Integration  |  API Specification 
+Page 53 of 64 
+{ 
+  "error": "service_unavailable", 
+  "message": "TN CBS - timeout", 
+  "status": 503, 
+  "timestamp": "2026-09-02T11:31:24", 
+  "path": "/h2h/other-bank-ddacc-ft/v1/send-money" 
+} 
+ 
+SAME VALIDATION RULES APPLY: 
+DDACC enforces the same field-level and batch-level validation as RTGS — a missing receiver_bic, a 
+mismatched total_amount, or a duplicate prcn_number all produce the same 422/409 responses 
+documented in Section 5.1. 
+  
+=== PDF PAGE 54 ===
+PayBill H2H Integration  |  API Specification 
+Page 54 of 64 
+6.2  Transaction Status 
+POST /h2h/other-bank-ddacc-ft/v1/transaction-status 
+Base URL (DDACC): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers 
+Header Value 
+Content-Type application/json 
+Authorization Bearer <ACCESS_TOKEN> 
+Request Payload 
+Field Type Required Description 
+ext_batch_ref_no string Mandatory The same reference value originally submitted via Send Money. 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "ext_batch_ref_no": "a5c9aece-eeee-46ec-866f-ba44803dafe4" 
+} 
+ 
+Responses 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Every item in the batch has finished processing — the same response shape as RTGS's own Transaction Status. 
+{ 
+  "batch_status": "completed", 
+  "count": 2, 
+  "ext_batch_ref_no": "a5c9aece-eeee-46ec-866f-ba44803dafe4", 
+  "region_code": "LS", 
+  "total_amount": 51, 
+  "transactions": [ 
+    { 
+      "amount": 26, 
+      "bank_reference": "008FRAN251561512", 
+      "currency": "ZMW", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00001", 
+      "receiver_acc_name": "John Doe", 
+      "receiver_account_number": "1142662", 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_sort_code": "020016", 
+      "receiving_bank_name": "Barclays Bank Zambia Plc", 
+      "status": "completed_fcub_ft_sc_notified" 
+    }, 
+    { 
+      "amount": 25, 
+      "bank_reference": "008FRAN251561511", 
+      "currency": "ZMW", 
+      "is_still_processing": false, 
+      "prcn_number": "PRCN-2026-00002", 
+      "receiver_acc_name": "John Doe", 
+      "receiver_account_number": "1142662", 
+=== PDF PAGE 55 ===
+PayBill H2H Integration  |  API Specification 
+Page 55 of 64 
+      "receiver_bic": "BARCZMLX", 
+      "receiver_sort_code": "020016", 
+      "receiving_bank_name": "Barclays Bank Zambia Plc", 
+      "status": "completed_fcub_ft_sc_notified" 
+    } 
+  ] 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  401 Unauthorized  
+Your access token has expired — request a new one. 
+{ 
+  "error": "invalid_token", 
+  "message": "Token has expired", 
+  "valid": false 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  422 Unprocessable Content  
+The ext_batch_ref_no field was missing or empty. 
+{ 
+  "error": "missing_ext_batch_ref_no", 
+  "message": "ext_batch_ref_no is required and must be a non-empty string", 
+  "status": 422, 
+  "timestamp": "2026-09-02T11:48:37", 
+  "path": "/h2h/other-bank-ddacc-ft/v1/transaction-status" 
+} 
+ 
+  RESPONSE  ·  ERROR  ·  404 Not Found  
+No batch was found matching the ext_batch_ref_no supplied. 
+{ 
+  "error": "reference_not_found", 
+  "message": "No H2H other-bank DDACC batch found for ext_batch_ref_no 677e084f-1e7a-4154-b6e3-
+f38624d76d83", 
+  "status": 404, 
+  "timestamp": "2026-09-02T11:48:57", 
+  "path": "/h2h/other-bank-ddacc-ft/v1/transaction-status", 
+  "h2h_tracking_number": "73fa9e29-21f3-49bf-ba7e-e8211deccfdb" 
+} 
+ 
+  
+=== PDF PAGE 56 ===
+PayBill H2H Integration  |  API Specification 
+Page 56 of 64 
+6.3  Show Other Banks' Details, Currencies & Currency Holidays 
+DDACC exposes the same three reference-data endpoints as RTGS, returning identical content — the same 
+directory of banks and branches, the same supported currencies, and the same holiday calendars. 
+Endpoint Purpose 
+/h2h/other-bank-ddacc-ft/v1/show/other-banks-
+details 
+Look up a receiver_sort_code and receiver_bic — see 
+Section 5.3 for the response shape. 
+/h2h/other-bank-ddacc-ft/v1/show/currencies The currencies ZICB supports — see Section 5.4 for the 
+response shape. 
+/h2h/other-bank-ddacc-ft/v1/show/currency-
+holidays 
+The working/holiday calendar for a currency — see 
+Section 5.5 for the request and response shape. 
+WHY THESE AREN'T REPEATED IN FULL: 
+Since the data itself is identical to RTGS's own, repeating the full 499-bank directory and 12-month calendar 
+here would only add bulk without adding information. The headers, request shape, and response shape are 
+exactly as shown in Sections 5.3 through 5.5 — only the base path changes. 
+  
+=== PDF PAGE 57 ===
+PayBill H2H Integration  |  API Specification 
+Page 57 of 64 
+6.4  Your Webhook — What DDACC Expects You to Build 
+Exactly as with RTGS, ZICB will actively notify your own system once each DDACC item reaches a final outcome. The 
+path is specific to DDACC, distinct from every other service — build these two endpoints on your own webhook 
+base domain URL. 
+Step 1 — Callback Authentication (you issue the token) 
+POST /api/v1/bank/other-bank-ddacc-ft/auth/token 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — an address on your own system, matching the webhook base domain 
+URL you gave ZICB 
+  REQUEST PAYLOAD  
+Request body ZICB will POST to you 
+{ 
+  "username": "<YOUR_WEBHOOK_USERNAME>", 
+  "password": "<YOUR_WEBHOOK_PASSWORD>" 
+} 
+ 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return a fresh token on every call — no caching or reuse on ZICB's side. 
+{ 
+  "token": "<WEBHOOK_ACCESS_TOKEN>" 
+} 
+ 
+Step 2 — Callback (you receive the outcome) 
+POST /api/v1/bank/other-bank-ddacc-ft/callback 
+Base URL (Your Webhook): https://IP/DOMAIN:PORT  — replace with the actual host and port for your environment 
+Headers ZICB sends 
+Header Value 
+Authorization Bearer <token from Step 1> 
+Content-Type application/json 
+Payload ZICB sends 
+Field Type Required Description 
+reference string Mandatory The batch reference this item belongs to. 
+message text Optional To pass transactional messages including reasons for failure 
+bankRef string Empty string if 
+FAILED 
+ZICB's own posting reference for this item. 
+status_code 200 or 400 Mandatory 200 means DISBURSED; 400 means FAILED. 
+prcn_number string Mandatory Your own reference for this specific item. 
+=== PDF PAGE 58 ===
+PayBill H2H Integration  |  API Specification 
+Page 58 of 64 
+  REQUEST PAYLOAD  
+Example request body 
+{ 
+  "reference": "<BATCH_REFERENCE>", 
+  "bankRef": "<ZICB_POSTING_REFERENCE>", 
+  "status_code": 200, 
+  "prcn_number": "PRCN-2026-00001" 
+} 
+ 
+What your endpoint must return 
+  RESPONSE  ·  SUCCESS  ·  200 OK  
+Return this once the notification has been accepted and recorded on your side. 
+{ 
+  "status_code": 200, 
+  "message": "success" 
+} 
+ 
+The full set of error responses your endpoint should be ready to return follow the same shape documented in full 
+in Section 3.5. 
+  
+=== PDF PAGE 59 ===
+PayBill H2H Integration  |  API Specification 
+Page 59 of 64 
+7.  Consolidated Error Reference 
+Every distinct error condition observed across all five services, gathered in one place, with what typically causes it 
+and whether it's worth retrying. 
+Error Seen on What it means Retry? 
+invalid_token Any authenticated 
+call 
+Bearer token missing, malformed, 
+expired, or has an invalid 
+signature. 
+Get a new 
+token first 
+invalid_client Get Access Token client_id / client_secret don't 
+match a known, active institution. 
+No — check 
+credentials 
+permission_error Any service Your institution's profile isn't 
+configured to use this service. 
+No — contact 
+ZICB 
+general_error Name Lookup A downstream timeout or 
+unexpected failure. 
+Yes, shortly 
+after 
+"111" / "199" NFS B2W Name 
+Lookup 
+Generic rejection, or an 
+invalid/unknown account. 
+No — verify 
+details first 
+account_number_invalid Internal FT Name 
+Lookup 
+The account number isn't the 
+expected length. 
+No — check 
+the number 
+duplicate_reference Any Send Money The batch-level reference has 
+already been used. 
+No — use a 
+new reference 
+duplicate_invoice_items Any Send Money One or more item-level 
+prcn_number values were already 
+submitted in an earlier batch. 
+No — check 
+item 
+references 
+duplicate_prcn_numbers_in_request Any Send Money One or more prcn_number values 
+repeat within this same 
+submission. 
+No — fix the 
+batch 
+items_failed_validation Any Send Money One or more items failed field-
+level validation; each is listed 
+individually. 
+No — fix the 
+listed fields 
+validation_error RTGS Send Money The batch-level total doesn't 
+match the sum of its items. 
+No — fix the 
+total 
+source_account_error NFS B2W Send 
+Money 
+ZICB couldn't validate the paying 
+account (often a CBS timeout). 
+Yes, shortly 
+after 
+service_unavailable Any Send Money A downstream banking system is 
+temporarily unreachable. 
+Yes, with 
+backoff 
+reference_not_found Any Transaction 
+Status 
+No batch matches the 
+ext_batch_ref_no supplied. 
+No — check 
+the reference 
+missing_ext_batch_ref_no DDACC Transaction 
+Status 
+The ext_batch_ref_no field was 
+missing or empty. 
+No — supply 
+the field 
+missing_currency / 
+unknown_currency 
+Show Currency 
+Holidays 
+The currency field was missing, or 
+isn't supported. 
+No — check 
+Section 5.4 
+  
+=== PDF PAGE 60 ===
+PayBill H2H Integration  |  API Specification 
+Page 60 of 64 
+8.  Item Status Reference 
+Each transaction inside a Transaction Status response carries its own status field. The two service families use their 
+own distinct sets of values, reflecting the different route each takes: NFS B2W and Internal FT route through a 
+wallet-verification and bank-transfer leg; RTGS and DDACC route straight through ZICB's core banking system to 
+another bank. 
+8.1  NFS B2W & Internal Fund Transfer 
+Status Value Category What It Means 
+new_queue In Progress The payout has been received and 
+is waiting its turn to begin. 
+proccessing In Progress The payout is actively being 
+processed. 
+wip_nfs_acc_verify In Progress ZICB is confirming the beneficiary's 
+account or wallet is valid. 
+new_queue_bank_ft / wip_queue_bank_ft In Progress The internal transfer leg is queued, 
+then in progress. 
+new_queue_nfs_notify_ft / wip_nfs_notify_ft In Progress The payout to the beneficiary's 
+wallet is queued, then in progress. 
+completed_nfs_pending_notify_sc Needs 
+Attention 
+The beneficiary has already been 
+paid; ZICB is now notifying your 
+system. 
+completed_nfs_sc_notified / completed Successful The item completed, and your 
+system has been notified. 
+excep_error_nfs_verify_acc_retry / 
+failed_nfs_verify_acc_retry 
+Needs 
+Attention 
+Verification hit an error or failed; 
+ZICB is automatically retrying. 
+failed_nfs_verify_acc_pending_notify_sc / 
+_sc_notified 
+Failed The beneficiary's account or wallet 
+could not be verified. 
+fcubs_notify_ft_failed_pending_notify_sc / 
+_sc_notified 
+Failed The internal transfer leg could not 
+be completed. 
+failed_nfs_notify_ft_status_check_pending_notify_sc 
+/ _sc_notified 
+Failed The payout to the wallet could not 
+be confirmed. 
+failed / failed_nfs_sc_notified Failed The item failed, and your system 
+has been notified. 
+  
+=== PDF PAGE 61 ===
+PayBill H2H Integration  |  API Specification 
+Page 61 of 64 
+8.2  RTGS & DDACC 
+RTGS and DDACC share the same early-stage queueing and verification vocabulary as NFS B2W and Internal FT, but 
+their final leg goes straight through ZICB's core banking system to the other bank — reflected in the fcub_ft naming 
+below, in place of nfs. 
+Status Value Category What It Means 
+new_queue / proccessing In Progress The payment has been received 
+and is being queued or actively 
+processed. 
+new_queue_bank_ft / wip_queue_bank_ft In Progress The payment is queued, then in 
+progress, for its core banking 
+transfer leg. 
+completed_fcub_ft_pending_notify_sc Needs 
+Attention 
+The payment has settled with 
+the other bank; ZICB is now 
+notifying your system. 
+completed_fcub_ft_sc_notified Successful The payment settled, and your 
+system has been notified. 
+failed_verify_acc_pending_notify_sc / _sc_notified Failed The receiving bank details could 
+not be verified. 
+fcubs_notify_ft_failed_pending_notify_sc / 
+_sc_notified 
+Failed The transfer to the other bank 
+could not be completed. 
+failed_fcubs_notify_ft_status_check_pending_notify_sc 
+/ _sc_notified 
+Failed The outcome of the transfer 
+could not be confirmed with 
+certainty. 
+ 
+THE SIMPLEST SIGNAL: 
+For most integrations, is_still_processing is all you need day to day: true means keep waiting or keep polling; 
+false means the item has reached one of the final outcomes above, and status tells you which one.  
+  
+=== PDF PAGE 62 ===
+PayBill H2H Integration  |  API Specification 
+Page 62 of 64 
+9.  Quick Reference 
+A one-page summary of every endpoint across all five services, for use once you're already familiar with the detail 
+in Sections 2 through 6. 
+Method Endpoint Service Auth 
+POST /h2h/auth/grant-type/client-credentials Auth None 
+GET .../client-credentials/verify-token Auth Bearer 
+POST /h2h/nfs/b2w/name-lookup NFS B2W Bearer 
+POST /h2h/nfs/b2w/send-money NFS B2W Bearer 
+GET /h2h/nfs/b2w/participants NFS B2W Bearer 
+POST /h2h/nfs/b2w/transaction-status NFS B2W Bearer 
+POST /h2h/internal-ft/name-lookup Internal FT Bearer 
+POST /h2h/internal-ft/send-money Internal FT Bearer 
+POST /h2h/internal-ft/transaction-status Internal FT Bearer 
+POST .../other-bank-rtgs-ft/v1/send-money RTGS Bearer 
+POST .../other-bank-rtgs-ft/v1/transaction-status RTGS Bearer 
+GET .../other-bank-rtgs-ft/v1/show/other-banks-details RTGS Bearer 
+GET .../other-bank-rtgs-ft/v1/show/currencies RTGS Bearer 
+POST .../other-bank-rtgs-ft/v1/show/currency-holidays RTGS Bearer 
+POST .../other-bank-ddacc-ft/v1/send-money DDACC Bearer 
+POST .../other-bank-ddacc-ft/v1/transaction-status DDACC Bearer 
+GET .../other-bank-ddacc-ft/v1/show/other-banks-
+details 
+DDACC Bearer 
+GET .../other-bank-ddacc-ft/v1/show/currencies DDACC Bearer 
+POST .../other-bank-ddacc-ft/v1/show/currency-holidays DDACC Bearer 
+ 
+And the reverse direction — what your own system must expose: 
+Method Your Endpoint For Service 
+POST /api/v1/bank/auth/token NFS B2W 
+POST /api/v1/bank/callback NFS B2W 
+POST /api/v1/bank/internal-ft/callback Internal FT 
+POST /api/v1/bank/other-bank-rtgs-ft/auth/token RTGS 
+POST /api/v1/bank/other-bank-rtgs-ft/callback RTGS 
+POST /api/v1/bank/other-bank-ddacc-ft/auth/token DDACC 
+POST /api/v1/bank/other-bank-ddacc-ft/callback DDACC 
+=== PDF PAGE 63 ===
+PayBill H2H Integration  |  API Specification 
+Page 63 of 64 
+  
+=== PDF PAGE 64 ===
+PayBill H2H Integration  |  API Specification 
+Page 64 of 64 
+10.  Glossary 
+Term Meaning 
+H2H Host-to-Host — a direct, system-to-system integration between your institution and ZICB. 
+NFS The National Financial Switch — the interbank / mobile-money network NFS B2W payouts 
+are routed through. 
+B2W Bank to Wallet — paying funds from a bank account directly into a mobile money wallet. 
+RTGS Real-Time Gross Settlement — payments to other banks, settled individually and 
+immediately. 
+DDACC A second channel, alongside RTGS, for sending payments to other banks. 
+Batch A group of one or more payments submitted together in a single Send Money call. 
+Item A single payment within a batch — one beneficiary, one amount. 
+prcn_number Your own unique reference for one specific item, used for reconciliation and duplicate 
+detection. 
+participant_id / 
+institution_id 
+The code identifying which mobile money network a beneficiary's wallet belongs to (NFS 
+B2W). 
+branch_code The ZICB branch code an account is held at (Internal FT). 
+receiver_sort_code / 
+receiver_bic 
+The codes identifying the receiving bank and branch for a payment to another bank (RTGS 
+/ DDACC). 
+region_code The region/revenue/purpose code associated with the paying branch or account. 
+CIF Customer Information File number — the unique ID ZICB uses to identify an account 
+holder. 
+Bearer token A short-lived access token that authorises your calls, obtained via Section 2.1. 
+Webhook An HTTP address on your own system that ZICB calls to notify you of an outcome, without 
+you having to ask first. 
+ 
+  PayBill H2H Payouts by ZICB — Making Tomorrow Possible.  

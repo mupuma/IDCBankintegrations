@@ -1,13 +1,12 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 import { paymentQueue } from './queue';
 import { initDatabase, insertQueueRequest } from './db';
 import type { PaymentJobPayload, PaymentsResponse } from './types';
 import { isZicbServicePayload, validateZicbPayload } from './zicbValidation';
 import { prepareZicbPayload } from './zicbAgent';
 
-dotenv.config();
 initDatabase();
 
 const app = express();

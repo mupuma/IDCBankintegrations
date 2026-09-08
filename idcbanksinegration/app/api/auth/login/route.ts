@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { encrypt } from '../../../lib/auth';
+import { encrypt, getSessionMaxAgeSeconds } from '../../../lib/auth';
 import { sessionCookieOptions } from '../../../lib/sessionCookie';
 import { User } from '../../../models/internal/User';
 import { ensureDefaultAdmin } from '../../../lib/initDefaultAdmin';
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  response.cookies.set('session', token, sessionCookieOptions(60 * 60));
+  response.cookies.set('session', token, sessionCookieOptions(getSessionMaxAgeSeconds()));
 
   return response;
 }

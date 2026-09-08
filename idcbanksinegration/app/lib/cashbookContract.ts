@@ -78,6 +78,10 @@ export function cashbookErrorResponse(message: string) {
   return { responseCode: 500, responseMessage: `Error processing transaction: ${message}` };
 }
 
+export function cashbookResponseEnvelope(payload: Record<string, unknown>) {
+  return { ...payload };
+}
+
 export function cashbookInvalidRequestResponse(message: string) {
   return {
     responseCode: '400',
