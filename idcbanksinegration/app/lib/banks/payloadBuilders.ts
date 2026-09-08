@@ -5,6 +5,17 @@ function formatDate(value: string | Date) {
   return isNaN(date.getTime()) ? '' : date.toISOString().slice(0, 10);
 }
 
+function todayIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function zanacoValueDate(value: string | Date | undefined) {
+  const formatted = value ? formatDate(value) : '';
+  const today = todayIsoDate();
+  if (!formatted || !/^\d{4}-\d{2}-\d{2}$/.test(formatted)) return today;
+  return formatted < today ? today : formatted;
+}
+
 function normalizeString(value: unknown) {
   if (typeof value === 'string') {
     return value.trim();
@@ -94,40 +105,90 @@ export function buildIzbPayload(payment: PaymentsResponse, transactionType: Paym
 
 export function buildZanacoPayload(payment: PaymentsResponse, transactionType: PaymentsResponse['transactionType'], source?: any) {
   const requestBase = buildCommonRequest(payment, source);
+  const normalizedTransactionType = String(transactionType || '').toUpperCase();
+  const debitAccount = requestBase.srcAcc;
+  const creditAccount = requestBase.accountNumber;
+  const externalTranRef = (requestBase.transferRef || String((payment as any).paymentId || '')).replace(/[^a-zA-Z0-9]/g, '').slice(0, ['DDACCT', 'DDAC'].includes(normalizedTransactionType) ? 20 : 16);
+  const ccy = requestBase.payCurrency.toUpperCase();
+  const amount = String(requestBase.amount);
+  const valueDate = zanacoValueDate(payment.transactionDate);
+  const paymentDetails = requestBase.remarks.slice(0, 105);
+  const name = requestBase.accountName || requestBase.customerId || 'Beneficiary';
+  const address = [requestBase.plotNo, requestBase.streetName, requestBase.town].filter(Boolean).join(', ') || requestBase.bankName || 'Zambia';
 
-  if (transactionType === 'INT') {
+  if (normalizedTransactionType === 'INT') {
     return {
-      service: 'ZANACO_INT',
+      service: 'ZANACO_INTERNAL',
       request: {
-        destAcc: requestBase.accountNumber,
-        destBranch: requestBase.branchCode,
-        amount: String(requestBase.amount),
-        payDate: requestBase.payDate,
-        payCurrency: requestBase.payCurrency,
-        remarks: requestBase.remarks,
-        transferRef: requestBase.transferRef,
-        swiftCode: requestBase.swiftCode,
-        countryOfOrigin: requestBase.countryOfOrigin,
-        recipientCountry: requestBase.recipientCountry,
-        streetName: requestBase.streetName,
-        town: requestBase.town,
-        plotNo: requestBase.plotNo,
+        debitAccount,
+        creditAccount,
+        externalTranRef,
+        ccy,
+        amount,
+        valueDate,
+        paymentDetails,
+        name,
+        address,
+        bicCode: 'ZNCOZMLUXXX',
       },
     };
   }
 
+  if (['TT', 'SWIFT'].includes(normalizedTransactionType)) {
     return {
-      service: 'ZANACO_DOM',
+      service: 'ZANACO_SWIFT',
       request: {
-        ...requestBase,
-        transferTyp: transactionType === 'DDACCT' ? 'DDACC' : transactionType,
-        destAcc: requestBase.accountNumber,
-        destBranch: requestBase.branchCode,
-        srcAcc: requestBase.srcAcc,
-        srcBranch: requestBase.srcBranch,
-        srcName: requestBase.srcName,
+        debitAccount,
+        creditAccount,
+        externalTranRef,
+        ccy,
+        product: 'SWIFT',
+        amount,
+        valueDate,
+        paymentDetails,
+        name,
+        address: address.slice(0, 255),
+        bicCode: requestBase.swiftCode,
+        tpin: (payment as any).tpin || (payment as any).tpIn || '',
+        purposeCode: (payment as any).purposeCode || '',
+        sectorCode: (payment as any).sectorCode || '',
       },
     };
+  }
+
+  if (['DDACCT', 'DDAC'].includes(normalizedTransactionType)) {
+    return {
+      service: 'ZANACO_DDAC',
+      request: {
+        debitAccount,
+        creditAccount,
+        externalTranRef,
+        ccy,
+        amount,
+        valueDate,
+        paymentDetails,
+        name,
+        address,
+        sortCode: requestBase.sortCode || requestBase.branchCode,
+      },
+    };
+  }
+
+  return {
+    service: 'ZANACO_RTGS',
+    request: {
+      debitAccount,
+      creditAccount,
+      externalTranRef,
+      ccy,
+      amount,
+      valueDate,
+      paymentDetails,
+      name,
+      address,
+      bicCode: requestBase.swiftCode,
+    },
+  };
 }
 
 export function buildZicbPayload(payment: PaymentsResponse, transactionType: PaymentsResponse['transactionType'], source?: any) {
@@ -234,5 +295,37 @@ export function validateZicbPayload(payload: { service: string; request: Record<
   for (const field of ['destCurrency', 'srcCurrency', 'payCurrency']) {
     if (!/^[A-Z]{3}$/.test(value(field).toUpperCase())) errors.push(`request.${field} must be a three-letter currency code`);
   }
+  return errors;
+}
+
+export function validateZanacoPayload(payload: { service: string; request: Record<string, unknown> }) {
+  const errors: string[] = [];
+  const request = payload.request;
+  const value = (field: string) => String(request[field] ?? '').trim();
+  const requireFields = (fields: string[]) => fields.forEach((field) => {
+    if (!value(field)) errors.push(`request.${field} is required`);
+  });
+  const amount = Number(request.amount);
+  const transferRefMax = payload.service === 'ZANACO_DDAC' ? 20 : 16;
+
+  requireFields(['debitAccount', 'creditAccount', 'externalTranRef', 'ccy', 'amount', 'valueDate', 'paymentDetails', 'name']);
+  if (!Number.isFinite(amount) || amount <= 0) errors.push('request.amount must be a positive number');
+  if (!/^[A-Z]{3}$/.test(value('ccy').toUpperCase())) errors.push('request.ccy must be a three-letter currency code');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value('valueDate'))) errors.push('request.valueDate must be a valid YYYY-MM-DD date');
+  if (value('externalTranRef').length < 6 || value('externalTranRef').length > transferRefMax || !/^[a-zA-Z0-9]+$/.test(value('externalTranRef'))) {
+    errors.push(`request.externalTranRef must be 6-${transferRefMax} alphanumeric characters`);
+  }
+
+  if (payload.service === 'ZANACO_INTERNAL' && value('bicCode') !== 'ZNCOZMLUXXX') {
+    errors.push('request.bicCode must be ZNCOZMLUXXX for internal Zanaco transfers');
+  }
+  if (payload.service === 'ZANACO_RTGS') requireFields(['bicCode']);
+  if (payload.service === 'ZANACO_DDAC' && !/^\d{6}$/.test(value('sortCode'))) {
+    errors.push('request.sortCode must be 6 digits for DDAC transfers');
+  }
+  if (payload.service === 'ZANACO_SWIFT') {
+    requireFields(['product', 'address', 'bicCode', 'tpin', 'purposeCode', 'sectorCode']);
+  }
+
   return errors;
 }

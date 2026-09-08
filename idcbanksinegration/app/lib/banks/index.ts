@@ -24,7 +24,7 @@ export async function sendPaymentToBank(
     case 'IZB':
       return sendIzbPayment(payment, sourceBank);
     case 'ZANACO':
-      return sendZanacoPayment(payment, sourceBank);
+      return sendZanacoPayment(payment, queueId, sourceBank);
     case 'ZICB':
       return sendZicbPayment(payment, queueId, sourceBank);
     default:

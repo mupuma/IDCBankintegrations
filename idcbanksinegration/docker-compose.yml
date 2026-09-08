@@ -6,6 +6,7 @@ services:
     depends_on:
       - redis
       - zicb-agent
+      - zanaco-agent
     ports:
       - '3000:3000'
     environment:
@@ -42,6 +43,30 @@ services:
       - REDIS_PORT=6379
     volumes:
       - zicb_data:/data
+    restart: unless-stopped
+
+  zanaco-agent:
+    build:
+      context: ../microservices/zanaco-agent-service
+    depends_on:
+      - redis
+    ports:
+      - '4003:4003'
+    environment:
+      - PORT=4003
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - APP_API_URL=http://web:3000
+      - BANK_PULL_API_KEY
+      - AGENT_AUDIT_API_KEY
+      - ZANACO_BASE_URL
+      - ZANACO_API_KEY
+      - ZANACO_ACCESS_KEY
+      - ZANACO_API_SECRET
+      - ZANACO_PRIVATE_KEY
+      - ZANACO_PUBLIC_KEY
+    env_file:
+      - .env
     restart: unless-stopped
 
 

@@ -22,7 +22,7 @@ import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueReques
 import { resolveSourceBank } from '../../../lib/banks/zicb';
 import { IzbPayment } from '../../../models/internal/IzbPayment';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
-import { buildZicbPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
+import { buildZanacoPayload, buildZicbPayload, validateZanacoPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
 import { h2hEnabled } from '@/app/lib/zicb/config';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
@@ -37,12 +37,25 @@ export async function POST(request: NextRequest) {
   const bankCode = String(body?.bankCode ?? '').toUpperCase() as BankCode;
   const payment = body?.payment as PaymentsResponse | undefined;
   const sourceBankCode = body?.sourceBank ? String(body.sourceBank).trim() : null;
+  const payments = Array.isArray(body?.payments) ? body.payments as PaymentsResponse[] : null;
+  const bulkTransactionType = body?.transactionType ? String(body.transactionType).toUpperCase() as PaymentsResponse['transactionType'] : undefined;
 
   if (!BANK_CODES.includes(bankCode)) {
     return NextResponse.json(
       { success: false, error: `bankCode must be one of ${BANK_CODES.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  if (payments) {
+    return postManyPayments({
+      request,
+      auth,
+      bankCode,
+      payments,
+      sourceBankCode,
+      transactionType: bulkTransactionType,
+    });
   }
 
   if (!payment || typeof payment !== 'object') {
@@ -178,6 +191,39 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (bankCode === 'ZANACO') {
+    if (!sourceBankCode) {
+      return NextResponse.json(
+        { success: false, error: 'sourceBank is REQUIRED for Zanaco payments because ZWS requires a debitAccount.' },
+        { status: 400 },
+      );
+    }
+
+    try {
+      const source = await resolveSourceBank(sourceBankCode);
+      if (!source?.accountNumber) {
+        return NextResponse.json(
+          { success: false, error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number.` },
+          { status: 400 },
+        );
+      }
+
+      const zanacoPayload = buildZanacoPayload(payment, payment.transactionType, source);
+      const validationErrors = validateZanacoPayload(zanacoPayload);
+      if (validationErrors.length) {
+        return NextResponse.json(
+          { success: false, error: 'Invalid Zanaco transfer', validationErrors },
+          { status: 400 },
+        );
+      }
+    } catch (err) {
+      return NextResponse.json(
+        { success: false, error: err instanceof Error ? err.message : 'Internal error while validating Zanaco payment.' },
+        { status: 500 },
+      );
+    }
+  }
+
   // ... rest of your code continues here ...
   const queueId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -212,7 +258,16 @@ export async function POST(request: NextRequest) {
         paymentPayload: JSON.stringify(payment), status: 'queued', attempts: 0 }, { transaction });
     });
   } catch (error: any) {
-    if (error?.name === 'SequelizeUniqueConstraintError') return NextResponse.json({ success: false, error: 'This payment already has a bank dispatch reservation', alreadyPosted: true, paymentId }, { status: 409 });
+    if (error?.name === 'SequelizeUniqueConstraintError') {
+      return requeueFailedReservedPayment({
+        request,
+        auth,
+        payment,
+        paymentId,
+        bankCode,
+        sourceBankCode,
+      });
+    }
     throw error;
   }
 
@@ -294,6 +349,280 @@ export async function POST(request: NextRequest) {
     item: latestQueueItem,
     dispatchStrategy: integration.dispatchStrategy,
   });
+}
+
+async function requeueFailedReservedPayment(input: {
+  request: NextRequest;
+  auth: { id: number; username: string };
+  payment: PaymentsResponse;
+  paymentId: string;
+  bankCode: BankCode;
+  sourceBankCode: string | null;
+}) {
+  const { request, auth, payment, paymentId, bankCode, sourceBankCode } = input;
+  const paymentKey = createHash('sha256').update(paymentId).digest('hex');
+  const reservation = await PaymentDispatchReservation.findOne({ where: { paymentKey } });
+
+  if (!reservation) {
+    return NextResponse.json(
+      { success: false, error: 'This payment already has a bank dispatch reservation', alreadyPosted: true, paymentId },
+      { status: 409 },
+    );
+  }
+
+  const queueRecord = await PaymentQueueRequest.findOne({ where: { queueId: reservation.queueId } });
+  if (!queueRecord) {
+    return NextResponse.json(
+      { success: false, error: 'This payment has a dispatch reservation but no queue record to retry.', alreadyPosted: true, paymentId, queueId: reservation.queueId },
+      { status: 409 },
+    );
+  }
+
+  if (queueRecord.bankCode !== bankCode) {
+    return NextResponse.json(
+      { success: false, error: `Payment has already been reserved for ${queueRecord.bankCode}. Each payment can only be sent to one bank.`, alreadyPosted: true, paymentId, queueId: queueRecord.queueId },
+      { status: 409 },
+    );
+  }
+
+  if (queueRecord.status !== 'failed') {
+    return NextResponse.json(
+      { success: false, error: buildAlreadyPostedMessage({ source: 'bank_queue', queueId: queueRecord.queueId, status: queueRecord.status, bankCode }, bankCode), alreadyPosted: true, paymentId, queueId: queueRecord.queueId, existingStatus: queueRecord.status },
+      { status: 409 },
+    );
+  }
+
+  await PaymentQueueRequest.update(
+    {
+      sourceBank: sourceBankCode,
+      paymentPayload: JSON.stringify(payment),
+      status: 'queued',
+      attempts: 0,
+      lastError: null,
+      responsePayload: null,
+    },
+    { where: { queueId: queueRecord.queueId } },
+  );
+
+  const queueItem = enqueuePayment(bankCode, payment, queueRecord.queueId, sourceBankCode);
+  const integration = getBankIntegration(bankCode);
+  const latestQueueItem = integration.dispatchStrategy === 'portal-push'
+    ? await ensureQueueItemProcessing(queueItem.id) ?? queueItem
+    : queueItem;
+
+  await logAuditEvent({
+    userId: auth.id,
+    username: auth.username,
+    action: 'PAYMENT_POSTED',
+    resourceType: 'payment',
+    resourceId: paymentId,
+    correlationId: queueRecord.queueId,
+    summary: `${auth.username} retried failed payment ${paymentId} to ${bankCode}`,
+    details: {
+      queueId: queueRecord.queueId,
+      paymentId,
+      bankCode,
+      sourceBank: sourceBankCode,
+      retried: true,
+    },
+    request,
+  });
+
+  return NextResponse.json({
+    success: true,
+    retried: true,
+    queueId: latestQueueItem.id,
+    status: latestQueueItem.status,
+    item: latestQueueItem,
+    dispatchStrategy: integration.dispatchStrategy,
+  });
+}
+
+async function postManyPayments(input: {
+  request: NextRequest;
+  auth: { id: number; username: string };
+  bankCode: BankCode;
+  payments: PaymentsResponse[];
+  sourceBankCode: string | null;
+  transactionType?: PaymentsResponse['transactionType'];
+}) {
+  const { request, auth, bankCode, payments, sourceBankCode, transactionType } = input;
+
+  if (!payments.length) {
+    return NextResponse.json({ success: false, error: 'payments must contain at least one payment' }, { status: 400 });
+  }
+
+  if (payments.length === 1) {
+    return NextResponse.json(
+      { success: false, error: 'Use payment for a single payment submission; payments is reserved for bulk submissions.' },
+      { status: 400 },
+    );
+  }
+
+  if (bankCode !== 'ZANACO') {
+    return NextResponse.json(
+      { success: false, error: `${bankCode} does not have a configured bulk upload flow. Submit those payments individually.` },
+      { status: 400 },
+    );
+  }
+
+  if (!sourceBankCode) {
+    return NextResponse.json(
+      { success: false, error: 'sourceBank is REQUIRED for Zanaco bulk payments because ZWS requires a debitAccount.' },
+      { status: 400 },
+    );
+  }
+
+  const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
+  const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).toUpperCase() === effectiveType);
+  if (!sameType) {
+    return NextResponse.json(
+      { success: false, error: 'Bulk payments must use one transaction type. Split the selection by transaction type.' },
+      { status: 400 },
+    );
+  }
+
+  const source = await resolveSourceBank(sourceBankCode);
+  if (!source?.accountNumber) {
+    return NextResponse.json(
+      { success: false, error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number.` },
+      { status: 400 },
+    );
+  }
+
+  await connectDatabase();
+
+  const queueId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const batchPaymentId = `zanaco-bulk-${queueId}`;
+  const service = zanacoBulkServiceFor(effectiveType);
+  const itemRequests: Record<string, unknown>[] = [];
+  const validationByPayment: Record<string, string[]> = {};
+
+  for (const row of payments) {
+    const paymentId = resolvePaymentId(row as { paymentId?: string }, '');
+    const existingPost = await findExistingPaymentPost(paymentId);
+    if (existingPost) {
+      validationByPayment[paymentId] = [buildAlreadyPostedMessage(existingPost, bankCode)];
+      continue;
+    }
+
+    const effectivePayment = { ...row, transactionType: effectiveType };
+    const zanacoPayload = buildZanacoPayload(effectivePayment, effectiveType, source);
+    const validationErrors = validateZanacoPayload(zanacoPayload);
+    if (validationErrors.length) {
+      validationByPayment[paymentId] = validationErrors;
+      continue;
+    }
+    itemRequests.push(zanacoPayload.request);
+  }
+
+  if (Object.keys(validationByPayment).length) {
+    return NextResponse.json(
+      { success: false, error: 'One or more payments cannot be added to the Zanaco bulk batch.', validationByPayment },
+      { status: 400 },
+    );
+  }
+
+  const totalAmount = itemRequests.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+  const currency = String(itemRequests[0]?.ccy ?? 'ZMW');
+  const bulkPayload = {
+    service,
+    request: {
+      batchName: `${service.replace('ZANACO_BULK_', '')}-${new Date().toISOString().slice(0, 10)}-${queueId.slice(0, 8)}`,
+      description: `Portal bulk batch for ${effectiveType}`,
+      currency,
+      valueDate: String(itemRequests[0]?.valueDate ?? new Date().toISOString().slice(0, 10)),
+      totalCount: itemRequests.length,
+      totalAmount: Number(totalAmount.toFixed(2)),
+      items: itemRequests,
+    },
+    meta: {
+      paymentIds: payments.map((row) => resolvePaymentId(row as { paymentId?: string }, '')),
+      transactionType: effectiveType,
+      sourceBank: sourceBankCode,
+    },
+  };
+
+  try {
+    const db = await getSequelize();
+    await db.transaction(async transaction => {
+      await PaymentQueueRequest.create({
+        queueId,
+        paymentId: batchPaymentId,
+        bankCode,
+        sourceBank: sourceBankCode,
+        paymentPayload: JSON.stringify(bulkPayload),
+        status: 'queued',
+        attempts: 0,
+      }, { transaction });
+
+      for (const row of payments) {
+        const paymentId = resolvePaymentId(row as { paymentId?: string }, queueId);
+        await PaymentDispatchReservation.create({
+          paymentKey: createHash('sha256').update(paymentId).digest('hex'),
+          queueId,
+          bankCode,
+        }, { transaction });
+      }
+    });
+  } catch (error: any) {
+    if (error?.name === 'SequelizeUniqueConstraintError') {
+      return NextResponse.json(
+        { success: false, error: 'At least one selected payment already has a bank dispatch reservation.', alreadyPosted: true },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
+
+  const queueItem = enqueuePayment(bankCode, bulkPayload as unknown as PaymentsResponse, queueId, sourceBankCode);
+  const integration = getBankIntegration(bankCode);
+  let latestQueueItem = queueItem;
+  if (integration.dispatchStrategy === 'portal-push') {
+    latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
+  }
+
+  await logAuditEvent({
+    userId: auth.id,
+    username: auth.username,
+    action: 'PAYMENT_POSTED',
+    resourceType: 'payment',
+    resourceId: batchPaymentId,
+    correlationId: queueId,
+    summary: `${auth.username} queued ${payments.length} payments to ${bankCode} as ${effectiveType} bulk batch`,
+    details: {
+      queueId,
+      paymentIds: bulkPayload.meta.paymentIds,
+      bankCode,
+      sourceBank: sourceBankCode,
+      transactionType: effectiveType,
+      service,
+      totalAmount,
+      currency,
+    },
+    request,
+  });
+
+  return NextResponse.json({
+    success: true,
+    bulk: true,
+    queueId,
+    paymentId: batchPaymentId,
+    status: latestQueueItem.status,
+    item: latestQueueItem,
+    paymentIds: bulkPayload.meta.paymentIds,
+    dispatchStrategy: integration.dispatchStrategy,
+  }, { status: 202 });
+}
+
+function zanacoBulkServiceFor(transactionType: PaymentsResponse['transactionType']) {
+  const type = String(transactionType || '').toUpperCase();
+  if (type === 'INT') return 'ZANACO_BULK_INTERNAL';
+  if (type === 'DDACCT' || type === 'DDAC') return 'ZANACO_BULK_DDAC';
+  if (type === 'TT' || type === 'SWIFT') return 'ZANACO_BULK_SWIFT';
+  return 'ZANACO_BULK_RTGS';
 }
 function mapQueueRecordToItem(record: PaymentQueueRequest): BankQueueItem | null {
   let payment: PaymentsResponse;
@@ -398,6 +727,15 @@ export async function GET(request: NextRequest) {
   }
 
   if (queueId) {
+    const record = await PaymentQueueRequest.findOne({ where: { queueId } });
+    if (record) {
+      const item = mapQueueRecordToItem(record);
+      if (!item) {
+        return NextResponse.json({ success: false, error: 'Invalid saved queue payload' }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, item });
+    }
+
     const queueItem = getQueueItem(queueId);
     if (queueItem) {
       const integration = getBankIntegration(queueItem.bankCode);
@@ -407,17 +745,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, item: queueItem });
     }
 
-    const record = await PaymentQueueRequest.findOne({ where: { queueId } });
-    if (!record) {
-      return NextResponse.json({ success: false, error: 'Queue item not found' }, { status: 404 });
-    }
-
-    const item = mapQueueRecordToItem(record);
-    if (!item) {
-      return NextResponse.json({ success: false, error: 'Invalid saved queue payload' }, { status: 500 });
-    }
-
-    return NextResponse.json({ success: true, item });
+    return NextResponse.json({ success: false, error: 'Queue item not found' }, { status: 404 });
   }
 
   let memoryItems = bankCode ? getQueueItemsByBank(bankCode) : getAllQueueItems();

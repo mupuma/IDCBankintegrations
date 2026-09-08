@@ -8,6 +8,31 @@ import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 
+function asRecord(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' ? value as Record<string, any> : {};
+}
+
+function getQueuePaymentSummary(item: BankQueueItem) {
+  const payment = asRecord(item.payment);
+  const request = asRecord(payment.request);
+  const meta = asRecord(payment.meta);
+  const response = asRecord(item.response);
+  const responseBody = asRecord(response.response);
+  const isBulk = typeof payment.service === 'string' && payment.service.includes('BULK');
+  const amount = isBulk ? Number(request.totalAmount ?? 0) : Number(payment.amount ?? 0);
+
+  return {
+    isBulk,
+    reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionReference ?? item.paymentId),
+    vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : String(payment.vendorId ?? payment.accountName ?? 'N/A'),
+    amount: Number.isFinite(amount) ? amount : 0,
+    currency: isBulk ? String(request.currency ?? '') : String(payment.currency ?? payment.currencyCode ?? ''),
+    transactionType: isBulk ? String(meta.transactionType ?? payment.service).replace('ZANACO_BULK_', '') : String(payment.transactionType ?? 'N/A'),
+    service: String(payment.service ?? ''),
+    batchReference: String(responseBody.batchReference ?? ''),
+  };
+}
+
 export default function PaymentQueuesPage() {
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
@@ -165,21 +190,30 @@ export default function PaymentQueuesPage() {
               ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-500">
-                    {loading ? 'Loading queue items…' : 'No queue transactions found.'}
+                    {loading ? 'Loading queue items...' : 'No queue transactions found.'}
                   </td>
                 </tr>
               ) : (
                 filteredItems.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.bankCode}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{item.payment.transactionReference || item.paymentId}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{item.payment.vendorId || 'N/A'}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{item.payment.amount.toFixed(2)} {item.payment.currency}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{item.payment.transactionType}</td>
+                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">
+                      {item.bankCode}
+                      {getQueuePaymentSummary(item).isBulk ? <div className="mt-1 text-xs font-normal text-slate-500">Bulk batch</div> : null}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {getQueuePaymentSummary(item).reference}
+                      {getQueuePaymentSummary(item).batchReference ? <div className="mt-1 text-xs text-slate-500">Batch: {getQueuePaymentSummary(item).batchReference}</div> : null}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).vendor}</td>
+                    <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).amount.toFixed(2)} {getQueuePaymentSummary(item).currency}</td>
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {getQueuePaymentSummary(item).transactionType}
+                      {getQueuePaymentSummary(item).service ? <div className="mt-1 text-xs text-slate-500">{getQueuePaymentSummary(item).service}</div> : null}
+                    </td>
                     <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.status}{item.bankCode === 'ZICB' && item.response && typeof item.response === 'object' ? <div className="mt-1 text-xs font-normal">{['reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError'].map(key => { const value = (item.response as Record<string, unknown>)[key]; return value ? <div key={key}>{key}: {String(value)}</div> : null; })}</div> : null}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
-                    <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || '—'}</td>
+                    <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
                   </tr>
                 ))
               )}

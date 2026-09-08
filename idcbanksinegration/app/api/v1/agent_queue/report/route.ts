@@ -2,7 +2,18 @@ import { NextRequest, NextResponse } from 'next/server';
 import { reportBankQueueResult } from '@/app/lib/agentQueue';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
-const STATUSES = new Set(['queued', 'processing', 'success', 'failed']);
+const STATUSES = new Set([
+  'queued',
+  'processing',
+  'success',
+  'failed',
+  'accepted',
+  'unknown',
+  'paid',
+  'rejected',
+  'needs_review',
+  'partially_completed',
+]);
 
 export async function POST(request: NextRequest) {
   const providedApiKey = request.headers.get('x-bank-api-key');

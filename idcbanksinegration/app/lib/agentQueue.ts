@@ -86,7 +86,7 @@ export async function claimNextBankQueueItem(
 export async function reportBankQueueResult(
   queueId: string,
   updates: {
-    status: 'queued' | 'processing' | 'success' | 'failed';
+    status: 'queued' | 'processing' | 'success' | 'failed' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review' | 'partially_completed';
     response?: unknown;
     error?: string;
     agentId?: string;

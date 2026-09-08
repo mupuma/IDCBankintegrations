@@ -26,11 +26,22 @@ async function postToQueue(payload: unknown) {
     data = text;
   }
 
+  const validationErrors = data && typeof data === 'object' && Array.isArray((data as { validationErrors?: unknown }).validationErrors)
+    ? (data as { validationErrors: unknown[] }).validationErrors.map((error) => String(error))
+    : [];
+  const responseError = data && typeof data === 'object' && typeof (data as { error?: unknown }).error === 'string'
+    ? String((data as { error: string }).error)
+    : undefined;
+  const error = response.ok
+    ? undefined
+    : [responseError || `Zanaco queue request failed with status ${response.status}`, ...validationErrors].join(': ');
+
   return {
     success: response.ok,
     status: response.status,
     data,
-    error: response.ok ? undefined : `Zanaco queue request failed with status ${response.status}`,
+    deferred: response.status === 202,
+    error,
   };
 }
 
@@ -38,8 +49,12 @@ export function createZanacoPayload(payment: PaymentsResponse, sourceBank?: { ac
   return buildZanacoPayload(payment, payment.transactionType, sourceBank);
 }
 
-export async function sendZanacoPayment(payment: PaymentsResponse, sourceBank?: string | null) {
+export async function sendZanacoPayment(payment: PaymentsResponse, queueId?: string, sourceBank?: string | null) {
+  if (payment && typeof payment === 'object' && 'service' in payment && 'request' in payment) {
+    return postToQueue({ ...(payment as unknown as Record<string, unknown>), queueId, sourceBank });
+  }
+
   const src = sourceBank ? await resolveSourceBank(sourceBank) : null;
   const payload = buildZanacoPayload(payment, payment.transactionType, src || undefined);
-  return postToQueue(payload);
+  return postToQueue({ ...payload, queueId, sourceBank });
 }

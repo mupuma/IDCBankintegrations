@@ -1,0 +1,162 @@
+import type { JobResult, PaymentsResponse, ZanacoPreparedRequest, ZanacoServicePayload } from './types';
+import { buildZanacoRequest, validateZanacoPreparedRequest, validateZanacoServicePayload } from './zanacoValidation';
+import { ZanacoClient } from './zwsClient';
+
+let client: ZanacoClient | null = null;
+
+function getClient() {
+  client ??= new ZanacoClient();
+  return client;
+}
+
+export function prepareZanacoPayload(payment: PaymentsResponse, source?: { accountNumber?: string | null; transit?: string | null; name?: string | null }) {
+  const prepared = buildZanacoRequest(payment, source);
+  const validationErrors = validateZanacoPreparedRequest(prepared);
+  if (validationErrors.length) {
+    const error = new Error('Invalid Zanaco payment') as Error & { validationErrors?: string[] };
+    error.validationErrors = validationErrors;
+    throw error;
+  }
+  return prepared;
+}
+
+export function prepareZanacoServicePayload(payload: ZanacoServicePayload) {
+  const serviceValidationErrors = validateZanacoServicePayload(payload);
+  if (serviceValidationErrors.length) {
+    const error = new Error('Invalid Zanaco payload') as Error & { validationErrors?: string[] };
+    error.validationErrors = serviceValidationErrors;
+    throw error;
+  }
+
+  const prepared: ZanacoPreparedRequest = {
+    service: payload.service,
+    endpoint: endpointForService(payload.service),
+    method: payload.service.startsWith('ZANACO_GET_') ? 'GET' : 'POST',
+    request: payload.request,
+    transferType: transferTypeForService(payload.service),
+    externalTranRef: typeof payload.request.externalTranRef === 'string' ? payload.request.externalTranRef : undefined,
+  };
+  const validationErrors = validateZanacoPreparedRequest(prepared);
+  if (validationErrors.length) {
+    const error = new Error('Invalid Zanaco payload') as Error & { validationErrors?: string[] };
+    error.validationErrors = validationErrors;
+    throw error;
+  }
+  return prepared;
+}
+
+export async function sendZanacoPayment(prepared: ZanacoPreparedRequest): Promise<JobResult> {
+  try {
+    const response = await getClient().send(prepared);
+    const body = response.data as { response?: Record<string, unknown> } | undefined;
+    const inner = body?.response;
+    const respCode = String(inner?.respCode ?? '');
+    const respDesc = String(inner?.respDesc ?? '');
+
+    if (response.ok && ['ZWS-01', 'ZWS-00', '00'].includes(respCode)) {
+      return { success: true, status: response.status, data: response.data };
+    }
+
+    if (respCode === 'ZWS-51') {
+      const statusResult = await queryTransactionStatus(prepared.externalTranRef);
+      return statusResult.success ? statusResult : {
+        success: false,
+        status: response.status,
+        data: response.data,
+        error: respDesc || 'Unable to determine transaction status',
+        unknown: true,
+        retryable: true,
+      };
+    }
+
+    if (response.status >= 500) {
+      return { success: false, status: response.status, data: response.data, error: respDesc || 'Zanaco server error', retryable: true };
+    }
+
+    return { success: false, status: response.status, data: response.data, error: respDesc || `Zanaco request failed (${response.status})` };
+  } catch (error: any) {
+    const externalTranRef = prepared.externalTranRef;
+    if (externalTranRef) {
+      try {
+        const statusResult = await queryTransactionStatus(externalTranRef);
+        if (statusResult.success) return statusResult;
+      } catch (statusError) {
+        console.warn('[ZANACO] transfer status lookup after error failed', statusError);
+      }
+    }
+    return {
+      success: false,
+      status: error?.status ?? 500,
+      error: error instanceof Error ? error.message : String(error),
+      unknown: true,
+      retryable: true,
+    };
+  }
+}
+
+export async function queryTransactionStatus(externalTranRef?: string): Promise<JobResult> {
+  if (!externalTranRef) {
+    return { success: false, status: 400, error: 'externalTranRef is required for status lookup' };
+  }
+  const response = await getClient().send({
+    service: 'ZANACO_TRANSFER_STATUS',
+    endpoint: '/zws-fcubs-service/api/v1/flex/transferStatus',
+    method: 'POST',
+    request: { externalTranRef },
+    externalTranRef,
+  });
+  const inner = (response.data as { response?: Record<string, unknown> } | undefined)?.response;
+  const respCode = String(inner?.respCode ?? '');
+  const tranRefNo = String(inner?.tranRefNo ?? '');
+
+  if (respCode === 'ZWS-01' && tranRefNo) return { success: true, status: response.status, data: response.data };
+  if (respCode === 'ZWS-51') return { success: false, status: response.status, data: response.data, error: 'Unable to determine transaction status', unknown: true, retryable: true };
+  return { success: false, status: response.status, data: response.data, error: String(inner?.respDesc ?? 'Transaction status lookup did not confirm success') };
+}
+
+function endpointForService(service: string) {
+  switch (service) {
+    case 'ZANACO_INTERNAL':
+    case 'ZANACO_RTGS':
+      return '/zws-fcubs-service/api/v1/flex/fundsTransfer';
+    case 'ZANACO_DDAC':
+      return '/zws-fcubs-service/api/v1/flex/funds-transfer/ddac';
+    case 'ZANACO_SWIFT':
+      return '/zws-fcubs-service/api/v1/flex/swiftFundsTransfer';
+    case 'ZANACO_MASKED_DISBURSEMENT':
+      return '/zws-fcubs-service/api/v1/flex/maskedFundsTransfer';
+    case 'ZANACO_COLLECTION':
+      return '/zws-fcubs-service/api/v1/flex/collectionFundsTransfer';
+    case 'ZANACO_BALANCE_ENQUIRY':
+      return '/zws-fcubs-service/api/v1/flex/balanceEnquiry';
+    case 'ZANACO_ACCOUNT_LOOKUP':
+      return '/zws-fcubs-service/api/v1/flex/accountLookup';
+    case 'ZANACO_ENHANCED_KYC':
+      return '/zws-fcubs-service/api/v1/flex/kyc/enhanced';
+    case 'ZANACO_NFS_NAME_LOOKUP':
+      return '/zws-postilion-service/api/v1/nfs/nameLookup';
+    case 'ZANACO_NFS_QUERY_INSTITUTIONS':
+      return '/zws-postilion-service/api/v1/nfs/queryInstitutions';
+    case 'ZANACO_NFS_TRANSFER':
+      return '/zws-postilion-service/api/v1/nfs/fundsTransfer';
+    case 'ZANACO_GET_RTGS_BIC':
+      return '/zws-fcubs-service/api/v1/biCodes/rtgs';
+    case 'ZANACO_GET_DDAC_BIC':
+      return '/zws-fcubs-service/api/v1/biCodes/ddac';
+    case 'ZANACO_GET_SWIFT_BIC':
+      return '/zws-fcubs-service/api/v1/biCodes/swift';
+    default:
+      throw new Error(`Unsupported Zanaco service: ${service}`);
+  }
+}
+
+function transferTypeForService(service: string): ZanacoPreparedRequest['transferType'] {
+  if (service === 'ZANACO_INTERNAL') return 'INTERNAL';
+  if (service === 'ZANACO_RTGS') return 'RTGS';
+  if (service === 'ZANACO_DDAC') return 'DDAC';
+  if (service === 'ZANACO_SWIFT') return 'SWIFT';
+  if (service === 'ZANACO_MASKED_DISBURSEMENT') return 'MASKED';
+  if (service === 'ZANACO_COLLECTION') return 'COLLECTION';
+  if (service.startsWith('ZANACO_NFS')) return 'NFS';
+  return undefined;
+}
