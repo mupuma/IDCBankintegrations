@@ -5,6 +5,7 @@ exports.emitAgentAudit = emitAgentAudit;
 exports.reportPaymentProcessing = reportPaymentProcessing;
 exports.reportPaymentResult = reportPaymentResult;
 exports.reportAccepted = reportAccepted;
+const log_1 = require("./log");
 function getPortalConfig() {
     return {
         appApiUrl: process.env.APP_API_URL?.trim().replace(/\/$/, ''),
@@ -15,9 +16,10 @@ function getPortalConfig() {
 async function claimNextPayment() {
     const { appApiUrl, bankPullApiKey, agentId } = getPortalConfig();
     if (!appApiUrl || !bankPullApiKey) {
-        console.warn('[ZANACO] Portal claim skipped: APP_API_URL or BANK_PULL_API_KEY is missing');
+        (0, log_1.logError)('portal.claim.config_missing', { hasAppApiUrl: Boolean(appApiUrl), hasBankPullApiKey: Boolean(bankPullApiKey) });
         return null;
     }
+    (0, log_1.logEvent)('portal.claim.request', { appApiUrl, agentId });
     const response = await fetch(`${appApiUrl}/api/v1/agent_queue/claim`, {
         method: 'POST',
         headers: {
@@ -28,9 +30,16 @@ async function claimNextPayment() {
     });
     if (!response.ok) {
         const text = await response.text();
+        (0, log_1.logError)('portal.claim.response_error', { status: response.status, body: text });
         throw new Error(`Portal claim failed (${response.status}): ${text}`);
     }
     const body = await response.json();
+    (0, log_1.logEvent)('portal.claim.response', {
+        claimed: Boolean(body.item),
+        queueId: body.item?.queueId,
+        paymentId: body.item?.paymentId,
+        attempts: body.item?.attempts,
+    });
     return body.item ?? null;
 }
 async function emitAgentAudit(event) {
@@ -55,17 +64,19 @@ async function emitAgentAudit(event) {
                 username: 'zanaco-agent',
             }),
         });
+        (0, log_1.logEvent)('portal.audit.sent', { action: event.action, correlationId: event.correlationId, resourceId: event.resourceId });
     }
     catch (error) {
-        console.error('Failed to emit Zanaco audit event', error);
+        (0, log_1.logError)('portal.audit.failed', { action: event.action, correlationId: event.correlationId, error: error instanceof Error ? error.message : String(error) });
     }
 }
 async function reportQueueStatus(queueId, report) {
     const { appApiUrl, bankPullApiKey, agentId } = getPortalConfig();
     if (!appApiUrl || !bankPullApiKey) {
-        console.warn('[ZANACO] Portal reporting skipped: APP_API_URL or BANK_PULL_API_KEY is missing');
+        (0, log_1.logError)('portal.report.config_missing', { queueId, status: report.status, hasAppApiUrl: Boolean(appApiUrl), hasBankPullApiKey: Boolean(bankPullApiKey) });
         return;
     }
+    (0, log_1.logEvent)('portal.report.request', { queueId, status: report.status, attempts: report.attempts, error: report.error });
     const response = await fetch(`${appApiUrl}/api/v1/agent_queue/report`, {
         method: 'POST',
         headers: {
@@ -83,8 +94,10 @@ async function reportQueueStatus(queueId, report) {
     });
     if (!response.ok) {
         const text = await response.text();
+        (0, log_1.logError)('portal.report.response_error', { queueId, status: report.status, httpStatus: response.status, body: text });
         throw new Error(`Portal report failed (${response.status}): ${text}`);
     }
+    (0, log_1.logEvent)('portal.report.response', { queueId, status: report.status, httpStatus: response.status });
 }
 async function reportPaymentProcessing(queueId, attempts, error) {
     await reportQueueStatus(queueId, { status: 'processing', attempts, error });

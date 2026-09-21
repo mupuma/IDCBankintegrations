@@ -1,6 +1,7 @@
 import type { JobResult, PaymentsResponse, ZanacoPreparedRequest, ZanacoServicePayload } from './types';
 import { buildZanacoRequest, validateZanacoPreparedRequest, validateZanacoServicePayload } from './zanacoValidation';
 import { ZanacoClient } from './zwsClient';
+import { logError } from './log';
 
 let client: ZanacoClient | null = null;
 
@@ -52,20 +53,21 @@ export async function sendZanacoPayment(prepared: ZanacoPreparedRequest): Promis
     const inner = body?.response;
     const respCode = String(inner?.respCode ?? '');
     const respDesc = String(inner?.respDesc ?? '');
+    const externalTranRef = String(inner?.externalTranRef ?? prepared.externalTranRef ?? '');
 
     if (response.ok && ['ZWS-01', 'ZWS-00', '00'].includes(respCode)) {
       return { success: true, status: response.status, data: response.data };
     }
 
-    if (respCode === 'ZWS-51') {
-      const statusResult = await queryTransactionStatus(prepared.externalTranRef);
+    if (respCode === 'ZWS-51' || isDuplicateReference(respCode, respDesc, response.status)) {
+      const statusResult = await queryTransactionStatus(externalTranRef || prepared.externalTranRef);
       return statusResult.success ? statusResult : {
         success: false,
         status: response.status,
         data: response.data,
         error: respDesc || 'Unable to determine transaction status',
         unknown: true,
-        retryable: true,
+        retryable: respCode === 'ZWS-51',
       };
     }
 
@@ -81,7 +83,10 @@ export async function sendZanacoPayment(prepared: ZanacoPreparedRequest): Promis
         const statusResult = await queryTransactionStatus(externalTranRef);
         if (statusResult.success) return statusResult;
       } catch (statusError) {
-        console.warn('[ZANACO] transfer status lookup after error failed', statusError);
+        logError('zanaco.status_lookup_after_error.failed', {
+          externalTranRef,
+          error: statusError instanceof Error ? statusError.message : String(statusError),
+        });
       }
     }
     return {
@@ -92,6 +97,12 @@ export async function sendZanacoPayment(prepared: ZanacoPreparedRequest): Promis
       retryable: true,
     };
   }
+}
+
+function isDuplicateReference(respCode: string, respDesc: string, httpStatus: number) {
+  const description = respDesc.toLowerCase();
+  return (respCode === 'ZWS-56' && httpStatus === 409)
+    || (respCode === 'ZWS-53' && description.includes('duplicate') && description.includes('externaltranref'));
 }
 
 export async function queryTransactionStatus(externalTranRef?: string): Promise<JobResult> {

@@ -10,11 +10,11 @@ type LowDbSchema = {
 export interface QueueRequestRecord {
   queueId: string;
   bankCode: string;
-  payload: unknown;
+  payload: any;
   status: string;
   attempts: number;
   lastError?: string;
-  responsePayload?: unknown;
+  responsePayload?: any;
   createdAt: string;
   updatedAt: string;
 }

@@ -60,7 +60,7 @@ let sageConnectionPromise: Promise<void> | null = null;
 let sageConnectionReady = false;
 
 async function ensureVenbankCustomColumns(): Promise<void> {
-  if (venbankSchemaChecked || process.env.SAGE_SYNC_VENBANK_SCHEMA === 'false') {
+  if (venbankSchemaChecked || process.env.SAGE_SYNC_VENBANK_SCHEMA !== 'true') {
     return;
   }
 

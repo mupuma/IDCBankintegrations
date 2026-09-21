@@ -13,6 +13,8 @@ function validDate(value) {
   const d = new Date(`${value}T00:00:00Z`);
   return Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === value;
 }
+
+
 function paymentDate(value) {
   if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString().slice(0, 10) : '';
   const s = text(value);
@@ -21,6 +23,9 @@ function paymentDate(value) {
   const d = new Date(s);
   return Number.isFinite(d.getTime()) ? d.toISOString().slice(0, 10) : '';
 }
+
+
+
 // Fixed six-place integer arithmetic prevents floating-point totals drifting.
 // The enabled currency's allowed scale is supplied by onboarding configuration.
 function units(value, scale = 2) {
@@ -33,6 +38,7 @@ function units(value, scale = 2) {
   if (n <= 0n || n > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Amount is outside the supported range');
   return n;
 }
+
 function paymentErrors(payment, scale = 2) {
   const errors = [];
   let channel;

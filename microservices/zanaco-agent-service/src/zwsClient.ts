@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { ZanacoPreparedRequest } from './types';
+import { logEvent, logError } from './log';
 
 type TokenState = {
   accessToken: string;
@@ -7,14 +8,33 @@ type TokenState = {
   expiresAt: number;
 };
 
+type ZanacoConfig = {
+  baseUrl: string;
+  apiKey: string;
+  accessKey: string;
+  apiSecret: string;
+  partnerPrivateKey: string;
+  zanacoPublicKey: string;
+  requireResponseSignature: boolean;
+};
+
 export class ZanacoClient {
   private token?: TokenState;
+  private tokenRequest?: Promise<string>;
 
   constructor(private readonly config = loadZanacoConfig()) {}
 
   async send(prepared: ZanacoPreparedRequest) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const bodyText = prepared.request ? compactJson(prepared.request) : '';
+    logEvent('zws.request.prepare', {
+      service: prepared.service,
+      endpoint: prepared.endpoint,
+      method: prepared.method,
+      transferType: prepared.transferType,
+      externalTranRef: prepared.externalTranRef,
+      hasBody: Boolean(bodyText),
+    });
 
     if (prepared.endpoint.includes('/zws-auth-service/')) {
       if (bodyText) headers.signature = this.sign(bodyText);
@@ -24,35 +44,70 @@ export class ZanacoClient {
       if (bodyText) headers.signature = this.sign(bodyText);
     }
 
-    const response = await fetch(`${this.config.baseUrl}${prepared.endpoint}`, {
-      method: prepared.method,
-      headers,
-      body: prepared.method === 'GET' ? undefined : bodyText || undefined,
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl}${prepared.endpoint}`, {
+        method: prepared.method,
+        headers,
+        body: prepared.method === 'GET' ? undefined : bodyText || undefined,
+      });
+    } catch (error) {
+      logError('zws.request.failed', {
+        service: prepared.service,
+        endpoint: prepared.endpoint,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     const text = await response.text();
     const data = parseResponseBody(text);
-    const responseSignature = response.headers.get('signature') || (data && typeof data === 'object' ? String((data as { signature?: unknown }).signature ?? '') : '');
-    if (this.config.zanacoPublicKey && responseSignature && text) {
-      this.verify(text, responseSignature);
-    }
+    logEvent('zws.response.received', {
+      service: prepared.service,
+      endpoint: prepared.endpoint,
+      status: response.status,
+      ok: response.ok,
+      bodyType: typeof data,
+    });
+    this.verifyResponse(text, data, response.headers.get('signature'));
 
     return { status: response.status, ok: response.ok, data };
   }
 
   async getAccessToken() {
+    if (this.tokenRequest) return this.tokenRequest;
+
     const skewMs = Number(process.env.ZANACO_TOKEN_REFRESH_SKEW_MS || 120000);
-    if (this.token && Date.now() + skewMs < this.token.expiresAt) return this.token.accessToken;
+    if (this.token && Date.now() + skewMs < this.token.expiresAt) {
+      logEvent('zws.auth.token_reused');
+      return this.token.accessToken;
+    }
+
+    this.tokenRequest = this.authenticate();
+    try {
+      return await this.tokenRequest;
+    } finally {
+      this.tokenRequest = undefined;
+    }
+  }
+
+  private async authenticate() {
     if (this.token?.refreshToken) {
       try {
+        logEvent('zws.auth.refresh_started');
         await this.refreshToken();
-        if (this.token) return this.token.accessToken;
+        if (this.token) {
+          logEvent('zws.auth.refresh_succeeded');
+          return this.token.accessToken;
+        }
       } catch (error) {
-        console.warn('[ZANACO] Token refresh failed, attempting login', error);
+        logError('zws.auth.refresh_failed', { error: error instanceof Error ? error.message : String(error) });
       }
     }
+    logEvent('zws.auth.login_started');
     await this.login();
     if (!this.token) throw new Error('Zanaco authentication did not return an access token');
+    logEvent('zws.auth.login_succeeded');
     return this.token.accessToken;
   }
 
@@ -79,6 +134,7 @@ export class ZanacoClient {
 
   private async authRequest(endpoint: string, payload: Record<string, unknown>) {
     const bodyText = compactJson(payload);
+    logEvent('zws.auth.request', { endpoint, grantType: payload.grantType });
     const response = await fetch(`${this.config.baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {
@@ -89,7 +145,12 @@ export class ZanacoClient {
     });
     const text = await response.text();
     const data = parseResponseBody(text);
-    if (!response.ok) throw new Error(`Zanaco authentication failed (${response.status}): ${text}`);
+    this.verifyResponse(text, data, response.headers.get('signature'));
+    if (!response.ok) {
+      logError('zws.auth.response_error', { endpoint, status: response.status, body: text });
+      throw new Error(`Zanaco authentication failed (${response.status}): ${text}`);
+    }
+    logEvent('zws.auth.response', { endpoint, status: response.status });
     return data;
   }
 
@@ -103,16 +164,50 @@ export class ZanacoClient {
   }
 
   private sign(data: string) {
-    return crypto.sign('RSA-SHA256', Buffer.from(data, 'utf8'), normalizePem(this.config.partnerPrivateKey)).toString('base64');
+    try {
+      const signature = crypto.sign('RSA-SHA256', Buffer.from(data, 'utf8'), normalizePem(this.config.partnerPrivateKey)).toString('base64');
+      logEvent('zws.sign.succeeded', { bytes: Buffer.byteLength(data, 'utf8') });
+      return signature;
+    } catch (error) {
+      logError('zws.sign.failed', { error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
   }
 
   private verify(data: string, signature: string) {
     const ok = crypto.verify('RSA-SHA256', Buffer.from(data, 'utf8'), normalizePem(this.config.zanacoPublicKey), Buffer.from(signature, 'base64'));
     if (!ok) throw new Error('Zanaco response signature verification failed');
+    logEvent('zws.verify.succeeded', { bytes: Buffer.byteLength(data, 'utf8') });
+  }
+
+  private verifyResponse(text: string, data: unknown, headerSignature: string | null) {
+    if (!text) return;
+
+    const bodySignature = data && typeof data === 'object'
+      ? String((data as { signature?: unknown }).signature ?? '')
+      : '';
+    const signature = headerSignature || bodySignature;
+
+    if (!signature) {
+      if (this.config.requireResponseSignature) {
+        throw new Error('Zanaco response missing required signature');
+      }
+      logEvent('zws.verify.skipped', { reason: 'missing_signature' });
+      return;
+    }
+
+    if (headerSignature) {
+      this.verify(text, headerSignature);
+      return;
+    }
+
+    const signedBody = signedResponseBody(data, text);
+    this.verify(signedBody, bodySignature);
   }
 }
 
-function loadZanacoConfig() {
+function loadZanacoConfig(): ZanacoConfig {
+  const requireResponseSignature = process.env.ZANACO_REQUIRE_RESPONSE_SIGNATURE !== 'false';
   const required = {
     baseUrl: process.env.ZANACO_BASE_URL?.trim().replace(/\/$/, '') || 'https://uat-zws.zanaco.co.zm',
     apiKey: process.env.ZANACO_API_KEY?.trim() || '',
@@ -120,9 +215,12 @@ function loadZanacoConfig() {
     apiSecret: process.env.ZANACO_API_SECRET?.trim() || '',
     partnerPrivateKey: process.env.ZANACO_PRIVATE_KEY?.replace(/\\n/g, '\n') || '',
     zanacoPublicKey: process.env.ZANACO_PUBLIC_KEY?.replace(/\\n/g, '\n') || '',
+    requireResponseSignature,
   };
   for (const [key, value] of Object.entries(required)) {
-    if (key !== 'zanacoPublicKey' && !value) throw new Error(`Missing required Zanaco config: ${key}`);
+    if (key === 'requireResponseSignature') continue;
+    if (key === 'zanacoPublicKey' && !requireResponseSignature) continue;
+    if (!value) throw new Error(`Missing required Zanaco config: ${key}`);
   }
   return required;
 }
@@ -138,6 +236,12 @@ function parseResponseBody(text: string) {
   } catch {
     return text;
   }
+}
+
+function signedResponseBody(data: unknown, fallback: string) {
+  if (!data || typeof data !== 'object') return fallback;
+  const record = data as { response?: unknown };
+  return record.response === undefined ? fallback : compactJson(record.response);
 }
 
 function normalizePem(value: string) {

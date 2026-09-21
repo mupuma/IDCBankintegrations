@@ -6,7 +6,7 @@ import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
-import { buildIzbPayload, buildZanacoPayload, buildZicbPayload } from '@/app/lib/banks/payloadBuilders';
+import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPayload } from '@/app/lib/banks/payloadBuilders';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
@@ -46,6 +46,8 @@ interface EnrichedPayment extends PaymentsResponse {
   entries: any;
   paymentId: string;
   bankDetailsFound: boolean;
+  missingBankFields?: string[];
+  bankDetailsStatus?: 'complete' | 'incomplete';
 }
 
 interface ValidationResult {
@@ -644,6 +646,36 @@ export default function PaymentQueueDashboard() {
     });
   };
 
+  const selectedSourceFor = (paymentId: string) => {
+    const selected = selectedSources[paymentId];
+    if (!selected) return undefined;
+    return sourceBanks.find(
+      (source: { bank?: string }) =>
+        (source.bank || '').toString().toUpperCase() === selected.toString().toUpperCase(),
+    );
+  };
+
+  const validateZanacoSelection = (
+    payment: EnrichedPayment,
+    transactionType: PaymentsResponse['transactionType'],
+  ): ValidationResult => {
+    const source = selectedSourceFor(payment.paymentId);
+    const errors: string[] = [];
+
+    if (!source) {
+      errors.push('Source account is required for Zanaco payments.');
+      return { valid: false, errors };
+    }
+
+    const payload = buildZanacoPayload({ ...payment, transactionType }, transactionType, source);
+    errors.push(...validateZanacoPayload(payload));
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  };
+
   const togglePaymentSelection = (paymentId: string, checked: boolean) => {
     setSelectedPaymentIds((prev) => ({ ...prev, [paymentId]: checked }));
   };
@@ -731,11 +763,9 @@ export default function PaymentQueueDashboard() {
 
     const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
-    const result = validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
-    if (bankCode === 'ZANACO' && !selectedSources[payment.paymentId]) {
-      result.valid = false;
-      result.errors.push('Source account is required for Zanaco payments.');
-    }
+    const result = bankCode === 'ZANACO'
+      ? validateZanacoSelection(effectivePayment, effectiveType)
+      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     setValidationResults((prev) => ({ ...prev, [payment.paymentId]: result }));
     setMessage(
       result.valid
@@ -762,11 +792,9 @@ export default function PaymentQueueDashboard() {
 
     const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
-    const validation = validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
-    if (bankCode === 'ZANACO' && !selectedSources[payment.paymentId]) {
-      validation.valid = false;
-      validation.errors.push('Source account is required for Zanaco payments.');
-    }
+    const validation = bankCode === 'ZANACO'
+      ? validateZanacoSelection(effectivePayment, effectiveType)
+      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     if (!validation.valid) {
       setValidationResults((prev) => ({ ...prev, [payment.paymentId]: validation }));
       setMessage(`Payment cannot be submitted: ${validation.errors.join('; ')}`);
@@ -889,11 +917,9 @@ export default function PaymentQueueDashboard() {
       }
 
       const effectivePayment = { ...payment, transactionType };
-      const validation = validatePayment(effectivePayment, bankCode, transactionType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
-      if (bankCode === 'ZANACO' && !selectedSources[payment.paymentId]) {
-        validation.valid = false;
-        validation.errors.push('Source account is required for Zanaco payments.');
-      }
+      const validation = bankCode === 'ZANACO'
+        ? validateZanacoSelection(effectivePayment, transactionType)
+        : validatePayment(effectivePayment, bankCode, transactionType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
       nextValidationResults[payment.paymentId] = validation;
       if (!validation.valid) {
         validationErrors.push(`${payment.transactionReference || payment.paymentId}: ${validation.errors.join('; ')}`);

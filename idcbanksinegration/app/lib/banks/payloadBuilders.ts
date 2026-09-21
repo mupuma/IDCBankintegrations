@@ -26,6 +26,28 @@ function normalizeString(value: unknown) {
   return '';
 }
 
+function referenceSuffix(seed: string) {
+  let hash = 5381;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = ((hash << 5) + hash) + seed.charCodeAt(index);
+    hash >>>= 0;
+  }
+  return hash.toString(16).toUpperCase().padStart(8, '0');
+}
+
+function zanacoExternalTranRef(payment: PaymentsResponse, maxLength: number) {
+  const base = (payment.transactionReference || String(payment.paymentId || '')).replace(/[^a-zA-Z0-9]/g, '');
+  if (maxLength !== 20 || base.length >= 20) return base.slice(0, maxLength);
+
+  const seed = base || JSON.stringify({
+    paymentId: payment.paymentId,
+    vendorId: payment.vendorId,
+    amount: payment.amount,
+    transactionDate: payment.transactionDate,
+  });
+  return `${base}${referenceSuffix(seed)}${referenceSuffix(`${seed}:ddac`)}`.slice(0, 20);
+}
+
 function buildCommonRequest(payment: PaymentsResponse, source?: any) {
   const payDate = formatDate(payment.transactionDate);
   const amount = Number(payment.amount ?? 0);
@@ -108,7 +130,7 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
   const normalizedTransactionType = String(transactionType || '').toUpperCase();
   const debitAccount = requestBase.srcAcc;
   const creditAccount = requestBase.accountNumber;
-  const externalTranRef = (requestBase.transferRef || String((payment as any).paymentId || '')).replace(/[^a-zA-Z0-9]/g, '').slice(0, ['DDACCT', 'DDAC'].includes(normalizedTransactionType) ? 20 : 16);
+  const externalTranRef = zanacoExternalTranRef(payment, ['DDACCT', 'DDAC'].includes(normalizedTransactionType) ? 20 : 16);
   const ccy = requestBase.payCurrency.toUpperCase();
   const amount = String(requestBase.amount);
   const valueDate = zanacoValueDate(payment.transactionDate);
@@ -141,13 +163,14 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
         debitAccount,
         creditAccount,
         externalTranRef,
+        duplicatableExternalRef: (payment as any).duplicatableExternalRef || '',
         ccy,
         product: 'SWIFT',
         amount,
         valueDate,
         paymentDetails,
         name,
-        address: address.slice(0, 255),
+        address: address.slice(0, 105),
         bicCode: requestBase.swiftCode,
         tpin: (payment as any).tpin || (payment as any).tpIn || '',
         purposeCode: (payment as any).purposeCode || '',
@@ -307,6 +330,7 @@ export function validateZanacoPayload(payload: { service: string; request: Recor
   });
   const amount = Number(request.amount);
   const transferRefMax = payload.service === 'ZANACO_DDAC' ? 20 : 16;
+  const duplicatableExternalRef = value('duplicatableExternalRef');
 
   requireFields(['debitAccount', 'creditAccount', 'externalTranRef', 'ccy', 'amount', 'valueDate', 'paymentDetails', 'name']);
   if (!Number.isFinite(amount) || amount <= 0) errors.push('request.amount must be a positive number');
@@ -315,7 +339,13 @@ export function validateZanacoPayload(payload: { service: string; request: Recor
   if (value('externalTranRef').length < 6 || value('externalTranRef').length > transferRefMax || !/^[a-zA-Z0-9]+$/.test(value('externalTranRef'))) {
     errors.push(`request.externalTranRef must be 6-${transferRefMax} alphanumeric characters`);
   }
+  if (duplicatableExternalRef && (duplicatableExternalRef.length < 36 || duplicatableExternalRef.length > 105)) {
+    errors.push('request.duplicatableExternalRef must be 36-105 characters');
+  }
 
+  if (['ZANACO_INTERNAL', 'ZANACO_RTGS', 'ZANACO_SWIFT'].includes(payload.service) && value('debitAccount').length !== 13) {
+    errors.push('request.debitAccount must be exactly 13 characters');
+  }
   if (payload.service === 'ZANACO_INTERNAL' && value('bicCode') !== 'ZNCOZMLUXXX') {
     errors.push('request.bicCode must be ZNCOZMLUXXX for internal Zanaco transfers');
   }
@@ -323,8 +353,20 @@ export function validateZanacoPayload(payload: { service: string; request: Recor
   if (payload.service === 'ZANACO_DDAC' && !/^\d{6}$/.test(value('sortCode'))) {
     errors.push('request.sortCode must be 6 digits for DDAC transfers');
   }
+  if (payload.service === 'ZANACO_DDAC') {
+    requireFields(['address']);
+    if (value('debitAccount').length !== 13) errors.push('request.debitAccount must be exactly 13 characters for DDAC transfers');
+    if (value('externalTranRef').length !== 20) errors.push('request.externalTranRef must be exactly 20 characters for DDAC transfers');
+    if (value('address').length > 105) errors.push('request.address must be 105 characters or less');
+  }
   if (payload.service === 'ZANACO_SWIFT') {
     requireFields(['product', 'address', 'bicCode', 'tpin', 'purposeCode', 'sectorCode']);
+    if (value('product').length > 10) errors.push('request.product must be 10 characters or less');
+    if (value('address').length > 105) errors.push('request.address must be 105 characters or less');
+    if (value('bicCode').length > 11) errors.push('request.bicCode must be 11 characters or less');
+    if (value('tpin').length > 20) errors.push('request.tpin must be 20 characters or less');
+    if (value('purposeCode').length > 8) errors.push('request.purposeCode must be 8 characters or less');
+    if (value('sectorCode').length > 8) errors.push('request.sectorCode must be 8 characters or less');
   }
 
   return errors;

@@ -30,12 +30,16 @@ function validateBulkPayload(prepared) {
     const items = Array.isArray(request.items) ? request.items : [];
     const text = (value) => typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value);
     const totalAmount = Number(request.totalAmount);
+    const descriptionMax = prepared.transferType === 'RTGS' ? 500 : 140;
+    const refMax = prepared.transferType === 'DDAC' ? 20 : 16;
+    const refMin = prepared.transferType === 'DDAC' ? 16 : 1;
+    const isBulkAccount = (value) => /^\d{9}$/.test(value) || /^\d{13}$/.test(value);
     if (!text(request.batchName))
         errors.push('batchName is required');
     if (text(request.batchName).length > 100)
         errors.push('batchName must be 100 characters or less');
-    if (text(request.description).length > 500)
-        errors.push('description must be 500 characters or less');
+    if (text(request.description).length > descriptionMax)
+        errors.push(`description must be ${descriptionMax} characters or less`);
     if (!/^[A-Z]{3}$/.test(text(request.currency).toUpperCase()))
         errors.push('currency must be a three-letter ISO currency code');
     if (!Number.isInteger(Number(request.totalCount)) || Number(request.totalCount) <= 0)
@@ -62,6 +66,17 @@ function validateBulkPayload(prepared) {
         requireField('externalTranRef');
         requireField('amount');
         requireField('name');
+        if (text(item.debitAccount) && !isBulkAccount(text(item.debitAccount)))
+            errors.push(`${prefix}.debitAccount must be 9 or 13 digits`);
+        if (text(item.creditAccount) && !isBulkAccount(text(item.creditAccount)))
+            errors.push(`${prefix}.creditAccount must be 9 or 13 digits`);
+        if (text(item.externalTranRef) && (text(item.externalTranRef).length < refMin || text(item.externalTranRef).length > refMax)) {
+            errors.push(`${prefix}.externalTranRef must be ${prepared.transferType === 'DDAC' ? '16-20' : '16 or fewer'} characters`);
+        }
+        if (text(item.name).length > 140)
+            errors.push(`${prefix}.name must be 140 characters or less`);
+        if (text(item.paymentDetails).length > 140)
+            errors.push(`${prefix}.paymentDetails must be 140 characters or less`);
         if (!Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0)
             errors.push(`${prefix}.amount must be positive`);
         if (prepared.transferType === 'RTGS' && !text(item.bicCode))
@@ -70,6 +85,8 @@ function validateBulkPayload(prepared) {
             errors.push(`${prefix}.sortCode must be 6 digits for DDAC`);
         if (prepared.transferType === 'SWIFT') {
             ['address', 'bicCode', 'tpin', 'purposeCode', 'sectorCode'].forEach(requireField);
+            if (text(item.address).length > 255)
+                errors.push(`${prefix}.address must be 255 characters or less`);
         }
     });
     return errors;

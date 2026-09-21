@@ -6,6 +6,7 @@ export interface WorkPortal {
   claim(): Promise<H2hWork | null>;
   report(work: H2hWork, outcome: Outcome): Promise<void>;
   account(work: H2hWork): Promise<void>;
+  callback(channel: Channel, body: unknown): Promise<void>;
 }
 // The bank call is outside the reporting retry loop. If all report attempts fail,
 // the database lease expires into reconciliation, not another bank submission.
@@ -36,4 +37,5 @@ export class HttpWorkPortal implements WorkPortal {
   async claim() { return (await this.request('work', 'POST')).item as H2hWork | null; }
   async report(work: H2hWork, outcome: Outcome) { await this.request('work', 'PATCH', { queueId: work.queueId, leaseToken: work.leaseToken, outcome }); }
   async account(work: H2hWork) { await this.request('accounting', 'POST', { queueId: work.queueId, leaseToken: work.leaseToken }); }
+  async callback(channel: Channel, body: unknown) { await this.request('callback', 'POST', { channel, body }); }
 }

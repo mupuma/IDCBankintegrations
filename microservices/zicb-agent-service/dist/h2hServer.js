@@ -7,6 +7,7 @@ exports.startH2hService = startH2hService;
 const express_1 = __importDefault(require("express"));
 const h2hClient_1 = require("./h2hClient");
 const h2hRunner_1 = require("./h2hRunner");
+const h2hCallback_1 = require("./h2hCallback");
 function startH2hService() {
     const profiles = JSON.parse(process.env.ZICB_H2H_PROFILES || '{}');
     if (!Object.keys(profiles).length)
@@ -14,8 +15,15 @@ function startH2hService() {
     const bank = new h2hClient_1.H2hClient(profiles);
     const portal = new h2hRunner_1.HttpWorkPortal(process.env.APP_API_URL || '', process.env.ZICB_H2H_AGENT_KEY || '');
     const app = (0, express_1.default)();
+    app.use(express_1.default.json());
     app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'zicb-h2h-agent', protocol: 'h2h-v1' }));
     app.post('/payments', (_req, res) => res.status(410).json({ error: 'Submit H2H payments through the portal ledger' }));
+    for (const route of (0, h2hCallback_1.callbackRoutes)()) {
+        app.post(route.path, async (req, res) => {
+            const result = await (0, h2hCallback_1.handleBankCallback)(route, req.headers, req.body, portal);
+            res.status(result.status).json(result.body);
+        });
+    }
     const server = app.listen(Number(process.env.PORT || 4001));
     let stopped = false;
     async function tick() {

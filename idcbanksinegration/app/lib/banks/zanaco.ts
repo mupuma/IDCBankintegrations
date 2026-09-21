@@ -1,13 +1,23 @@
 import type { PaymentsResponse } from '../../models/dtos';
 import { buildZanacoPayload } from './payloadBuilders';
 import { resolveSourceBank } from '@/app/lib/sourceAccounts';
+import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
 const QUEUE_URL = process.env.ZANACO_BANK_API_URL;
 
 async function postToQueue(payload: unknown) {
   if (!QUEUE_URL) {
+    terminalError('zanaco.dispatch.config_missing', { config: 'ZANACO_BANK_API_URL' });
     throw new Error('Missing ZANACO_BANK_API_URL environment variable');
   }
+
+  const payloadRecord = payload && typeof payload === 'object' ? payload as Record<string, any> : {};
+  terminalLog('zanaco.dispatch.request', {
+    queueId: payloadRecord.queueId,
+    service: payloadRecord.service,
+    sourceBank: payloadRecord.sourceBank,
+    endpoint: QUEUE_URL,
+  });
 
   const response = await fetch(QUEUE_URL, {
     method: 'POST',
@@ -36,6 +46,22 @@ async function postToQueue(payload: unknown) {
     ? undefined
     : [responseError || `Zanaco queue request failed with status ${response.status}`, ...validationErrors].join(': ');
 
+  if (response.ok) {
+    terminalLog('zanaco.dispatch.response', {
+      queueId: payloadRecord.queueId,
+      service: payloadRecord.service,
+      status: response.status,
+      deferred: response.status === 202,
+    });
+  } else {
+    terminalError('zanaco.dispatch.response_error', {
+      queueId: payloadRecord.queueId,
+      service: payloadRecord.service,
+      status: response.status,
+      error,
+    });
+  }
+
   return {
     success: response.ok,
     status: response.status,
@@ -56,5 +82,15 @@ export async function sendZanacoPayment(payment: PaymentsResponse, queueId?: str
 
   const src = sourceBank ? await resolveSourceBank(sourceBank) : null;
   const payload = buildZanacoPayload(payment, payment.transactionType, src || undefined);
+  terminalLog('zanaco.payload.built', {
+    queueId,
+    paymentId: payment.paymentId,
+    transactionReference: payment.transactionReference,
+    transactionType: payment.transactionType,
+    service: payload.service,
+    debitAccount: payload.request.debitAccount,
+    creditAccount: payload.request.creditAccount,
+    valueDate: payload.request.valueDate,
+  });
   return postToQueue({ ...payload, queueId, sourceBank });
 }

@@ -44,5 +44,6 @@ class HttpWorkPortal {
     async claim() { return (await this.request('work', 'POST')).item; }
     async report(work, outcome) { await this.request('work', 'PATCH', { queueId: work.queueId, leaseToken: work.leaseToken, outcome }); }
     async account(work) { await this.request('accounting', 'POST', { queueId: work.queueId, leaseToken: work.leaseToken }); }
+    async callback(channel, body) { await this.request('callback', 'POST', { channel, body }); }
 }
 exports.HttpWorkPortal = HttpWorkPortal;

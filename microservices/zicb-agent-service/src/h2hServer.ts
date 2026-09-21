@@ -1,6 +1,7 @@
 import express from 'express';
 import { H2hClient } from './h2hClient';
 import { HttpWorkPortal, processH2hWork } from './h2hRunner';
+import { callbackRoutes, handleBankCallback } from './h2hCallback';
 
 export function startH2hService() {
   const profiles = JSON.parse(process.env.ZICB_H2H_PROFILES || '{}');
@@ -8,8 +9,15 @@ export function startH2hService() {
   const bank = new H2hClient(profiles);
   const portal = new HttpWorkPortal(process.env.APP_API_URL || '', process.env.ZICB_H2H_AGENT_KEY || '');
   const app = express();
+  app.use(express.json());
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'zicb-h2h-agent', protocol: 'h2h-v1' }));
   app.post('/payments', (_req, res) => res.status(410).json({ error: 'Submit H2H payments through the portal ledger' }));
+  for (const route of callbackRoutes()) {
+    app.post(route.path, async (req, res) => {
+      const result = await handleBankCallback(route, req.headers, req.body, portal);
+      res.status(result.status).json(result.body);
+    });
+  }
   const server = app.listen(Number(process.env.PORT || 4001));
   let stopped = false;
   async function tick() {

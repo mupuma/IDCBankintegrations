@@ -25,6 +25,14 @@ export type PaymentsResponse = {
     transactionDate: Date;
     transactionType: 'RTGS' | 'DDACCT' | 'INT' | 'TT';
     transactionReference: string;
+    duplicatableExternalRef?: string;
+    srcAcc?: string;
+    srcBranch?: string;
+    srcName?: string;
+    tpin?: string;
+    tpIn?: string;
+    purposeCode?: string;
+    sectorCode?: string;
     bankName: string;
     email: string;
     phoneNumber: string;

@@ -6,6 +6,7 @@ exports.sendZanacoPayment = sendZanacoPayment;
 exports.queryTransactionStatus = queryTransactionStatus;
 const zanacoValidation_1 = require("./zanacoValidation");
 const zwsClient_1 = require("./zwsClient");
+const log_1 = require("./log");
 let client = null;
 function getClient() {
     client ?? (client = new zwsClient_1.ZanacoClient());
@@ -51,18 +52,19 @@ async function sendZanacoPayment(prepared) {
         const inner = body?.response;
         const respCode = String(inner?.respCode ?? '');
         const respDesc = String(inner?.respDesc ?? '');
+        const externalTranRef = String(inner?.externalTranRef ?? prepared.externalTranRef ?? '');
         if (response.ok && ['ZWS-01', 'ZWS-00', '00'].includes(respCode)) {
             return { success: true, status: response.status, data: response.data };
         }
-        if (respCode === 'ZWS-51') {
-            const statusResult = await queryTransactionStatus(prepared.externalTranRef);
+        if (respCode === 'ZWS-51' || isDuplicateReference(respCode, respDesc, response.status)) {
+            const statusResult = await queryTransactionStatus(externalTranRef || prepared.externalTranRef);
             return statusResult.success ? statusResult : {
                 success: false,
                 status: response.status,
                 data: response.data,
                 error: respDesc || 'Unable to determine transaction status',
                 unknown: true,
-                retryable: true,
+                retryable: respCode === 'ZWS-51',
             };
         }
         if (response.status >= 500) {
@@ -79,7 +81,10 @@ async function sendZanacoPayment(prepared) {
                     return statusResult;
             }
             catch (statusError) {
-                console.warn('[ZANACO] transfer status lookup after error failed', statusError);
+                (0, log_1.logError)('zanaco.status_lookup_after_error.failed', {
+                    externalTranRef,
+                    error: statusError instanceof Error ? statusError.message : String(statusError),
+                });
             }
         }
         return {
@@ -90,6 +95,11 @@ async function sendZanacoPayment(prepared) {
             retryable: true,
         };
     }
+}
+function isDuplicateReference(respCode, respDesc, httpStatus) {
+    const description = respDesc.toLowerCase();
+    return (respCode === 'ZWS-56' && httpStatus === 409)
+        || (respCode === 'ZWS-53' && description.includes('duplicate') && description.includes('externaltranref'));
 }
 async function queryTransactionStatus(externalTranRef) {
     if (!externalTranRef) {

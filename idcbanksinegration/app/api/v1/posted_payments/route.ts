@@ -26,6 +26,7 @@ import { buildZanacoPayload, buildZicbPayload, validateZanacoPayload, validateZi
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
 import { h2hEnabled } from '@/app/lib/zicb/config';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
+import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -39,6 +40,15 @@ export async function POST(request: NextRequest) {
   const sourceBankCode = body?.sourceBank ? String(body.sourceBank).trim() : null;
   const payments = Array.isArray(body?.payments) ? body.payments as PaymentsResponse[] : null;
   const bulkTransactionType = body?.transactionType ? String(body.transactionType).toUpperCase() as PaymentsResponse['transactionType'] : undefined;
+
+  terminalLog('posted_payments.request.received', {
+    bankCode,
+    sourceBank: sourceBankCode,
+    bulk: Boolean(payments),
+    paymentCount: payments?.length ?? (payment ? 1 : 0),
+    transactionType: bulkTransactionType ?? payment?.transactionType,
+    paymentId: payment?.paymentId,
+  });
 
   if (!BANK_CODES.includes(bankCode)) {
     return NextResponse.json(
@@ -64,6 +74,8 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
+
+  let paymentToQueue = payment;
 
   // FIX: ZICB source bank validation with TRIM
   if (bankCode === 'ZICB' && h2hEnabled()) {
@@ -192,7 +204,20 @@ export async function POST(request: NextRequest) {
   }
 
   if (bankCode === 'ZANACO') {
+    const selectedTransactionType = String(payment.transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
+    if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(selectedTransactionType)) {
+      return NextResponse.json(
+        { success: false, error: 'transactionType must be one of INT, RTGS, DDACCT, DDAC, TT, SWIFT for Zanaco payments.' },
+        { status: 400 },
+      );
+    }
+
     if (!sourceBankCode) {
+      terminalError('posted_payments.zanaco.validation_failed', {
+        paymentId: payment.paymentId,
+        bankCode,
+        error: 'sourceBank is REQUIRED for Zanaco payments because ZWS requires a debitAccount.',
+      });
       return NextResponse.json(
         { success: false, error: 'sourceBank is REQUIRED for Zanaco payments because ZWS requires a debitAccount.' },
         { status: 400 },
@@ -202,15 +227,36 @@ export async function POST(request: NextRequest) {
     try {
       const source = await resolveSourceBank(sourceBankCode);
       if (!source?.accountNumber) {
+        terminalError('posted_payments.zanaco.validation_failed', {
+          paymentId: payment.paymentId,
+          bankCode,
+          sourceBank: sourceBankCode,
+          error: `Source bank "${sourceBankCode}" has no valid account number.`,
+        });
         return NextResponse.json(
           { success: false, error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number.` },
           { status: 400 },
         );
       }
 
-      const zanacoPayload = buildZanacoPayload(payment, payment.transactionType, source);
+      paymentToQueue = {
+        ...payment,
+        transactionType: selectedTransactionType,
+        srcAcc: source.accountNumber?.toString().trim() || '',
+        srcBranch: source.transit?.toString().trim() || '',
+        srcName: source.name?.toString().trim() || '',
+      };
+
+      const zanacoPayload = buildZanacoPayload(paymentToQueue, selectedTransactionType, source);
       const validationErrors = validateZanacoPayload(zanacoPayload);
       if (validationErrors.length) {
+        terminalError('posted_payments.zanaco.validation_failed', {
+          paymentId: payment.paymentId,
+          bankCode,
+          sourceBank: sourceBankCode,
+          service: zanacoPayload.service,
+          validationErrors,
+        });
         return NextResponse.json(
           { success: false, error: 'Invalid Zanaco transfer', validationErrors },
           { status: 400 },
@@ -230,6 +276,7 @@ export async function POST(request: NextRequest) {
     : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
   const paymentId = resolvePaymentId(payment as { paymentId?: string }, queueId);
+  terminalLog('posted_payments.queue.prepare', { queueId, paymentId, bankCode, sourceBank: sourceBankCode });
 
   await connectDatabase();
 
@@ -255,10 +302,12 @@ export async function POST(request: NextRequest) {
     await db.transaction(async transaction => {
       await PaymentDispatchReservation.create({ paymentKey: createHash('sha256').update(paymentId).digest('hex'), queueId, bankCode }, { transaction });
       await PaymentQueueRequest.create({ queueId, paymentId, bankCode, sourceBank: sourceBankCode,
-        paymentPayload: JSON.stringify(payment), status: 'queued', attempts: 0 }, { transaction });
+        paymentPayload: JSON.stringify(paymentToQueue), status: 'queued', attempts: 0 }, { transaction });
     });
+    terminalLog('posted_payments.queue.persisted', { queueId, paymentId, bankCode, sourceBank: sourceBankCode });
   } catch (error: any) {
     if (error?.name === 'SequelizeUniqueConstraintError') {
+      terminalLog('posted_payments.queue.duplicate_reservation', { paymentId, bankCode, sourceBank: sourceBankCode });
       return requeueFailedReservedPayment({
         request,
         auth,
@@ -289,12 +338,21 @@ export async function POST(request: NextRequest) {
     console.error('Failed to insert IZB intermediary record', err);
   }
 
-  const queueItem = enqueuePayment(bankCode, payment, queueId, sourceBankCode);
+  const queueItem = enqueuePayment(bankCode, paymentToQueue, queueId, sourceBankCode);
   const integration = getBankIntegration(bankCode);
   let latestQueueItem = queueItem;
   if (integration.dispatchStrategy === 'portal-push') {
     latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
   }
+  terminalLog('posted_payments.queue.response', {
+    queueId: latestQueueItem.id,
+    paymentId,
+    bankCode,
+    status: latestQueueItem.status,
+    attempts: latestQueueItem.attempts,
+    lastError: latestQueueItem.lastError,
+    dispatchStrategy: integration.dispatchStrategy,
+  });
 
   const paymentRef =
     (payment as { paymentId?: string; transactionReference?: string; vendorName?: string }).paymentId ||
@@ -362,6 +420,7 @@ async function requeueFailedReservedPayment(input: {
   const { request, auth, payment, paymentId, bankCode, sourceBankCode } = input;
   const paymentKey = createHash('sha256').update(paymentId).digest('hex');
   const reservation = await PaymentDispatchReservation.findOne({ where: { paymentKey } });
+  terminalLog('posted_payments.retry.lookup', { paymentId, bankCode, sourceBank: sourceBankCode, hasReservation: Boolean(reservation) });
 
   if (!reservation) {
     return NextResponse.json(
@@ -372,6 +431,7 @@ async function requeueFailedReservedPayment(input: {
 
   const queueRecord = await PaymentQueueRequest.findOne({ where: { queueId: reservation.queueId } });
   if (!queueRecord) {
+    terminalError('posted_payments.retry.queue_missing', { paymentId, bankCode, queueId: reservation.queueId });
     return NextResponse.json(
       { success: false, error: 'This payment has a dispatch reservation but no queue record to retry.', alreadyPosted: true, paymentId, queueId: reservation.queueId },
       { status: 409 },
@@ -379,6 +439,7 @@ async function requeueFailedReservedPayment(input: {
   }
 
   if (queueRecord.bankCode !== bankCode) {
+    terminalError('posted_payments.retry.bank_mismatch', { paymentId, requestedBankCode: bankCode, existingBankCode: queueRecord.bankCode, queueId: queueRecord.queueId });
     return NextResponse.json(
       { success: false, error: `Payment has already been reserved for ${queueRecord.bankCode}. Each payment can only be sent to one bank.`, alreadyPosted: true, paymentId, queueId: queueRecord.queueId },
       { status: 409 },
@@ -386,6 +447,7 @@ async function requeueFailedReservedPayment(input: {
   }
 
   if (queueRecord.status !== 'failed') {
+    terminalLog('posted_payments.retry.blocked_active_record', { paymentId, bankCode, queueId: queueRecord.queueId, status: queueRecord.status });
     return NextResponse.json(
       { success: false, error: buildAlreadyPostedMessage({ source: 'bank_queue', queueId: queueRecord.queueId, status: queueRecord.status, bankCode }, bankCode), alreadyPosted: true, paymentId, queueId: queueRecord.queueId, existingStatus: queueRecord.status },
       { status: 409 },
@@ -393,22 +455,31 @@ async function requeueFailedReservedPayment(input: {
   }
 
   await PaymentQueueRequest.update(
-    {
+    ({
       sourceBank: sourceBankCode,
       paymentPayload: JSON.stringify(payment),
       status: 'queued',
       attempts: 0,
       lastError: null,
       responsePayload: null,
-    },
+    } as any),
     { where: { queueId: queueRecord.queueId } },
   );
+  terminalLog('posted_payments.retry.requeued', { paymentId, bankCode, queueId: queueRecord.queueId, sourceBank: sourceBankCode });
 
   const queueItem = enqueuePayment(bankCode, payment, queueRecord.queueId, sourceBankCode);
   const integration = getBankIntegration(bankCode);
   const latestQueueItem = integration.dispatchStrategy === 'portal-push'
     ? await ensureQueueItemProcessing(queueItem.id) ?? queueItem
     : queueItem;
+  terminalLog('posted_payments.retry.response', {
+    paymentId,
+    bankCode,
+    queueId: latestQueueItem.id,
+    status: latestQueueItem.status,
+    attempts: latestQueueItem.attempts,
+    lastError: latestQueueItem.lastError,
+  });
 
   await logAuditEvent({
     userId: auth.id,
@@ -447,12 +518,20 @@ async function postManyPayments(input: {
   transactionType?: PaymentsResponse['transactionType'];
 }) {
   const { request, auth, bankCode, payments, sourceBankCode, transactionType } = input;
+  terminalLog('posted_payments.bulk.received', {
+    bankCode,
+    sourceBank: sourceBankCode,
+    paymentCount: payments.length,
+    transactionType,
+  });
 
   if (!payments.length) {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'payments must contain at least one payment' });
     return NextResponse.json({ success: false, error: 'payments must contain at least one payment' }, { status: 400 });
   }
 
   if (payments.length === 1) {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'single payment sent through bulk path' });
     return NextResponse.json(
       { success: false, error: 'Use payment for a single payment submission; payments is reserved for bulk submissions.' },
       { status: 400 },
@@ -460,6 +539,7 @@ async function postManyPayments(input: {
   }
 
   if (bankCode !== 'ZANACO') {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'bulk flow not configured for bank' });
     return NextResponse.json(
       { success: false, error: `${bankCode} does not have a configured bulk upload flow. Submit those payments individually.` },
       { status: 400 },
@@ -467,6 +547,7 @@ async function postManyPayments(input: {
   }
 
   if (!sourceBankCode) {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'sourceBank is required' });
     return NextResponse.json(
       { success: false, error: 'sourceBank is REQUIRED for Zanaco bulk payments because ZWS requires a debitAccount.' },
       { status: 400 },
@@ -476,6 +557,7 @@ async function postManyPayments(input: {
   const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
   const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).toUpperCase() === effectiveType);
   if (!sameType) {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, transactionType: effectiveType, error: 'mixed transaction types' });
     return NextResponse.json(
       { success: false, error: 'Bulk payments must use one transaction type. Split the selection by transaction type.' },
       { status: 400 },
@@ -484,6 +566,7 @@ async function postManyPayments(input: {
 
   const source = await resolveSourceBank(sourceBankCode);
   if (!source?.accountNumber) {
+    terminalError('posted_payments.bulk.validation_failed', { bankCode, sourceBank: sourceBankCode, error: 'source bank has no valid account number' });
     return NextResponse.json(
       { success: false, error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number.` },
       { status: 400 },
@@ -505,6 +588,7 @@ async function postManyPayments(input: {
     const existingPost = await findExistingPaymentPost(paymentId);
     if (existingPost) {
       validationByPayment[paymentId] = [buildAlreadyPostedMessage(existingPost, bankCode)];
+      terminalError('posted_payments.bulk.payment_rejected', { paymentId, bankCode, error: validationByPayment[paymentId].join('; ') });
       continue;
     }
 
@@ -513,12 +597,19 @@ async function postManyPayments(input: {
     const validationErrors = validateZanacoPayload(zanacoPayload);
     if (validationErrors.length) {
       validationByPayment[paymentId] = validationErrors;
+      terminalError('posted_payments.bulk.payment_rejected', { paymentId, bankCode, validationErrors });
       continue;
     }
     itemRequests.push(zanacoPayload.request);
   }
 
   if (Object.keys(validationByPayment).length) {
+    terminalError('posted_payments.bulk.validation_failed', {
+      bankCode,
+      sourceBank: sourceBankCode,
+      transactionType: effectiveType,
+      rejectedCount: Object.keys(validationByPayment).length,
+    });
     return NextResponse.json(
       { success: false, error: 'One or more payments cannot be added to the Zanaco bulk batch.', validationByPayment },
       { status: 400 },
@@ -567,8 +658,19 @@ async function postManyPayments(input: {
         }, { transaction });
       }
     });
+    terminalLog('posted_payments.bulk.persisted', {
+      queueId,
+      paymentId: batchPaymentId,
+      bankCode,
+      sourceBank: sourceBankCode,
+      paymentCount: payments.length,
+      service,
+      totalAmount,
+      currency,
+    });
   } catch (error: any) {
     if (error?.name === 'SequelizeUniqueConstraintError') {
+      terminalError('posted_payments.bulk.duplicate_reservation', { bankCode, sourceBank: sourceBankCode, paymentCount: payments.length });
       return NextResponse.json(
         { success: false, error: 'At least one selected payment already has a bank dispatch reservation.', alreadyPosted: true },
         { status: 409 },
@@ -583,6 +685,15 @@ async function postManyPayments(input: {
   if (integration.dispatchStrategy === 'portal-push') {
     latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
   }
+  terminalLog('posted_payments.bulk.response', {
+    queueId,
+    paymentId: batchPaymentId,
+    bankCode,
+    status: latestQueueItem.status,
+    attempts: latestQueueItem.attempts,
+    lastError: latestQueueItem.lastError,
+    dispatchStrategy: integration.dispatchStrategy,
+  });
 
   await logAuditEvent({
     userId: auth.id,

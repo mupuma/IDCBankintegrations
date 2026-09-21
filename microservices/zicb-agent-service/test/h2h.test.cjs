@@ -9,6 +9,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 const contract = require('../../../shared/zicb-h2h');
 const { H2hClient } = require('../src/h2hClient.ts');
 const { processH2hWork } = require('../src/h2hRunner.ts');
+const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 
 const payment = { paymentId: 'SAGE-1001', transactionType: 'RTGS', amount: 25.10, accountNumber: '001142662',
@@ -156,4 +157,28 @@ test('accounting recovery never calls the bank', async () => {
   const bank = { submit: async () => { throw new Error('Bank must not be called'); }, reconcile: async () => { throw new Error('Bank must not be called'); } };
   await processH2hWork({ ...work, action: 'accounting' }, bank, { account: async () => { accounting++; }, report: async () => { throw new Error('unexpected'); } });
   assert.equal(accounting, 1);
+});
+test('agent issues callback tokens after validating bank webhook credentials', async () => {
+  process.env.ZICB_H2H_WEBHOOK_USERNAME = 'zicb';
+  process.env.ZICB_H2H_WEBHOOK_PASSWORD = 'secret';
+  process.env.ZICB_H2H_WEBHOOK_SIGNING_KEY = 'test-only-key-with-at-least-32-characters';
+  const route = { path: '/api/v1/bank/other-bank-rtgs-ft/auth/token', channel: 'RTGS', auth: true };
+  assert.equal((await handleBankCallback(route, {}, { username: 'zicb', password: 'bad' }, { callback: async () => {} })).status, 401);
+  const result = await handleBankCallback(route, {}, { username: 'zicb', password: 'secret' }, { callback: async () => {} });
+  assert.equal(result.status, 200);
+  assert.equal(typeof result.body.token, 'string');
+});
+test('agent validates bank callback and forwards it to the portal ledger', async () => {
+  process.env.ZICB_H2H_WEBHOOK_USERNAME = 'zicb';
+  process.env.ZICB_H2H_WEBHOOK_PASSWORD = 'secret';
+  process.env.ZICB_H2H_WEBHOOK_SIGNING_KEY = 'test-only-key-with-at-least-32-characters';
+  const auth = await handleBankCallback({ path: '/auth', channel: 'RTGS', auth: true }, {}, { username: 'zicb', password: 'secret' }, { callback: async () => {} });
+  let forwarded;
+  const body = { reference: 'batch-1', prcn_number: 'IDC-1', status_code: 200, bankRef: 'BANK1' };
+  const result = await handleBankCallback({ path: '/callback', channel: 'RTGS', auth: false }, { authorization: `Bearer ${auth.body.token}` }, body, {
+    callback: async (channel, payload) => { forwarded = { channel, payload }; },
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(forwarded, { channel: 'RTGS', payload: body });
+  assert.equal((await handleBankCallback({ path: '/callback', channel: 'RTGS', auth: false }, {}, body, { callback: async () => {} })).status, 401);
 });

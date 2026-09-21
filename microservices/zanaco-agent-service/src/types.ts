@@ -18,6 +18,7 @@ export interface PaymentsResponse {
   currencyCode?: string;
   currencyCde?: string;
   transactionReference?: string;
+  duplicatableExternalRef?: string;
   remarks?: string;
   transactionType?: ZanacoTransferType | string;
   bankName?: string;

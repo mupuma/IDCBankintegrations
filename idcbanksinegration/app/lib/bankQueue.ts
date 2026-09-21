@@ -2,6 +2,7 @@ import type { BankCode, PaymentsResponse } from '@/app/models/dtos';
 import { sendPaymentToBank } from './banks';
 import { connectDatabase } from './db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
+import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
 export type QueueStatus = 'queued' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
@@ -43,6 +44,14 @@ export function enqueuePayment(bankCode: BankCode, payment: PaymentsResponse, qu
   };
 
   queue.set(id, item);
+  terminalLog('queue.enqueued.memory', {
+    queueId: id,
+    paymentId: item.paymentId,
+    bankCode,
+    sourceBank,
+    service: (payment as any).service,
+    transactionType: (payment as any).transactionType ?? (payment as any).meta?.transactionType,
+  });
   return item;
 }
 
@@ -69,6 +78,7 @@ export async function processQueueItem(queueId: string) {
   }
 
   if (processing.has(queueId)) {
+    terminalLog('queue.process.skipped_already_processing', { queueId });
     return item;
   }
 
@@ -79,10 +89,25 @@ export async function processQueueItem(queueId: string) {
   queue.set(queueId, item);
 
   await persistQueueRecord(item);
+  terminalLog('queue.process.started', {
+    queueId,
+    paymentId: item.paymentId,
+    bankCode: item.bankCode,
+    attempts: item.attempts,
+  });
 
   try {
     const result = await sendPaymentToBank(item.bankCode, item.payment, queueId, item.sourceBank ?? null);
     item.response = result.data;
+    terminalLog('queue.process.bank_result', {
+      queueId,
+      paymentId: item.paymentId,
+      bankCode: item.bankCode,
+      success: result.success,
+      status: result.status,
+      deferred: result.deferred,
+      error: result.error,
+    });
 
     if (result.deferred) {
       item.status = 'processing';
@@ -97,6 +122,13 @@ export async function processQueueItem(queueId: string) {
   } catch (error: any) {
     item.lastError = error instanceof Error ? error.message : String(error);
     item.status = item.attempts < MAX_RETRIES ? 'queued' : 'failed';
+    terminalError('queue.process.exception', {
+      queueId,
+      paymentId: item.paymentId,
+      bankCode: item.bankCode,
+      attempts: item.attempts,
+      error: item.lastError,
+    });
   }
 
   item.updatedAt = new Date().toISOString();
@@ -104,9 +136,18 @@ export async function processQueueItem(queueId: string) {
   processing.delete(queueId);
 
   await persistQueueRecord(item);
+  terminalLog('queue.process.persisted', {
+    queueId,
+    paymentId: item.paymentId,
+    bankCode: item.bankCode,
+    status: item.status,
+    attempts: item.attempts,
+    lastError: item.lastError,
+  });
 
   if (item.status === 'queued' && item.attempts < MAX_RETRIES) {
     setTimeout(() => {
+      terminalLog('queue.retry.triggered', { queueId, attempts: item.attempts + 1 });
       void processQueueItem(queueId);
     }, RETRY_DELAY_MS);
   }
@@ -130,7 +171,12 @@ async function persistQueueRecord(item: BankQueueItem) {
       },
     );
   } catch (error) {
-    console.error('Failed to persist queue request status', error);
+    terminalError('queue.persist.failed', {
+      queueId: item.id,
+      paymentId: item.paymentId,
+      bankCode: item.bankCode,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -143,6 +189,7 @@ export async function ensureQueueItemProcessing(queueId: string) {
   if ((item.payment as any).h2hProtocol === 'h2h-v1') return item;
 
   if (item.status === 'queued' && !processing.has(queueId)) {
+    terminalLog('queue.ensure_processing', { queueId, bankCode: item.bankCode, status: item.status });
     return processQueueItem(queueId);
   }
 

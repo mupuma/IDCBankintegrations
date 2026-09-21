@@ -4,9 +4,10 @@ import { isZanacoServicePayload } from './zanacoValidation';
 import { prepareZanacoPayload, prepareZanacoServicePayload, sendZanacoPayment } from './zanacoAgent';
 import { claimNextPayment, emitAgentAudit, reportPaymentProcessing, reportPaymentResult } from './portalQueueClient';
 import { isBulkService, prepareBulkPayload, submitBulk } from './bulk';
+import { logEvent, logError } from './log';
 
 const worker = buildWorker(async (job) => {
-  const payload = job.data as { payment: unknown; queueId?: string; sourceBank?: string | null };
+  const payload = job.data as { payment: unknown; queueId?: string; sourceBank?: string | null; reportToPortal?: boolean };
   if (!payload?.payment) throw new Error('Job missing payment payload');
 
   const queueId = payload.queueId;
@@ -15,10 +16,25 @@ const worker = buildWorker(async (job) => {
     ? job.attemptsMade < job.opts.attempts - 1
     : false;
 
-  if (queueId) await reportPaymentProcessing(queueId, attempts);
+  const reportToPortal = Boolean(queueId && payload.reportToPortal);
+
+  if (reportToPortal && queueId) await reportPaymentProcessing(queueId, attempts);
 
   const correlationId = queueId || (payload.payment as any)?.paymentId || (payload.payment as any)?.transactionReference;
   const paymentId = (payload.payment as any)?.paymentId || (payload.payment as any)?.transactionReference || correlationId;
+  const service = (payload.payment as any)?.service;
+  const transactionType = (payload.payment as any)?.transactionType ?? (payload.payment as any)?.meta?.transactionType;
+
+  logEvent('worker.job.started', {
+    jobId: job.id,
+    queueId,
+    paymentId,
+    service,
+    transactionType,
+    attempts,
+    hasMoreRetries,
+    reportToPortal,
+  });
 
   await emitAgentAudit({
     action: 'AGENT_SEND_STARTED',
@@ -32,19 +48,35 @@ const worker = buildWorker(async (job) => {
     let result;
     if (isZanacoServicePayload(payload.payment)) {
       if (isBulkService(payload.payment.service)) {
+        logEvent('worker.job.prepare_bulk', { jobId: job.id, queueId, paymentId, service: payload.payment.service });
         result = await submitBulk(prepareBulkPayload(payload.payment.service, payload.payment.request));
       } else {
+        logEvent('worker.job.prepare_service', { jobId: job.id, queueId, paymentId, service: payload.payment.service });
         result = await sendZanacoPayment(prepareZanacoServicePayload(payload.payment));
       }
     } else {
+      logEvent('worker.job.prepare_payment', { jobId: job.id, queueId, paymentId, transactionType });
       result = await sendZanacoPayment(prepareZanacoPayload(payload.payment as any));
     }
 
-    if (queueId) {
+    logEvent('worker.job.result', {
+      jobId: job.id,
+      queueId,
+      paymentId,
+      success: result.success,
+      status: result.status,
+      retryable: result.retryable,
+      unknown: result.unknown,
+      error: result.error,
+    });
+
+    if (reportToPortal && queueId) {
       if (result.success || !hasMoreRetries || !result.retryable) {
         await reportPaymentResult(queueId, result, attempts);
+        logEvent('worker.portal.reported_result', { jobId: job.id, queueId, paymentId, status: result.success ? 'success' : result.unknown ? 'unknown' : 'failed', attempts });
       } else {
         await reportPaymentProcessing(queueId, attempts, result.error);
+        logEvent('worker.portal.reported_processing', { jobId: job.id, queueId, paymentId, attempts, error: result.error });
       }
     }
 
@@ -60,11 +92,21 @@ const worker = buildWorker(async (job) => {
     return result;
   } catch (error: any) {
     const errorMessage = error instanceof Error ? error.message : String(error);
-    if (queueId) {
+    logError('worker.job.exception', {
+      jobId: job.id,
+      queueId,
+      paymentId,
+      attempts,
+      hasMoreRetries,
+      error: errorMessage,
+    });
+    if (reportToPortal && queueId) {
       if (!hasMoreRetries) {
         await reportPaymentResult(queueId, { success: false, status: error?.status ?? 500, error: errorMessage }, attempts);
+        logEvent('worker.portal.reported_exception', { jobId: job.id, queueId, paymentId, attempts, error: errorMessage });
       } else {
         await reportPaymentProcessing(queueId, attempts, errorMessage);
+        logEvent('worker.portal.reported_retry', { jobId: job.id, queueId, paymentId, attempts, error: errorMessage });
       }
     }
     await emitAgentAudit({
@@ -89,14 +131,21 @@ async function claimPortalWork() {
       payment: item.payment,
       queueId: item.queueId,
       sourceBank: item.sourceBank ?? null,
+      reportToPortal: true,
     }, {
       attempts: Number(process.env.JOB_ATTEMPTS || 3),
       backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
       removeOnComplete: true,
       removeOnFail: false,
     });
+    logEvent('worker.portal.claimed', {
+      queueId: item.queueId,
+      paymentId: item.paymentId,
+      sourceBank: item.sourceBank,
+      attempts: item.attempts,
+    });
   } catch (error) {
-    console.error('Failed to claim Zanaco portal work', error);
+    logError('worker.portal.claim_failed', { error: error instanceof Error ? error.message : String(error) });
   } finally {
     claiming = false;
   }
@@ -109,19 +158,19 @@ if (process.env.APP_API_URL) {
 }
 
 worker.on('completed', (job: any, returnvalue: any) => {
-  console.log(`Zanaco job completed: ${job.id}`, returnvalue);
+  logEvent('worker.job.completed', { jobId: job.id, queueId: job.data?.queueId, returnvalue });
 });
 
 worker.on('failed', (job: any, err: any) => {
-  console.error(`Zanaco job failed: ${job?.id}`, err.message);
+  logError('worker.job.failed', { jobId: job?.id, queueId: job?.data?.queueId, error: err.message });
 });
 
 queueScheduler.on('error', (error: any) => {
-  console.error('Zanaco queue scheduler error:', error);
+  logError('worker.scheduler.error', { error: error instanceof Error ? error.message : String(error) });
 });
 
 worker.on('error', (error: any) => {
-  console.error('Zanaco worker error:', error);
+  logError('worker.error', { error: error instanceof Error ? error.message : String(error) });
 });
 
-console.log('Zanaco worker started, listening for payments...');
+logEvent('worker.started', { queue: 'zanaco-payments' });

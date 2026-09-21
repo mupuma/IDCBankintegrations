@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { PaymentsResponse, ZanacoPreparedRequest, ZanacoServicePayload } from './types';
 
 const ZANACO_BIC = 'ZNCOZMLUXXX';
@@ -70,6 +71,14 @@ function ensureLength(errors: string[], field: string, value: string, max: numbe
   if (value.length > max) errors.push(`${field} must be ${max} characters or less`);
 }
 
+function ensureLengthRange(errors: string[], field: string, value: string, min: number, max: number, required = true) {
+  if (!value) {
+    if (required) errors.push(`${field} is required`);
+    return;
+  }
+  if (value.length < min || value.length > max) errors.push(`${field} must be ${min}-${max} characters`);
+}
+
 function validateExternalRef(errors: string[], value: string, max = 16) {
   if (!value) {
     errors.push('externalTranRef is required');
@@ -79,17 +88,41 @@ function validateExternalRef(errors: string[], value: string, max = 16) {
   if (!ALNUM.test(value)) errors.push('externalTranRef must contain only letters and numbers');
 }
 
+function referenceSuffix(seed: string) {
+  let hash = 5381;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = ((hash << 5) + hash) + seed.charCodeAt(index);
+    hash >>>= 0;
+  }
+  return hash.toString(16).toUpperCase().padStart(8, '0');
+}
+
+function externalTranRefFrom(payment: PaymentsResponse, kind: string) {
+  const base = text(payment.transactionReference || payment.paymentId).replace(/[^a-zA-Z0-9]/g, '');
+  if (kind !== 'DDAC') return base.slice(0, 16);
+
+  if (base.length >= 20) return base.slice(0, 20);
+  const seed = base || JSON.stringify({
+    paymentId: payment.paymentId,
+    vendorId: payment.vendorId,
+    amount: payment.amount,
+    transactionDate: payment.transactionDate,
+  });
+  return `${base}${referenceSuffix(seed)}${referenceSuffix(`${seed}:ddac`)}`.slice(0, 20);
+}
+
 export function buildZanacoRequest(payment: PaymentsResponse, source?: { accountNumber?: string | null; transit?: string | null; name?: string | null }): ZanacoPreparedRequest {
   const kind = transferKind(payment);
   const debitAccount = text(payment.srcAcc) || text(source?.accountNumber);
   const creditAccount = text(payment.accountNumber);
-  const externalTranRef = text(payment.transactionReference || payment.paymentId).replace(/[^a-zA-Z0-9]/g, '').slice(0, kind === 'DDAC' ? 20 : 16);
+  const externalTranRef = externalTranRefFrom(payment, kind);
   const ccy = text(payment.currency || payment.currencyCode || payment.currencyCde || 'ZMW').toUpperCase();
   const valueDate = zanacoValueDate(payment.transactionDate || new Date());
   const paymentDetails = text(payment.remarks || payment.transactionReference || 'IDC payment').slice(0, 105);
   const name = text(payment.accountName || payment.vendorId || 'Beneficiary').slice(0, 105);
-  const address = (addressFrom(payment) || text(payment.bankName) || 'Zambia').slice(0, kind === 'SWIFT' ? 255 : 105);
+  const address = (addressFrom(payment) || text(payment.bankName) || 'Zambia').slice(0, 105);
   const amount = String(amountValue(payment.amount));
+  const duplicatableExternalRef = text(payment.duplicatableExternalRef) || crypto.randomUUID();
 
   if (payment.zanacoOperation === 'masked-disbursement') {
     return {
@@ -169,6 +202,7 @@ export function buildZanacoRequest(payment: PaymentsResponse, source?: { account
         debitAccount,
         creditAccount,
         externalTranRef,
+        duplicatableExternalRef,
         ccy,
         product: 'SWIFT',
         amount,
@@ -228,14 +262,25 @@ export function validateZanacoPreparedRequest(payload: ZanacoPreparedRequest) {
   if ('ccy' in request && !/^[A-Z]{3}$/.test(val('ccy'))) errors.push('ccy must be a three-letter ISO currency code');
   if ('valueDate' in request && !isTodayOrFuture(val('valueDate'))) errors.push('valueDate must be a valid YYYY-MM-DD date that is today or in the future');
   if ('externalTranRef' in request) validateExternalRef(errors, val('externalTranRef'), payload.transferType === 'DDAC' ? 20 : 16);
+  if ('duplicatableExternalRef' in request) ensureLengthRange(errors, 'duplicatableExternalRef', val('duplicatableExternalRef'), 36, 105, false);
   if ('paymentDetails' in request) ensureLength(errors, 'paymentDetails', val('paymentDetails'), 105);
   if ('name' in request) ensureLength(errors, 'name', val('name'), 105);
 
+  if (['INTERNAL', 'RTGS', 'SWIFT', 'MASKED', 'COLLECTION'].includes(String(payload.transferType ?? ''))) {
+    if (val('debitAccount').length !== 13) errors.push('debitAccount must be exactly 13 characters');
+  }
   if (payload.transferType === 'INTERNAL' && val('bicCode') !== ZANACO_BIC) errors.push(`bicCode must be ${ZANACO_BIC} for internal Zanaco transfers`);
   if ((payload.transferType === 'RTGS' || payload.transferType === 'SWIFT') && !val('bicCode')) errors.push('bicCode is required');
   if (payload.transferType === 'DDAC' && !/^\d{6}$/.test(val('sortCode'))) errors.push('sortCode must be 6 digits for DDAC transfers');
+  if (payload.transferType === 'DDAC') {
+    if (val('debitAccount').length !== 13) errors.push('debitAccount must be exactly 13 characters for DDAC transfers');
+    if (val('externalTranRef').length !== 20) errors.push('externalTranRef must be exactly 20 characters for DDAC transfers');
+    ensureLength(errors, 'address', val('address'), 105);
+  }
   if (payload.transferType === 'SWIFT') {
-    ensureLength(errors, 'address', val('address'), 255);
+    ensureLength(errors, 'product', val('product'), 10);
+    ensureLength(errors, 'address', val('address'), 105);
+    ensureLength(errors, 'bicCode', val('bicCode'), 11);
     ensureLength(errors, 'tpin', val('tpin'), 20);
     ensureLength(errors, 'purposeCode', val('purposeCode'), 8);
     ensureLength(errors, 'sectorCode', val('sectorCode'), 8);
