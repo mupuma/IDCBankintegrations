@@ -5,6 +5,7 @@ export type PhysicalAddress = {
 };
 
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
+export type TransactionType = 'RTGS' | 'DDACCT' | 'INT' | 'TT' | 'MOBILE_MONEY';
 
 export type PaymentsResponse = {
     paymentId: any; //To be used by IZB to pull payments onto banking platform
@@ -23,7 +24,7 @@ export type PaymentsResponse = {
     swiftCode: string;
     currencyCde: string;
     transactionDate: Date;
-    transactionType: 'RTGS' | 'DDACCT' | 'INT' | 'TT';
+    transactionType: TransactionType;
     transactionReference: string;
     duplicatableExternalRef?: string;
     srcAcc?: string;

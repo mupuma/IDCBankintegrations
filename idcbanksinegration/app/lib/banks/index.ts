@@ -1,10 +1,9 @@
 import type { PaymentsResponse } from '../../models/dtos';
 import { sendIzbPayment } from './izb';
 import { sendZanacoPayment } from './zanaco';
-import { sendZicbPayment } from './zicb';
 
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
-export const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
+export const BANK_CODES: BankCode[] = ['ZICB'];
 
 export type BankQueueResult = {
   success: boolean;
@@ -26,7 +25,7 @@ export async function sendPaymentToBank(
     case 'ZANACO':
       return sendZanacoPayment(payment, queueId, sourceBank);
     case 'ZICB':
-      return sendZicbPayment(payment, queueId, sourceBank);
+      throw new Error('ZICB legacy dispatch has been removed. Submit ZICB payments through the H2H ledger.');
     default:
       throw new Error(`Unsupported bank code: ${String(bankCode)}`);
   }

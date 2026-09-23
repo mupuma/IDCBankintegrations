@@ -1,13 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { paymentQueue } from './queue';
-import { initDatabase, insertQueueRequest } from './db';
-import type { PaymentJobPayload, PaymentsResponse } from './types';
-import { isZicbServicePayload, validateZicbPayload } from './zicbValidation';
-import { prepareZicbPayload } from './zicbAgent';
-
-initDatabase();
 
 const app = express();
 const port = Number(process.env.PORT || 4001);
@@ -15,89 +8,18 @@ const port = Number(process.env.PORT || 4001);
 app.use(cors());
 app.use(express.json());
 
-app.post('/payments', async (req, res) => {
-  const body = req.body as PaymentJobPayload | unknown;
-  const queueId = (body as { queueId?: unknown })?.queueId as string | undefined
-    || `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-
-  const sourceBank = (body as { sourceBank?: unknown })?.sourceBank as string | undefined;
-
-  if (isZicbServicePayload(body)) {
-    const validationErrors = validateZicbPayload(body);
-    if (validationErrors.length) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid ZICB payload',
-        validationErrors,
-      });
-    }
-    await insertQueueRequest({
-      queueId,
-      bankCode: 'ZICB',
-      payload: body,
-      status: 'queued',
-      attempts: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-
-    const job = await paymentQueue.add('send-zicb-payment', { payment: body, queueId, sourceBank }, {
-      attempts: Number(process.env.JOB_ATTEMPTS || 3),
-      backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
-      removeOnComplete: true,
-      removeOnFail: false,
-    });
-
-    return res.status(202).json({ success: true, jobId: job.id, queue: job.queueName, queueId });
-  }
-
-  const payment = (body as { payment?: unknown })?.payment as PaymentsResponse | undefined;
-  const bankCode = (body as { bankCode?: unknown })?.bankCode;
-
-  if (bankCode !== 'ZICB') {
-    return res.status(400).json({ success: false, error: 'bankCode must be ZICB' });
-  }
-
-  if (!payment || typeof payment !== 'object') {
-    return res.status(400).json({ success: false, error: 'payment object is required' });
-  }
-
-  try {
-    prepareZicbPayload(payment);
-  } catch (error) {
-    const validationErrors = (error as Error & { validationErrors?: string[] }).validationErrors;
-    return res.status(400).json({
-      success: false,
-      error: 'Invalid ZICB payment',
-      validationErrors: validationErrors ?? [String(error)],
-    });
-  }
-
-  await insertQueueRequest({
-    queueId,
-    bankCode: 'ZICB',
-    payload: body,
-    status: 'queued',
-    attempts: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
+app.post('/payments', (_req, res) => {
+  res.status(410).json({
+    success: false,
+    error: 'ZICB legacy payment API has been removed. Submit payments through the portal H2H ledger.',
   });
-
-  const job = await paymentQueue.add('send-zicb-payment', { payment, queueId, sourceBank }, {
-    attempts: Number(process.env.JOB_ATTEMPTS || 3),
-    backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
-    removeOnComplete: true,
-    removeOnFail: false,
-  });
-
-  res.status(202).json({ success: true, jobId: job.id, queue: job.queueName, queueId });
 });
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'zicb-agent-service' });
+  res.json({ status: 'disabled', service: 'zicb-legacy-agent-api', replacement: 'zicb-h2h-agent' });
 });
 
 app.listen(port, () => {
-  console.log(`ZICB agent service running on http://localhost:${port}`);
-  console.log('POST /payments with either { bankCode: "ZICB", payment: {...} } or direct ZICB payload { service, request }');
+  console.log(`ZICB legacy payment API is disabled on http://localhost:${port}`);
+  console.log('Use npm run dev with ZICB_H2H_ENABLED=true to start the H2H agent.');
 });

@@ -6,16 +6,16 @@ import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
-import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPayload } from '@/app/lib/banks/payloadBuilders';
+import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPayload, validateZicbPayload } from '@/app/lib/banks/payloadBuilders';
 
-const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
-const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
+const BANK_CODES: BankCode[] = ['ZICB'];
+const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'MOBILE_MONEY'];
 const BANK_TRANSACTION_TYPES: Record<BankCode, PaymentsResponse['transactionType'][]> = {
-  IZB: ['RTGS', 'DDACCT', 'INT', 'TT'],
-  ZANACO: ['RTGS', 'DDACCT', 'INT', 'TT'],
-  ZICB: ['RTGS', 'DDACCT', 'INT'],
+  IZB: [],
+  ZANACO: [],
+  ZICB: ['RTGS', 'DDACCT', 'INT', 'MOBILE_MONEY'],
 };
-const BANKS_WITH_BULK_UPLOAD = new Set<BankCode>(['ZANACO']);
+const BANKS_WITH_BULK_UPLOAD = new Set<BankCode>();
 const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
 const BANK_PROCESSED_STATUSES = new Set(['success', 'paid']);
 const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || bank === 'ZICB';
@@ -173,6 +173,7 @@ const BANK_VALIDATION_CONFIG: Record<BankCode, BankValidationRule> = {
       INT: ['transactionReference'],
       TT: ['swiftCode', 'transactionDate'],
       DDACCT: ['sortCode', 'transactionReference'],
+      MOBILE_MONEY: ['phoneNumber', 'transactionReference'],
     },
   },
 };
@@ -341,14 +342,34 @@ function getEffectiveTransactionType(payment: EnrichedPayment, transactionOverri
   return transactionOverrides[payment.paymentId] ?? payment.transactionType;
 }
 
+function isMobileMoney(transactionType: PaymentsResponse['transactionType']) {
+  return String(transactionType).toUpperCase() === 'MOBILE_MONEY';
+}
+
 function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transactionType: PaymentsResponse['transactionType'], h2h = false, scale = 2): ValidationResult {
-  if (bankCode === 'ZICB' && h2h) {
+  if (bankCode === 'ZICB' && h2h && !isMobileMoney(transactionType)) {
     const errors = paymentErrors({ ...payment, transactionType }, scale);
     if (!payment.bankDetailsFound) errors.push('Vendor bank details are not available for this payment');
     return { valid: errors.length === 0, errors };
   }
   const errors: string[] = [];
   const rule = BANK_VALIDATION_CONFIG[bankCode];
+
+  if (bankCode === 'ZICB' && isMobileMoney(transactionType)) {
+    for (const field of ['vendorId', 'amount', 'currency', 'transactionReference', 'transactionDate', 'transactionType'] as Array<keyof PaymentsResponse>) {
+      const value = (payment as any)[field];
+      if (value === undefined || value === null || String(value).trim() === '') {
+        errors.push(`Missing required ${field} for ZICB mobile money`);
+      }
+    }
+    if (!payment.phoneNumber || !String(payment.phoneNumber).trim()) {
+      errors.push('Beneficiary mobile number is required for mobile money payments.');
+    }
+    if (!payment.remarks && !payment.transactionReference) {
+      errors.push('Payment remarks or transaction reference is required for mobile money payments.');
+    }
+    return { valid: errors.length === 0, errors };
+  }
 
   rule.required.forEach((field: keyof PaymentsResponse) => {
     const value = (payment as any)[field];
@@ -437,7 +458,7 @@ export default function PaymentQueueDashboard() {
   const [selectedQueues, setSelectedQueues] = useState<Record<string, BankCode | ''>>({});
   const [transactionOverrides, setTransactionOverrides] = useState<Record<string, PaymentsResponse['transactionType']>>({});
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Record<string, boolean>>({});
-  const [bulkBank, setBulkBank] = useState<BankCode | ''>('');
+  const [bulkBank, setBulkBank] = useState<BankCode | ''>('ZICB');
   const [bulkTransactionType, setBulkTransactionType] = useState<PaymentsResponse['transactionType']>('RTGS');
   const [bulkSource, setBulkSource] = useState('');
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
@@ -598,10 +619,16 @@ export default function PaymentQueueDashboard() {
         ...payment,
         transactionDate: payment.transactionDate ? new Date(payment.transactionDate).toISOString() : '',
       })) as EnrichedPayment[];
+      const defaultQueues = Object.fromEntries(rows.map((payment) => [payment.paymentId, 'ZICB' as BankCode]));
+      const defaultTypes = Object.fromEntries(
+        rows
+          .filter((payment) => !BANK_TRANSACTION_TYPES.ZICB.includes(payment.transactionType))
+          .map((payment) => [payment.paymentId, BANK_TRANSACTION_TYPES.ZICB[0]]),
+      ) as Record<string, PaymentsResponse['transactionType']>;
 
       setPayments(rows);
-      setSelectedQueues({});
-      setTransactionOverrides({});
+      setSelectedQueues(defaultQueues);
+      setTransactionOverrides(defaultTypes);
       setSelectedPaymentIds({});
       setValidationResults({});
       await refreshQueueItems();
@@ -669,6 +696,41 @@ export default function PaymentQueueDashboard() {
 
     const payload = buildZanacoPayload({ ...payment, transactionType }, transactionType, source);
     errors.push(...validateZanacoPayload(payload));
+
+    return {
+      valid: errors.length === 0,
+      errors,
+    };
+  };
+
+  const validateZicbSelection = (
+    payment: EnrichedPayment,
+    transactionType: PaymentsResponse['transactionType'],
+  ): ValidationResult => {
+    const source = selectedSourceFor(payment.paymentId);
+    const errors: string[] = [];
+
+    if (!source) {
+      errors.push('Source account is required for ZICB payments.');
+      return { valid: false, errors };
+    }
+    if (source.detailsComplete === false) {
+      errors.push('Source account details are incomplete.');
+    }
+
+    const base = validatePayment(
+      payment,
+      'ZICB',
+      transactionType,
+      h2hConfig.enabled,
+      h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2,
+    );
+    errors.push(...base.errors);
+
+    if (!h2hConfig.enabled || isMobileMoney(transactionType)) {
+      const payload = buildZicbPayload({ ...payment, transactionType }, transactionType, source);
+      errors.push(...validateZicbPayload(payload).map(formatZicbValidationIssue));
+    }
 
     return {
       valid: errors.length === 0,
@@ -765,7 +827,9 @@ export default function PaymentQueueDashboard() {
     const effectivePayment = { ...payment, transactionType: effectiveType };
     const result = bankCode === 'ZANACO'
       ? validateZanacoSelection(effectivePayment, effectiveType)
-      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
+      : bankCode === 'ZICB'
+        ? validateZicbSelection(effectivePayment, effectiveType)
+        : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     setValidationResults((prev) => ({ ...prev, [payment.paymentId]: result }));
     setMessage(
       result.valid
@@ -794,7 +858,9 @@ export default function PaymentQueueDashboard() {
     const effectivePayment = { ...payment, transactionType: effectiveType };
     const validation = bankCode === 'ZANACO'
       ? validateZanacoSelection(effectivePayment, effectiveType)
-      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
+      : bankCode === 'ZICB'
+        ? validateZicbSelection(effectivePayment, effectiveType)
+        : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
     if (!validation.valid) {
       setValidationResults((prev) => ({ ...prev, [payment.paymentId]: validation }));
       setMessage(`Payment cannot be submitted: ${validation.errors.join('; ')}`);
@@ -919,7 +985,9 @@ export default function PaymentQueueDashboard() {
       const effectivePayment = { ...payment, transactionType };
       const validation = bankCode === 'ZANACO'
         ? validateZanacoSelection(effectivePayment, transactionType)
-        : validatePayment(effectivePayment, bankCode, transactionType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
+        : bankCode === 'ZICB'
+          ? validateZicbSelection(effectivePayment, transactionType)
+          : validatePayment(effectivePayment, bankCode, transactionType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
       nextValidationResults[payment.paymentId] = validation;
       if (!validation.valid) {
         validationErrors.push(`${payment.transactionReference || payment.paymentId}: ${validation.errors.join('; ')}`);
@@ -1124,7 +1192,7 @@ export default function PaymentQueueDashboard() {
               onChange={(event) => setBulkSource(event.target.value)}
               className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
             >
-              <option value="">No bulk source</option>
+              <option value="">Select source</option>
               {sourceBanks.map((b) => (
                 <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>
                   {b.bank} - {b.name || 'Unnamed'}

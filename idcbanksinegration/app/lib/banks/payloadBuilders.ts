@@ -26,6 +26,10 @@ function normalizeString(value: unknown) {
   return '';
 }
 
+function normalizeMobileNumber(value: unknown) {
+  return normalizeString(value).replace(/[^\d+]/g, '');
+}
+
 function referenceSuffix(seed: string) {
   let hash = 5381;
   for (let index = 0; index < seed.length; index += 1) {
@@ -216,7 +220,9 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
 
 export function buildZicbPayload(payment: PaymentsResponse, transactionType: PaymentsResponse['transactionType'], source?: any) {
   const payDate = formatDate(payment.transactionDate);
-  const destAcc = payment.accountNumber;
+  const normalizedTransactionType = String(transactionType || '').toUpperCase();
+  const mobileNumber = normalizeMobileNumber(payment.phoneNumber || payment.accountNumber);
+  const destAcc = normalizedTransactionType === 'MOBILE_MONEY' ? mobileNumber : payment.accountNumber;
   const destBranch = payment.branchCode || '';
   const transferRef = payment.transactionReference || '';
   const payCurrency = payment.currency || payment.currencyCode || 'ZMW';
@@ -260,7 +266,11 @@ export function buildZicbPayload(payment: PaymentsResponse, transactionType: Pay
       destCurrency: payCurrency,
       srcCurrency: payCurrency,
       payCurrency,
-      transferTyp: transactionType === 'DDACCT' ? 'DDACC' : transactionType,
+      transferTyp: normalizedTransactionType === 'DDACCT'
+        ? 'DDACC'
+        : normalizedTransactionType === 'MOBILE_MONEY'
+          ? (process.env.ZICB_MOBILE_MONEY_TRANSFER_TYPE || 'MOBILE_MONEY')
+          : normalizedTransactionType,
       destBranch,
       srcBranch: baseRequest.srcBranch,
       bankName: baseRequest.bankName,
@@ -272,7 +282,7 @@ export function buildZicbPayload(payment: PaymentsResponse, transactionType: Pay
       senderEmail: baseRequest.email,
       sendermobileno: baseRequest.phoneNumber,
       beneEmail: baseRequest.email,
-      beneMobileNo: baseRequest.phoneNumber,
+      beneMobileNo: normalizedTransactionType === 'MOBILE_MONEY' ? mobileNumber : baseRequest.phoneNumber,
       senderAddress1,
       senderAddress2,
       senderAddress3,
@@ -307,13 +317,19 @@ export function validateZicbPayload(payload: { service: string; request: Record<
   }
 
   if (payload.service !== 'BNK9900') return ['service must be ZB8628 or BNK9900'];
-  requireFields([
+  const transferTyp = value('transferTyp').toUpperCase();
+  const mobileTransferType = String(process.env.ZICB_MOBILE_MONEY_TRANSFER_TYPE || 'MOBILE_MONEY').toUpperCase();
+  const commonFields = [
     'userName', 'customerId', 'ipAddress', 'srcAcc', 'destAcc', 'destCurrency',
-    'srcCurrency', 'payCurrency', 'transferTyp', 'destBranch', 'srcBranch',
-    'bankName', 'sortCode', 'remarks', 'payDate', 'beneName', 'senderName',
-    'senderAddress1', 'senderAddress2', 'senderAddress3',
-  ]);
-  if (!['RTGS', 'DDACC'].includes(value('transferTyp').toUpperCase())) errors.push('request.transferTyp must be RTGS or DDACC');
+    'srcCurrency', 'payCurrency', 'transferTyp', 'srcBranch', 'remarks',
+    'payDate', 'senderName',
+  ];
+  const bankTransferFields = ['bankName', 'sortCode', 'beneName', 'senderAddress1', 'senderAddress2', 'senderAddress3'];
+  requireFields(transferTyp === mobileTransferType ? commonFields : [...commonFields, 'destBranch', ...bankTransferFields]);
+  if (!['RTGS', 'DDACC', mobileTransferType].includes(transferTyp)) {
+    errors.push(`request.transferTyp must be RTGS, DDACC or ${mobileTransferType}`);
+  }
+  if (transferTyp === mobileTransferType && !value('beneMobileNo')) errors.push('request.beneMobileNo is required for mobile money');
   validateDate();
   for (const field of ['destCurrency', 'srcCurrency', 'payCurrency']) {
     if (!/^[A-Z]{3}$/.test(value(field).toUpperCase())) errors.push(`request.${field} must be a three-letter currency code`);

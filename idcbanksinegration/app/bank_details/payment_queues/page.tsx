@@ -6,7 +6,7 @@ import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 
-const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
+const BANK_CODES: BankCode[] = ['ZICB'];
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' ? value as Record<string, any> : {};

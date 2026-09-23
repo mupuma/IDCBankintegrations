@@ -232,7 +232,7 @@ export default function UsersPage() {
           </div>
           <button
             type="submit"
-            className="mt-4 rounded-lg bg-[#f26522] px-4 py-2 text-sm font-semibold text-white hover:bg-[#e05a1c]"
+            className="mt-4 rounded-lg bg-[#0b2d5c] px-4 py-2 text-sm font-semibold text-white hover:bg-[#082348]"
           >
             Create user
           </button>

@@ -41,24 +41,32 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-[minmax(0,560px)_1fr]">
+    <div className="flex min-h-screen flex-col bg-white lg:grid lg:grid-cols-[minmax(420px,36vw)_minmax(0,1fr)]">
       {/* ── Left: login form ── */}
-      <div className="relative z-10 order-2 flex flex-1 flex-col justify-center bg-white py-12 lg:order-none lg:py-0">
+      <div className="relative z-10 order-2 flex flex-1 flex-col justify-center bg-white px-6 py-10 lg:order-none lg:px-0 lg:py-0">
         {/* Soft slanted edge overlapping the image */}
         <div
-          className="pointer-events-none absolute -right-8 top-0 hidden h-full w-16 bg-white lg:block"
-          style={{ transform: "skewX(-3.5deg)" }}
+          className="pointer-events-none absolute -right-14 top-0 hidden h-full w-28 bg-white lg:block"
+          style={{ transform: "skewX(-4deg)" }}
           aria-hidden
         />
 
-        <div className="relative w-full max-w-sm px-10 sm:px-14 lg:ml-24 lg:px-0 xl:ml-32 2xl:ml-40">
-          <div className="mb-10">
-            <div className="mb-6 h-1 w-10 rounded-full bg-[#f26522]" />
+        <div className="relative mx-auto flex min-h-[540px] w-full max-w-md flex-col justify-center lg:ml-auto lg:mr-[-4px] lg:min-h-[640px] lg:max-w-[410px] xl:mr-2">
+          <div className="mb-9">
+            <Image
+              src="/infratel.png"
+              alt="Infratel"
+              width={148}
+              height={44}
+              priority
+              className="mb-7 h-auto w-[148px]"
+            />
+            <div className="mb-5 h-1 w-10 rounded-full bg-[#0b2d5c]" />
             <h1 className="text-[1.75rem] font-semibold leading-snug tracking-tight text-[#1a3d2e]">
               Welcome back
             </h1>
             <p className="mt-2 text-[0.9375rem] leading-relaxed text-slate-500">
-              Sign in to the IDC Payments Portal to manage vendor details and
+              Sign in to the Infratel Payments Portal to manage vendor details and
               payment operations.
             </p>
           </div>
@@ -139,7 +147,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-lg bg-[#f26522] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-[#f26522]/20 transition hover:bg-[#e05a1c] hover:shadow-lg hover:shadow-[#f26522]/25 focus:outline-none focus:ring-2 focus:ring-[#f26522]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
+              className="w-full rounded-lg bg-[#0b2d5c] px-4 py-3 text-sm font-semibold text-white shadow-md shadow-[#0b2d5c]/20 transition hover:bg-[#082348] hover:shadow-lg hover:shadow-[#0b2d5c]/25 focus:outline-none focus:ring-2 focus:ring-[#0b2d5c]/40 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {loading ? (
                 <span className="inline-flex items-center justify-center gap-2">
@@ -155,20 +163,21 @@ export default function LoginPage() {
             </button>
           </form>
 
-          <p className="mt-12 text-xs text-slate-400">
-            © {new Date().getFullYear()} Industrial Development Corporation
+          <p className="mt-10 text-xs text-slate-400">
+            © {new Date().getFullYear()} Infratel Corporation
           </p>
         </div>
       </div>
 
       {/* ── Right: hero image ── */}
-      <div className="relative order-first h-48 sm:h-56 lg:order-none lg:min-h-screen">
+      <div className="relative order-first h-52 overflow-hidden bg-[#edf4f7] sm:h-64 lg:order-none lg:min-h-screen">
+        <div className="absolute inset-y-0 left-0 z-10 hidden w-20 bg-gradient-to-r from-white/75 to-transparent lg:block" aria-hidden />
         <Image
-          src="/login.jpeg"
-          alt="IDC Industrial Development Corporation"
+          src="/wall2.jpeg"
+          alt="Infratel Corporation"
           fill
           priority
-          className="object-cover object-[56%_center] lg:object-[56%_center]"
+          className="object-cover object-[58%_center] lg:object-contain lg:object-center"
           sizes="(max-width: 1024px) 100vw, 60vw"
         />
       </div>

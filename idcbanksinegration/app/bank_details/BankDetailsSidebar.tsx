@@ -142,7 +142,7 @@ export default function BankDetailsSidebar() {
         <div className="flex items-center gap-3">
           <div>
             <h2 className="text-sm font-bold leading-tight text-slate-900">
-              <img src="/idc_logo.png" alt="IDC Logo" className="h-10 w-auto object-contain" />
+              <img src="/infratel.png" alt="Infratel Logo" className="h-10 w-auto object-contain" />
             </h2>
             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
               Payments Portal

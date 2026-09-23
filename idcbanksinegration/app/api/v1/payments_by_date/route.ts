@@ -85,6 +85,23 @@ function trimString(value: unknown) {
   return String(value ?? '').trim();
 }
 
+function truncateForColumn(value: unknown, maxLength: number) {
+  return trimString(value).slice(0, maxLength);
+}
+
+function seedPhoneNumber(value: unknown) {
+  const raw = trimString(value);
+  if (!raw) return '';
+
+  const [firstNumber] = raw
+    .split(/[\/,;|]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const normalized = (firstNumber || raw).replace(/[^\d+]/g, '');
+  return truncateForColumn(normalized, 20);
+}
+
 function parsePhysicalAddress(value: unknown): PaymentsResponse['physicalAddress'] {
   const empty = { streetName: '', town: '', plotNo: '' };
   if (!value) return empty;
@@ -110,9 +127,9 @@ function parsePhysicalAddress(value: unknown): PaymentsResponse['physicalAddress
 
 function buildAddressFromApven(vendor: SageRawRecord | undefined): PaymentsResponse['physicalAddress'] {
   return {
-    streetName: trimString(getRawField(vendor, ['textstre1', 'TEXTSTRE1'], '')),
-    town: trimString(getRawField(vendor, ['namecity', 'NAMECITY'], '')),
-    plotNo: trimString(getRawField(vendor, ['textstre2', 'TEXTSTRE2'], '')),
+    streetName: truncateForColumn(getRawField(vendor, ['textstre1', 'TEXTSTRE1'], ''), 255),
+    town: truncateForColumn(getRawField(vendor, ['namecity', 'NAMECITY'], ''), 255),
+    plotNo: truncateForColumn(getRawField(vendor, ['textstre2', 'TEXTSTRE2'], ''), 255),
   };
 }
 
@@ -191,9 +208,9 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
     const vendorId = trimString(getRawField(vendor, ['vendorid', 'VENDORID'], ''));
     if (!vendorId || existingVenbanks.has(vendorId)) continue;
 
-    const vendorName = trimString(getRawField(vendor, ['vendname', 'VENDNAME'], ''));
+    const vendorName = truncateForColumn(getRawField(vendor, ['vendname', 'VENDNAME'], ''), 255);
     await Venbank.create({
-      vendorid: vendorId,
+      vendorid: truncateForColumn(vendorId, 12),
       accven: '',
       accname: vendorName,
       bankid: '',
@@ -201,9 +218,9 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
       brnch: '',
       swiftcde: '',
       physicalAddress: buildAddressFromApven(vendor),
-      countryOfOrigin: trimString(getRawField(vendor, ['codectry', 'CODECTRY'], '')),
-      email: trimString(getRawField(vendor, ['email1', 'EMAIL1'], '')),
-      phoneNumber: trimString(getRawField(vendor, ['textphon1', 'TEXTPHON1'], '')),
+      countryOfOrigin: truncateForColumn(getRawField(vendor, ['codectry', 'CODECTRY'], ''), 100),
+      email: truncateForColumn(getRawField(vendor, ['email1', 'EMAIL1'], ''), 255),
+      phoneNumber: seedPhoneNumber(getRawField(vendor, ['textphon1', 'TEXTPHON1'], '')),
     });
     seeded += 1;
   }

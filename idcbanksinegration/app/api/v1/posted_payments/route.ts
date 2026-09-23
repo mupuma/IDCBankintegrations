@@ -77,7 +77,14 @@ export async function POST(request: NextRequest) {
 
   let paymentToQueue = payment;
 
-  // FIX: ZICB source bank validation with TRIM
+  if (bankCode === 'ZICB' && !h2hEnabled()) {
+    return NextResponse.json(
+      { success: false, error: 'ZICB legacy dispatch has been removed. Enable ZICB_H2H_ENABLED=true.' },
+      { status: 503 },
+    );
+  }
+
+  // ZICB must go through the durable H2H ledger. Never fall back to legacy BNK9900 dispatch.
   if (bankCode === 'ZICB' && h2hEnabled()) {
     if (!sourceBankCode) return NextResponse.json({ error: 'A source account is required' }, { status: 400 });
     try {

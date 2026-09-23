@@ -5,8 +5,8 @@
   "scripts": {
     "test": "node --test test/*.test.cjs",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "dev:api": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "dev:worker": "ts-node-dev --respawn --transpile-only src/worker.ts",
+    "dev:api": "node -e \"console.error('Legacy ZICB API sender has been removed. Use npm run dev with ZICB_H2H_ENABLED=true.'); process.exit(1)\"",
+    "dev:worker": "node -e \"console.error('Legacy ZICB BullMQ worker has been removed. Use npm run dev with ZICB_H2H_ENABLED=true.'); process.exit(1)\"",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "lint": "echo 'No lint configured'"

@@ -4,7 +4,8 @@ exports.isZicbServicePayload = isZicbServicePayload;
 exports.validateZicbPayload = validateZicbPayload;
 exports.assertValidZicbPayload = assertValidZicbPayload;
 const SUPPORTED_SERVICES = new Set(['ZB8628', 'BNK9900']);
-const SUPPORTED_TRANSFER_TYPES = new Set(['RTGS', 'DDACC']);
+const MOBILE_MONEY_TRANSFER_TYPE = (process.env.ZICB_MOBILE_MONEY_TRANSFER_TYPE || 'MOBILE_MONEY').trim().toUpperCase();
+const SUPPORTED_TRANSFER_TYPES = new Set(['RTGS', 'DDACC', MOBILE_MONEY_TRANSFER_TYPE]);
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const CURRENCY_PATTERN = /^[A-Z]{3}$/;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -52,15 +53,22 @@ function validateZicbPayload(payload) {
         validateCurrency(request.payCurrency, 'payCurrency', errors);
         return errors;
     }
-    requireFields(request, [
-        'userName', 'customerId', 'ipAddress', 'srcAcc', 'destAcc', 'destCurrency',
-        'srcCurrency', 'payCurrency', 'transferTyp', 'destBranch', 'srcBranch',
-        'bankName', 'sortCode', 'remarks', 'payDate', 'beneName', 'senderName',
-        'senderAddress1', 'senderAddress2', 'senderAddress3',
-    ], errors);
     const transferType = text(request.transferTyp).toUpperCase();
+    const commonFields = [
+        'userName', 'customerId', 'ipAddress', 'srcAcc', 'destAcc', 'destCurrency',
+        'srcCurrency', 'payCurrency', 'transferTyp', 'srcBranch', 'remarks', 'payDate',
+        'senderName',
+    ];
+    const bankTransferFields = [
+        'destBranch', 'bankName', 'sortCode', 'beneName',
+        'senderAddress1', 'senderAddress2', 'senderAddress3',
+    ];
+    requireFields(request, transferType === MOBILE_MONEY_TRANSFER_TYPE ? commonFields : [...commonFields, ...bankTransferFields], errors);
     if (!SUPPORTED_TRANSFER_TYPES.has(transferType)) {
-        errors.push('request.transferTyp must be RTGS or DDACC');
+        errors.push(`request.transferTyp must be RTGS, DDACC or ${MOBILE_MONEY_TRANSFER_TYPE}`);
+    }
+    if (transferType === MOBILE_MONEY_TRANSFER_TYPE && !text(request.beneMobileNo)) {
+        errors.push('request.beneMobileNo is required for mobile money');
     }
     validateDate(request.payDate, 'payDate', errors);
     for (const field of ['destCurrency', 'srcCurrency', 'payCurrency']) {
