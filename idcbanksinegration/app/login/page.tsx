@@ -2,10 +2,8 @@
 
 import { useState } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -31,8 +29,7 @@ export default function LoginPage() {
         return;
       }
 
-      router.push("/bank_details");
-      router.refresh();
+      window.location.assign("/bank_details");
     } catch {
       setError("Unable to login. Please try again.");
     } finally {
