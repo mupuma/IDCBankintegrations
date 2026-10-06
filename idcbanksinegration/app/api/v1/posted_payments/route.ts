@@ -779,7 +779,7 @@ export async function GET(request: NextRequest) {
   await connectDatabase();
 
   const portalPushBanks = BANK_CODES.filter(
-    (code) => getBankIntegration(code).dispatchStrategy === 'portal-push',
+    (code) => code !== 'IZB' && getBankIntegration(code).dispatchStrategy === 'portal-push',
   );
 
   if (portalPushBanks.length) {

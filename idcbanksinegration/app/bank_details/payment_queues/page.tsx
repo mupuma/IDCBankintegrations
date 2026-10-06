@@ -145,7 +145,7 @@ export default function PaymentQueuesPage() {
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
-          {(['queued', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
+          {(['queued', 'pulled', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
             <div key={status} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">{status}</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">{statusCounts[status] ?? 0}</p>

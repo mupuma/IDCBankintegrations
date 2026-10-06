@@ -1,0 +1,29 @@
+[Unit]
+Description=IDC IZB Agent Service
+Documentation=README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/AppFiles/IDCBankintegrations/microservices/izb-agent-service
+Environment=NODE_ENV=production
+EnvironmentFile=-/AppFiles/IDCBankintegrations/microservices/izb-agent-service/.env
+ExecStart=/usr/bin/node /AppFiles/IDCBankintegrations/microservices/izb-agent-service/dist/index.js
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+SyslogIdentifier=izb-agent
+
+# Basic hardening. Keep write access for the local lowdb file and logs if used.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/AppFiles/IDCBankintegrations/microservices/izb-agent-service
+
+[Install]
+WantedBy=multi-user.target

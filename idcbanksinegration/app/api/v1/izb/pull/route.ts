@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
     try {
       await PaymentQueueRequest.update(
         {
-          status: 'processing',
+          status: 'pulled',
           lockedBy: 'izb-pull',
           lockedAt: new Date(),
           claimedAt: new Date(),

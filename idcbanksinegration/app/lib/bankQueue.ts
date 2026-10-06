@@ -4,7 +4,7 @@ import { connectDatabase } from './db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
-export type QueueStatus = 'queued' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
+export type QueueStatus = 'queued' | 'pulled' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
 export interface BankQueueItem {
   id: string;
@@ -75,6 +75,16 @@ export async function processQueueItem(queueId: string) {
   const item = queue.get(queueId);
   if (!item) {
     return null;
+  }
+
+  if (item.bankCode === 'IZB') {
+    item.status = 'queued';
+    item.lastError = undefined;
+    item.updatedAt = new Date().toISOString();
+    queue.set(queueId, item);
+    await persistQueueRecord(item);
+    terminalLog('queue.process.skipped_izb_pull_only', { queueId, paymentId: item.paymentId });
+    return item;
   }
 
   if (processing.has(queueId)) {
@@ -197,6 +207,11 @@ export async function ensureQueueItemProcessing(queueId: string) {
 }
 
 export async function rehydrateAndProcessQueueRecord(record: PaymentQueueRequest) {
+  if (record.bankCode === 'IZB') {
+    terminalLog('queue.rehydrate.skipped_izb_pull_only', { queueId: record.queueId, paymentId: record.paymentId });
+    return null;
+  }
+
   let payment: PaymentsResponse;
   try {
     payment = JSON.parse(record.paymentPayload) as PaymentsResponse;
