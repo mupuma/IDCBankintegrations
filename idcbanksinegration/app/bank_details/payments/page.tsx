@@ -1334,7 +1334,7 @@ export default function PaymentQueueDashboard() {
                             {queueStatus.lastError ? <div className="mt-1 text-rose-700">Error: {queueStatus.lastError}</div> : null}
                           </div>
                         ) : null}
-                        {!validation?.valid ? (
+                        {validation && !validation.valid ? (
                           <div className="mt-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700">
                             <div className="font-semibold mb-1">Validation issues:</div>
                             <ul className="list-disc space-y-1 pl-4">

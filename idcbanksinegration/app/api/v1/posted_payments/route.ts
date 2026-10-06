@@ -20,7 +20,6 @@ import { createHash } from 'node:crypto';
 import { PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
 import { resolveSourceBank } from '../../../lib/banks/zicb';
-import { IzbPayment } from '../../../models/internal/IzbPayment';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 import { buildZanacoPayload, buildZicbPayload, validateZanacoPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
@@ -318,24 +317,6 @@ export async function POST(request: NextRequest) {
       });
     }
     throw error;
-  }
-
-  // If the payment is intended for IZB, also insert into the intermediary izB pending table
-  try {
-    if (bankCode === 'IZB') {
-      const paymentDateStr = (payment as any)?.transactionDate || (payment as any)?.paymentDate || null;
-      const paymentDate = paymentDateStr ? new Date(paymentDateStr) : null;
-      await IzbPayment.create({
-        paymentId,
-        paymentDate,
-        sourceBank: sourceBankCode ?? 'IZB',
-        paymentPayload: JSON.stringify(payment),
-        status: 'queued',
-        attempts: 0,
-      });
-    }
-  } catch (err) {
-    console.error('Failed to insert IZB intermediary record', err);
   }
 
   const queueItem = enqueuePayment(bankCode, paymentToQueue, queueId, sourceBankCode);

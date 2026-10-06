@@ -1,5 +1,4 @@
 import type { PaymentsResponse } from '../../models/dtos';
-import { sendIzbPayment } from './izb';
 import { sendZanacoPayment } from './zanaco';
 import { sendZicbPayment } from './zicb';
 
@@ -22,7 +21,12 @@ export async function sendPaymentToBank(
 ): Promise<BankQueueResult> {
   switch (bankCode) {
     case 'IZB':
-      return sendIzbPayment(payment, sourceBank);
+      return {
+        success: true,
+        status: 202,
+        deferred: true,
+        data: { message: 'IZB is pull-only. Payment remains queued until IZB pulls it.' },
+      };
     case 'ZANACO':
       return sendZanacoPayment(payment, queueId, sourceBank);
     case 'ZICB':

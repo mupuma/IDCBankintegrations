@@ -1,16 +1,4 @@
-import type { JobResult, PaymentsResponse, IzbServicePayload } from './types';
-
-const IZB_BANK_API_URL = process.env.IZB_BANK_API_URL;
-
-function isIzbServicePayload(value: unknown): value is IzbServicePayload {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    typeof (value as any).service === 'string' &&
-    typeof (value as any).request === 'object' &&
-    (value as any).request !== null
-  );
-}
+import type { PaymentsResponse, IzbServicePayload } from './types';
 
 function formatDate(value?: string | Date) {
   if (!value) return new Date().toISOString().slice(0, 10);
@@ -84,35 +72,4 @@ export function buildIzbPayload(payment: PaymentsResponse, transactionType?: str
   };
 }
 
-async function postToIzb(payload: unknown): Promise<JobResult> {
-  if (!IZB_BANK_API_URL) {
-    throw new Error('Missing IZB_BANK_API_URL environment variable');
-  }
-
-  const response = await fetch(IZB_BANK_API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-
-  const text = await response.text();
-  let data: unknown;
-  try { data = text ? JSON.parse(text) : undefined; } catch { data = text; }
-
-  return {
-    success: response.ok,
-    status: response.status,
-    data,
-    error: response.ok ? undefined : `IZB request failed with status ${response.status}`,
-  };
-}
-
-export async function sendIzbPayment(payment: PaymentsResponse | IzbServicePayload): Promise<JobResult> {
-  const payload = isIzbServicePayload(payment)
-    ? { service: payment.service, request: payment.request }
-    : buildIzbPayload(payment, payment.transactionType);
-
-  return postToIzb(payload);
-}
-
-export default { sendIzbPayment, buildIzbPayload };
+export default { buildIzbPayload };

@@ -96,6 +96,7 @@ app.post('/api/v1/payments/by_date', async (req, res) => {
         const url = new URL(`${APP_API_URL}/api/v1/izb/pull`);
         url.searchParams.set('from', from);
         url.searchParams.set('to', to);
+        url.searchParams.set('markPulled', 'true');
         const resp = await fetch(url.toString(), {
             method: 'GET',
             headers: {

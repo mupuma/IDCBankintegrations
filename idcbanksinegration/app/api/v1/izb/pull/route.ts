@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDatabase } from '@/app/lib/db';
-import { IzbPayment } from '@/app/models/internal/IzbPayment';
-import { Op } from 'sequelize';
+import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -9,6 +8,40 @@ function parseDateParam(value: string | null) {
   if (!value) return null;
   const d = new Date(value);
   return isNaN(d.getTime()) ? null : d;
+}
+
+function parsePaymentPayload(value: string) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function paymentDate(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const raw = record.transactionDate ?? record.paymentDate;
+  if (!raw) return null;
+
+  const date = new Date(String(raw));
+  return isNaN(date.getTime()) ? null : date;
+}
+
+function isWithinDateRange(value: unknown, fromDate: Date | null, toDate: Date | null) {
+  if (!fromDate && !toDate) return true;
+
+  const date = paymentDate(value);
+  if (!date) return false;
+
+  if (fromDate && date < fromDate) return false;
+  if (toDate) {
+    const end = new Date(toDate);
+    end.setHours(23, 59, 59, 999);
+    if (date > end) return false;
+  }
+
+  return true;
 }
 
 export async function GET(request: NextRequest) {
@@ -30,43 +63,46 @@ export async function GET(request: NextRequest) {
 
   await connectDatabase();
 
-  const where: any = { status: 'queued' };
-  if (fromDate || toDate) {
-    where.paymentDate = {};
-    if (fromDate) where.paymentDate[Op.gte] = fromDate;
-    if (toDate) {
-      const end = new Date(toDate);
-      end.setHours(23, 59, 59, 999);
-      where.paymentDate[Op.lte] = end;
-    }
-  }
-
-  const items = await IzbPayment.findAll({
-    where,
-    order: [['payment_date', 'ASC']],
+  const rows = await PaymentQueueRequest.findAll({
+    where: {
+      bankCode: 'IZB',
+      status: 'queued',
+    },
+    order: [['created_at', 'ASC']],
   });
 
-  const results = items.map((i) => ({
-    id: i.id,
-    paymentId: i.paymentId,
-    paymentDate: i.paymentDate,
-    payment: (() => {
-      try { return JSON.parse(i.paymentPayload); } catch { return i.paymentPayload; }
-    })(),
-  }));
+  const items = rows
+    .map((row) => {
+      const payment = parsePaymentPayload(row.paymentPayload);
+      return {
+        id: row.id,
+        queueId: row.queueId,
+        paymentId: row.paymentId,
+        paymentDate: paymentDate(payment),
+        payment,
+      };
+    })
+    .filter((item) => isWithinDateRange(item.payment, fromDate, toDate));
 
   if (markPulled && items.length > 0) {
     try {
-      const now = new Date();
-      for (const row of items) {
-        row.pulledAt = now as any;
-        row.status = 'pulled';
-        await row.save();
-      }
+      await PaymentQueueRequest.update(
+        {
+          status: 'processing',
+          lockedBy: 'izb-pull',
+          lockedAt: new Date(),
+          claimedAt: new Date(),
+        } as any,
+        {
+          where: {
+            queueId: items.map((item) => item.queueId),
+          },
+        },
+      );
     } catch (err) {
-      console.error('Failed to mark IZB items as pulled', err);
+      console.error('Failed to mark IZB queue items as pulled', err);
     }
   }
 
-  return NextResponse.json({ success: true, items: results });
+  return NextResponse.json({ success: true, items });
 }

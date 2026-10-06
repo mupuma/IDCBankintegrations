@@ -22,7 +22,7 @@ export const bankIntegrations: Record<BankCode, BankIntegrationConfig> = {
     bankCode: 'IZB',
     displayName: 'Indo Zambia Bank',
     mode: 'inbound',
-    dispatchStrategy: dispatchStrategyFor('IZB', 'agent-pull'),
+    dispatchStrategy: 'agent-pull',
     queueName: process.env.IZB_QUEUE_NAME || 'izb_payments',
     agentBaseUrl: process.env.IZB_AGENT_URL,
   },

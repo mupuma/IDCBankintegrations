@@ -63,7 +63,6 @@ import { User } from '../models/internal/User';
 import { PaymentQueueRequest } from '../models/internal/PaymentQueueRequest';
 import { CashbookReceipt } from '../models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '../models/internal/Processed_transactions';
-import { IzbPayment } from '../models/internal/IzbPayment';
 import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
@@ -80,7 +79,6 @@ const INTERNAL_MODELS = [
   PaymentQueueRequest,
   CashbookReceipt,
   ProcessedTransaction,
-  IzbPayment,
   CashbookRequest,
   AuditLog,
   SourceAccount,
