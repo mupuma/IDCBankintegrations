@@ -33,6 +33,16 @@ function getQueuePaymentSummary(item: BankQueueItem) {
   };
 }
 
+function getQueueResponseDetails(item: BankQueueItem) {
+  const response = asRecord(item.response);
+  return ['cashbookStatus', 'batchId', 'message', 'reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError']
+    .map((key) => {
+      const value = response[key];
+      return value ? { key, value: String(value) } : null;
+    })
+    .filter((row): row is { key: string; value: string } => row !== null);
+}
+
 export default function PaymentQueuesPage() {
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
@@ -210,7 +220,16 @@ export default function PaymentQueuesPage() {
                       {getQueuePaymentSummary(item).transactionType}
                       {getQueuePaymentSummary(item).service ? <div className="mt-1 text-xs text-slate-500">{getQueuePaymentSummary(item).service}</div> : null}
                     </td>
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.status}{item.bankCode === 'ZICB' && item.response && typeof item.response === 'object' ? <div className="mt-1 text-xs font-normal">{['reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError'].map(key => { const value = (item.response as Record<string, unknown>)[key]; return value ? <div key={key}>{key}: {String(value)}</div> : null; })}</div> : null}</td>
+                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">
+                      {item.status}
+                      {getQueueResponseDetails(item).length ? (
+                        <div className="mt-1 text-xs font-normal">
+                          {getQueueResponseDetails(item).map((detail) => (
+                            <div key={detail.key}>{detail.key}: {detail.value}</div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>

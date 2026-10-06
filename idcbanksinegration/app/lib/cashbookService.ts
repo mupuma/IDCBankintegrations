@@ -3,6 +3,7 @@ import sageSequelize, { connectSageDatabase } from '@/app/lib/sageDb';
 import { connectDatabase } from '@/app/lib/db';
 import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '@/app/models/internal/Processed_transactions';
+import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { Cbbctl } from '@/app/models/sage_entities/Cbbctl';
 import { Cbbthd } from '@/app/models/sage_entities/Cbbthd';
 import { Cbbtdt } from '@/app/models/sage_entities/Cbbtdt';
@@ -687,10 +688,100 @@ async function updateProcessedTransaction(receipt: ReceiptRequest, statusCode: n
   });
 }
 
+function normalizeMatchValue(value: unknown) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function queueIdentifiersForReceipt(receipt: ReceiptRequest) {
+  return Array.from(new Set([
+    receipt.transactionId,
+    receipt.description,
+    ...receipt.entries.map((entry) => entry.referenceNo),
+  ].map(normalizeMatchValue).filter(Boolean)));
+}
+
+function queuePayloadMatchesReceipt(record: PaymentQueueRequest, identifiers: string[]) {
+  if (!identifiers.length) return false;
+  if (identifiers.includes(normalizeMatchValue(record.paymentId))) return true;
+
+  let payload: Record<string, unknown>;
+  try {
+    payload = JSON.parse(record.paymentPayload) as Record<string, unknown>;
+  } catch {
+    return false;
+  }
+
+  const payloadIdentifiers = [
+    payload.paymentId,
+    payload.transactionReference,
+    payload.remarks,
+    payload.reference,
+  ].map(normalizeMatchValue).filter(Boolean);
+
+  return payloadIdentifiers.some((value) => identifiers.includes(value));
+}
+
+async function markPaymentQueueFromCashbook(
+  receipt: ReceiptRequest,
+  status: 'success' | 'failed',
+  message: string,
+  batchId?: string,
+) {
+  const bankCode = String(receipt.bankCode || '').trim().toUpperCase();
+  if (!bankCode) return;
+
+  try {
+    await connectDatabase();
+    const identifiers = queueIdentifiersForReceipt(receipt);
+    const candidates = await PaymentQueueRequest.findAll({
+      where: {
+        bankCode,
+        status: {
+          [Op.in]: ['queued', 'pulled', 'processing', 'failed'],
+        },
+      },
+      order: [['updatedAt', 'DESC']],
+      limit: 200,
+    });
+
+    const matched = candidates.filter((record) => queuePayloadMatchesReceipt(record, identifiers));
+    if (!matched.length) return;
+
+    const responsePayload = JSON.stringify({
+      cashbookStatus: status,
+      transactionId: receipt.transactionId,
+      bankCode,
+      batchId: batchId || null,
+      message,
+      processedAt: new Date().toISOString(),
+    });
+
+    await PaymentQueueRequest.update(
+      {
+        status,
+        lastError: status === 'success' ? null : truncateStatusMessage(message),
+        responsePayload,
+        lockedBy: null,
+        lockedAt: null,
+      } as any,
+      {
+        where: {
+          id: {
+            [Op.in]: matched.map((record) => record.id),
+          },
+        },
+      },
+    );
+  } catch (error) {
+    console.error('Failed to update payment queue from cashbook result', error);
+  }
+}
+
 async function finalizeLocalCashbookSuccess(
   localReceipt: CashbookReceipt,
   receipt: ReceiptRequest,
   message: string,
+  batchId?: string,
 ) {
   const statusMessage = truncateStatusMessage(message);
   try {
@@ -704,6 +795,8 @@ async function finalizeLocalCashbookSuccess(
   } catch (error) {
     console.error('Failed to update processed transaction after Sage success', error);
   }
+
+  await markPaymentQueueFromCashbook(receipt, 'success', statusMessage, batchId);
 }
 
 export type CashbookProcessResult =
@@ -758,6 +851,11 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
 
   const existingProcessed = await ProcessedTransaction.findByPk(receipt.transactionId);
   if (existingProcessed?.statusCode === 200) {
+    await markPaymentQueueFromCashbook(
+      receipt,
+      'success',
+      existingProcessed.statusMessage || 'Cashbook transaction already processed',
+    );
     return { success: false, alreadyProcessed: true };
   }
 
@@ -766,6 +864,13 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   });
 
   if (existingReceipt && ACTIVE_LOCAL_RECEIPT_STATUSES.has(existingReceipt.status)) {
+    if (existingReceipt.status === 'success') {
+      await markPaymentQueueFromCashbook(
+        receipt,
+        'success',
+        existingReceipt.statusMessage || 'Cashbook transaction already processed',
+      );
+    }
     return { success: false, alreadyProcessed: true, receiptId: existingReceipt.id };
   }
 
@@ -785,6 +890,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
       } catch (error) {
         console.error('Failed to record duplicate cashbook transaction', error);
       }
+      await markPaymentQueueFromCashbook(receipt, 'success', message);
       return { success: false, alreadyProcessed: true, receiptId: localReceipt.id };
     }
 
@@ -795,7 +901,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
     sagePosted = true;
 
     const message = `Cashbook transaction inserted into Sage batch ${batchId}`;
-    await finalizeLocalCashbookSuccess(localReceipt, receipt, message);
+    await finalizeLocalCashbookSuccess(localReceipt, receipt, message, batchId);
 
     return {
       success: true,
@@ -812,7 +918,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
       const successMessage = batchId
         ? `Cashbook transaction inserted into Sage batch ${batchId}`
         : 'Cashbook transaction saved to Sage';
-      await finalizeLocalCashbookSuccess(localReceipt, receipt, successMessage);
+      await finalizeLocalCashbookSuccess(localReceipt, receipt, successMessage, batchId);
       console.error('Sage cashbook posted but follow-up bookkeeping failed', error);
       return {
         success: true,
@@ -834,6 +940,8 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
     } catch (updateError) {
       console.error('Failed to record cashbook failure', updateError);
     }
+
+    await markPaymentQueueFromCashbook(receipt, 'failed', statusMessage);
 
     console.error('Cashbook Sage processing failed', error);
 
