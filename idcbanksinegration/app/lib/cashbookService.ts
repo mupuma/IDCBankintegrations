@@ -14,6 +14,7 @@ import type { EntryDetails, ReceiptRequest } from '@/app/models/dtos';
 
 const MAX_STATUS_MESSAGE_LENGTH = 255;
 const SAGE_BINARY_FIELD_LENGTH = 32;
+const SAGE_CASHBOOK_REFERENCE_LENGTH = 12;
 const EMPTY_SAGE_BINARY = Buffer.alloc(SAGE_BINARY_FIELD_LENGTH, 0);
 
 const safeString = (value: unknown, length: number): string => {
@@ -96,6 +97,10 @@ async function updateCashbookOptions(batchId: string, transaction?: Transaction)
 async function existingCashbookReference(reference: string, transaction?: Transaction): Promise<boolean> {
   const existing = await Cbbthd.findOne({ where: { reference }, transaction });
   return Boolean(existing);
+}
+
+function sageCashbookReference(receipt: ReceiptRequest) {
+  return safeString(receipt.entries[0]?.referenceNo || receipt.transactionId, SAGE_CASHBOOK_REFERENCE_LENGTH);
 }
 
 type SageCustomer = Pick<Arcus, 'idcust' | 'namecust'>;
@@ -483,7 +488,7 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string, transactio
     const customerCode = customer?.idcust ?? '';
     const customerName = customer?.namecust || 'Unidentified Deposit';
     const amount = Number(entry.amount ?? 0);
-    const reference = safeString(entry.referenceNo ?? receipt.transactionId, 22);
+    const reference = safeString(entry.referenceNo ?? receipt.transactionId, SAGE_CASHBOOK_REFERENCE_LENGTH);
     const period = safeString(monthYear.month, 2);
     const fiscyr = safeString(monthYear.year, 4);
     await insertCbbtdt(entry.details, batchId, entry.customerNo, transaction);
@@ -888,7 +893,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   try {
     await connectSageDatabase();
 
-    if (await existingCashbookReference(receipt.transactionId)) {
+    if (await existingCashbookReference(sageCashbookReference(receipt))) {
       const message = 'Already Reported';
       await localReceipt.update({ status: 'failed', statusMessage: message, processedDate: new Date() });
       try {
@@ -969,7 +974,7 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
     );
     const lockResult = Array.isArray(rows) && rows.length ? Number((rows[0] as any).lockResult) : NaN;
     if (!Number.isFinite(lockResult) || lockResult < 0) throw new Error('Unable to acquire Sage cashbook posting lock');
-    const reference = safeString(receipt.entries[0]?.referenceNo || receipt.transactionId, 22);
+    const reference = sageCashbookReference(receipt);
     const existing = deduplicate ? await Cbbthd.findOne({ where: { reference }, transaction }) : null;
     if (existing) return { batchId: String(existing.get('batchid')), alreadyPosted: true };
     const batchId = await getNextBatchId(transaction);
@@ -981,7 +986,7 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
 }
 
 export async function postConfirmedH2hCashbook(receipt: ReceiptRequest) {
-  // The H2H ledger owns retries. A stable, 22-character reference is checked
+  // The H2H ledger owns retries. A stable Sage-safe reference is checked
   // inside the same Sage transaction as all writes, so a lost commit response
   // can be recovered without creating another cashbook entry.
   await connectSageDatabase();

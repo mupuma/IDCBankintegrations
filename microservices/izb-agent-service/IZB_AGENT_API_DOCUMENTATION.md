@@ -91,7 +91,7 @@ POST /api/v1/payments/by_date
   "timeStamp": "2026-10-06T05:06:37.000Z",
   "data": [
     {
-      "transactionId": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+      "transactionId": "IDC9F8A7B6C5",
       "accountNumber": "1234567890",
       "amount": 1500,
       "currency": "ZMW",
@@ -110,7 +110,7 @@ POST /api/v1/payments/by_date
       },
       "countryOfOrigin": "ZM",
       "swiftCode": "ABCZMLU",
-      "transactionReference": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+      "transactionReference": "IDC9F8A7B6C5",
       "bankName": "Indo Zambia Bank"
     }
   ]
@@ -130,7 +130,7 @@ POST /api/v1/payments/by_date
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `transactionId` | string | Unique IDC transaction ID generated from the Sage payment. IZB must preserve this value and use it as the reference when posting the cashbook transaction. |
+| `transactionId` | string | Unique 12-character IDC transaction ID generated from the Sage payment. IZB must preserve this value and use it as the reference when posting the cashbook transaction. |
 | `accountNumber` | string | Beneficiary account number. |
 | `amount` | number | Payment amount. |
 | `currency` | string | Payment currency. Usually `ZMW`. |
@@ -189,7 +189,7 @@ POST /api/v1/postCBTxn
 
 ```json
 {
-  "transactionId": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+  "transactionId": "IDC9F8A7B6C5",
   "bankCode": "IZB",
   "Description": "Supplier payment",
   "noEntries": 1,
@@ -198,7 +198,7 @@ POST /api/v1/postCBTxn
   "entries": [
     {
       "entryNo": 1,
-      "referenceNo": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+      "referenceNo": "IDC9F8A7B6C5",
       "customerNo": "VEND001",
       "noDetails": 1,
       "amount": 1500,
@@ -289,7 +289,7 @@ curl -i -X POST "https://<izb-agent-host>/api/v1/postCBTxn" \
   -H "Content-Type: application/json" \
   -H "x-api-key: <provided-api-key>" \
   -d '{
-    "transactionId": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+    "transactionId": "IDC9F8A7B6C5",
     "bankCode": "IZB",
     "Description": "Supplier payment",
     "noEntries": 1,
@@ -298,7 +298,7 @@ curl -i -X POST "https://<izb-agent-host>/api/v1/postCBTxn" \
     "entries": [
       {
         "entryNo": 1,
-        "referenceNo": "IDC-9F8A7B6C5D4E3F2A1B0C9D8E",
+        "referenceNo": "IDC9F8A7B6C5",
         "customerNo": "VEND001",
         "noDetails": 1,
         "amount": 1500,

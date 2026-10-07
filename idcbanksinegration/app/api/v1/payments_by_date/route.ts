@@ -83,7 +83,7 @@ function buildSageTransactionId(appym: SageRawRecord) {
     getRawField(appym, ['amtpaym', 'AMTPAYM'], ''),
   ].map(trimString).join('|');
 
-  return `IDC-${createHash('sha256').update(seed).digest('hex').slice(0, 24).toUpperCase()}`;
+  return `IDC${createHash('sha256').update(seed).digest('hex').slice(0, 9).toUpperCase()}`;
 }
 
 function getRawField<T>(record: SageRawRecord | null | undefined, keys: string[], fallback: T): T {
