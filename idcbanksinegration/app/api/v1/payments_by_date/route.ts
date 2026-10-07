@@ -9,6 +9,7 @@ import { Venbank } from '@/app/models/sage_entities/Venbank';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Op } from 'sequelize';
+import { createHash } from 'node:crypto';
 
 type SageRawRecord = Record<string, unknown>;
 type NormalizedPayment = PaymentsResponse & {
@@ -67,6 +68,22 @@ function mapTransactionType(paymcode: string | undefined): PaymentsResponse['tra
   if (code.includes('INT')) return 'INT';
   if (code.includes('TT')) return 'TT';
   return 'DDACCT';
+}
+
+function buildSageTransactionId(appym: SageRawRecord) {
+  const seed = [
+    getRawField(appym, ['idbank', 'IDBANK'], ''),
+    getRawField(appym, ['idvend', 'IDVEND'], ''),
+    getRawField(appym, ['idrmit', 'IDRMIT'], ''),
+    getRawField(appym, ['longserial', 'LONGSERIAL'], ''),
+    getRawField(appym, ['datermit', 'DATERMIT'], ''),
+    getRawField(appym, ['datebus', 'DATEBUS'], ''),
+    getRawField(appym, ['cntbtch', 'CNTBTCH'], ''),
+    getRawField(appym, ['cntitem', 'CNTITEM'], ''),
+    getRawField(appym, ['amtpaym', 'AMTPAYM'], ''),
+  ].map(trimString).join('|');
+
+  return `IDC-${createHash('sha256').update(seed).digest('hex').slice(0, 24).toUpperCase()}`;
 }
 
 function getRawField<T>(record: SageRawRecord | null | undefined, keys: string[], fallback: T): T {
@@ -212,12 +229,12 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
 }
 
 function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, remarks: string): NormalizedPayment {
-  const idbank = String(getRawField(appym, ['idbank', 'IDBANK'], '')).trim();
   const vendorId = String(getRawField(appym, ['idvend', 'IDVEND'], '')).trim();
-  const idrmit = String(getRawField(appym, ['idrmit', 'IDRMIT'], '')).trim();
-  const longserial = String(getRawField(appym, ['longserial', 'LONGSERIAL'], '')).trim();
+  const transactionId = buildSageTransactionId(appym);
 
   return {
+    paymentId: transactionId,
+    transactionId,
     accountNumber: bankDetails.accountNumber,
     amount: Number(getRawField(appym, ['amtpaym', 'AMTPAYM'], 0)),
     currency: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
@@ -236,8 +253,7 @@ function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, 
     currencyCde: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
     transactionDate: parseNumericDate(getRawField(appym, ['datebus', 'DATEBUS'], getRawField(appym, ['datermit', 'DATERMIT'], 0))),
     transactionType: mapTransactionType(String(getRawField(appym, ['paymcode', 'PAYMCODE'], ''))),
-    transactionReference: String(remarks || idrmit || idbank || longserial).trim(),
-    paymentId: `${idbank || 'UNK'}|${vendorId || 'UNK'}|${idrmit || 'UNK'}|${longserial || 'UNK'}|${String(getRawField(appym, ['datermit', 'DATERMIT'], '')).trim() || 'UNK'}`,
+    transactionReference: transactionId,
     bankDetailsFound: bankDetails.found,
     missingBankFields: bankDetails.missingFields,
     bankDetailsStatus: bankDetails.found ? 'complete' : 'incomplete',

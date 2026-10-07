@@ -53,7 +53,9 @@ function mapItem(it) {
         }
         return null;
     };
+    const transactionId = get(['transactionId', 'transaction_id', 'paymentId', 'payment_id']) || '';
     return {
+        transactionId,
         accountNumber: get(['accountNumber', 'account_number', 'acctNumber', 'acct_no']) ?? '',
         amount: Number(get(['amount', 'value', 'amt'])) || 0,
         currency: get(['currency', 'currencyCode', 'currency_code']) || 'USD',
@@ -68,7 +70,7 @@ function mapItem(it) {
         physicalAddress: get(['physicalAddress', 'address', 'physical_address']) || '',
         countryOfOrigin: get(['countryOfOrigin', 'country_of_origin', 'country']) || '',
         swiftCode: get(['swiftCode', 'swift_code']) || '',
-        transactionReference: get(['transactionReference', 'transaction_reference', 'reference', 'transactionRef']) || '',
+        transactionReference: transactionId,
         bankName: get(['bankName', 'bank_name', 'bank']) || '',
     };
 }

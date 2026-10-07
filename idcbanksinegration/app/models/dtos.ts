@@ -8,6 +8,7 @@ export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
 
 export type PaymentsResponse = {
     paymentId: any; //To be used by IZB to pull payments onto banking platform
+    transactionId: string;
 
     accountNumber: string;
     amount: number;

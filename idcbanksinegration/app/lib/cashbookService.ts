@@ -695,7 +695,6 @@ function normalizeMatchValue(value: unknown) {
 function queueIdentifiersForReceipt(receipt: ReceiptRequest) {
   return Array.from(new Set([
     receipt.transactionId,
-    receipt.description,
     ...receipt.entries.map((entry) => entry.referenceNo),
   ].map(normalizeMatchValue).filter(Boolean)));
 }
@@ -713,9 +712,7 @@ function queuePayloadMatchesReceipt(record: PaymentQueueRequest, identifiers: st
 
   const payloadIdentifiers = [
     payload.paymentId,
-    payload.transactionReference,
-    payload.remarks,
-    payload.reference,
+    payload.transactionId,
   ].map(normalizeMatchValue).filter(Boolean);
 
   return payloadIdentifiers.some((value) => identifiers.includes(value));
@@ -746,6 +743,15 @@ async function markPaymentQueueFromCashbook(
 
     const matched = candidates.filter((record) => queuePayloadMatchesReceipt(record, identifiers));
     if (!matched.length) return;
+    if (matched.length > 1) {
+      console.error('Cashbook queue update skipped because the receipt reference matched multiple queue rows', {
+        bankCode,
+        transactionId: receipt.transactionId,
+        references: receipt.entries.map((entry) => entry.referenceNo),
+        matchedQueueIds: matched.map((record) => record.queueId),
+      });
+      return;
+    }
 
     const responsePayload = JSON.stringify({
       cashbookStatus: status,
