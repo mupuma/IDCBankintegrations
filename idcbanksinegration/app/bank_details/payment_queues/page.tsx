@@ -23,7 +23,8 @@ function getQueuePaymentSummary(item: BankQueueItem) {
 
   return {
     isBulk,
-    reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionReference ?? item.paymentId),
+    reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionId ?? payment.transactionReference ?? item.paymentId),
+    description: isBulk ? String(request.description ?? request.narration ?? '') : String(payment.remarks ?? payment.description ?? ''),
     vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : String(payment.vendorId ?? payment.accountName ?? 'N/A'),
     amount: Number.isFinite(amount) ? amount : 0,
     currency: isBulk ? String(request.currency ?? '') : String(payment.currency ?? payment.currencyCode ?? ''),
@@ -180,7 +181,7 @@ export default function PaymentQueuesPage() {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200/60">
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank</th>
-                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference / Description</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Vendor</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Amount</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Txn Type</th>
@@ -211,7 +212,12 @@ export default function PaymentQueuesPage() {
                       {getQueuePaymentSummary(item).isBulk ? <div className="mt-1 text-xs font-normal text-slate-500">Bulk batch</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">
-                      {getQueuePaymentSummary(item).reference}
+                      <div className="font-mono font-semibold text-slate-800">{getQueuePaymentSummary(item).reference}</div>
+                      {getQueuePaymentSummary(item).description ? (
+                        <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-slate-500">
+                          {getQueuePaymentSummary(item).description}
+                        </div>
+                      ) : null}
                       {getQueuePaymentSummary(item).batchReference ? <div className="mt-1 text-xs text-slate-500">Batch: {getQueuePaymentSummary(item).batchReference}</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).vendor}</td>

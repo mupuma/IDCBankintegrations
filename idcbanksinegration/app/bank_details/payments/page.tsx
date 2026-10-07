@@ -11,7 +11,7 @@ import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPa
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
 const BANK_TRANSACTION_TYPES: Record<BankCode, PaymentsResponse['transactionType'][]> = {
-  IZB: ['RTGS', 'DDACCT', 'INT', 'TT'],
+  IZB: ['INT', 'DDACCT', 'RTGS'],
   ZANACO: ['RTGS', 'DDACCT', 'INT', 'TT'],
   ZICB: ['RTGS', 'DDACCT', 'INT'],
 };
@@ -19,6 +19,12 @@ const BANKS_WITH_BULK_UPLOAD = new Set<BankCode>(['ZANACO']);
 const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
 const BANK_PROCESSED_STATUSES = new Set(['success', 'paid']);
 const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || bank === 'ZICB';
+const IZB_DDACC_LIMIT = 500000;
+const IZB_RULE_HELP = [
+  'INT: internal transfer to an Indo Zambia Bank beneficiary account.',
+  'DDACC: other commercial banks from ZMW 1 to ZMW 500,000.',
+  'RTGS: other commercial banks from ZMW 500,001 and above.',
+];
 
 function postKey(paymentId: string, bankCode: string) {
   return `${paymentId}:${bankCode}`;
@@ -113,7 +119,6 @@ const BANK_VALIDATION_CONFIG: Record<BankCode, BankValidationRule> = {
       'accountName',
       'branchCode',
       'sortCode',
-      'swiftCode',
       'vendorId',
       'amount',
       'currency',
@@ -124,16 +129,9 @@ const BANK_VALIDATION_CONFIG: Record<BankCode, BankValidationRule> = {
     ],
     transactionTypeRules: {
       RTGS: ['swiftCode', 'transactionDate', 'transactionReference'],
-      INT: ['swiftCode', 'currencyCode', 'transactionDate'],
-      TT: ['swiftCode', 'transactionDate'],
+      INT: ['transactionReference', 'transactionDate'],
       DDACCT: ['sortCode', 'branchCode', 'transactionReference'],
     },
-    customValidators: [(payment) => {
-      if (payment.amount > 500000 && payment.transactionType !== 'RTGS') {
-        return 'Payments exceeding 500,000 must use RTGS for IZB';
-      }
-      return null;
-    }],
   },
   ZANACO: {
     required: [
@@ -341,6 +339,16 @@ function getEffectiveTransactionType(payment: EnrichedPayment, transactionOverri
   return transactionOverrides[payment.paymentId] ?? payment.transactionType;
 }
 
+function isIndoZambiaBeneficiary(payment: EnrichedPayment) {
+  const bankName = String(payment.bankName || '').trim().toLowerCase();
+  return bankName.includes('indo zambia') || bankName === 'izb' || bankName.includes('indo-zambia');
+}
+
+function transactionTypeLabel(bankCode: BankCode | '', type: PaymentsResponse['transactionType']) {
+  if (bankCode === 'IZB' && type === 'DDACCT') return 'DDACC';
+  return type;
+}
+
 function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transactionType: PaymentsResponse['transactionType'], h2h = false, scale = 2): ValidationResult {
   if (bankCode === 'ZICB' && h2h) {
     const errors = paymentErrors({ ...payment, transactionType }, scale);
@@ -349,6 +357,7 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
   }
   const errors: string[] = [];
   const rule = BANK_VALIDATION_CONFIG[bankCode];
+  const amount = Number(payment.amount ?? 0);
 
   rule.required.forEach((field: keyof PaymentsResponse) => {
     const value = (payment as any)[field];
@@ -370,7 +379,7 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
   const currency = String(payment.currency || payment.currencyCode || '').toUpperCase();
   const isForex = currency === 'USD' || currency === 'ZAR';
 
-  if ((bankCode === 'IZB' && transactionType === 'RTGS') || transactionType === 'INT') {
+  if ((bankCode === 'IZB' && transactionType === 'RTGS') || (bankCode !== 'IZB' && transactionType === 'INT')) {
     if (!payment.swiftCode || !String(payment.swiftCode).trim()) {
       errors.push('SWIFT code is required for RTGS and International payments.');
     }
@@ -385,6 +394,21 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
   if (transactionType === 'DDACCT') {
     if (!payment.sortCode || !String(payment.sortCode).trim()) {
       errors.push('Sort code is required for DDACC payments.');
+    }
+  }
+
+  if (bankCode === 'IZB') {
+    if (transactionType === 'DDACCT' && (!Number.isFinite(amount) || amount < 1 || amount > IZB_DDACC_LIMIT)) {
+      errors.push('IZB DDACC is only allowed for other commercial bank payments from ZMW 1 to ZMW 500,000.');
+    }
+    if (transactionType === 'RTGS' && (!Number.isFinite(amount) || amount < IZB_DDACC_LIMIT + 1)) {
+      errors.push('IZB RTGS is only allowed for other commercial bank payments from ZMW 500,001 and above.');
+    }
+    if (transactionType === 'INT' && !isIndoZambiaBeneficiary(payment)) {
+      errors.push('IZB INT is only allowed when the beneficiary account is held at Indo Zambia Bank.');
+    }
+    if ((transactionType === 'DDACCT' || transactionType === 'RTGS') && isIndoZambiaBeneficiary(payment)) {
+      errors.push('Use IZB INT for beneficiary accounts held at Indo Zambia Bank.');
     }
   }
 
@@ -1113,7 +1137,7 @@ export default function PaymentQueueDashboard() {
               className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:opacity-60"
             >
               {bulkAllowedTypes.map((type) => (
-                <option key={type} value={type}>{type}</option>
+                <option key={type} value={type}>{transactionTypeLabel(bulkBank, type)}</option>
               ))}
             </select>
           </label>
@@ -1149,6 +1173,16 @@ export default function PaymentQueueDashboard() {
             {bulkSubmitting ? 'Sending...' : `Send ${selectedPayments.length || ''}`.trim()}
           </button>
         </div>
+        {bulkBank === 'IZB' ? (
+          <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
+            <div className="mb-1 font-semibold">IZB transaction type rules</div>
+            <ul className="list-disc space-y-1 pl-4">
+              {IZB_RULE_HELP.map((rule) => (
+                <li key={rule}>{rule}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-8 bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
@@ -1196,6 +1230,8 @@ export default function PaymentQueueDashboard() {
                   const isAlreadyPosted = Boolean(
                     posted && preventsPosting(posted.status, posted.bankCode),
                   );
+                  const paymentReference = payment.transactionId || payment.transactionReference || payment.paymentId;
+                  const paymentDescription = payment.remarks || 'No description';
 
                   return (
                     <tr key={payment.paymentId} className="hover:bg-slate-50/50 transition-colors group">
@@ -1208,11 +1244,14 @@ export default function PaymentQueueDashboard() {
                           className="mt-1 h-4 w-4 rounded border-slate-300 disabled:opacity-40"
                         />
                       </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
+                      <td className="px-6 py-4">
                         <div className="inline-flex items-center px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 text-slate-700 border border-slate-200/40 uppercase tracking-wide">
                           {payment.vendorId || 'N/A'}
                         </div>
-                        <div className="text-[11px] text-slate-500 mt-2">Ref: {payment.transactionReference || 'N/A'}</div>
+                        <div className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Reference</div>
+                        <div className="mt-1 font-mono text-xs font-semibold text-slate-700">{paymentReference || 'N/A'}</div>
+                        <div className="mt-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Description</div>
+                        <div className="mt-1 max-w-[240px] whitespace-normal text-xs text-slate-600">{paymentDescription}</div>
                         <div className="text-[11px] text-slate-500 mt-1">Date: {formatDate(payment.transactionDate)}</div>
                       </td>
                       <td className="px-6 py-4 max-w-[220px]">
@@ -1292,9 +1331,19 @@ export default function PaymentQueueDashboard() {
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
                         >
                           {(selectedBank ? BANK_TRANSACTION_TYPES[selectedBank] : TRANSACTION_TYPES).map((type) => (
-                            <option key={type} value={type}>{type}</option>
+                            <option key={type} value={type}>{transactionTypeLabel(selectedBank, type)}</option>
                           ))}
                         </select>
+                        {selectedBank === 'IZB' ? (
+                          <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+                            <div className="mb-1 font-semibold">IZB transaction type rules</div>
+                            <ul className="list-disc space-y-1 pl-4">
+                              {IZB_RULE_HELP.map((rule) => (
+                                <li key={rule}>{rule}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="flex justify-end gap-2 flex-wrap">
