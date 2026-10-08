@@ -1,5 +1,3 @@
-export function h2hEnabled() { return process.env.ZICB_H2H_ENABLED === 'true'; }
-
 export function sourceProfile(sourceBank: string) {
   // No default region or debit account: these mappings must be agreed with ZICB.
   const profiles = JSON.parse(process.env.ZICB_H2H_SOURCE_PROFILES || '{}');

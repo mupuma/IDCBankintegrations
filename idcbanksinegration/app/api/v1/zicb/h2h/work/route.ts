@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { claimH2hWork, reportH2hWork, LedgerError } from '@/app/lib/zicb/ledger';
 import { isAgent } from '@/app/lib/zicb/security';
-import { h2hEnabled } from '@/app/lib/zicb/config';
 
 export async function POST(request: NextRequest) {
   if (!isAgent(request.headers)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!h2hEnabled()) return NextResponse.json({ error: 'H2H is not enabled' }, { status: 503 });
   try { return NextResponse.json({ item: await claimH2hWork() }); }
   catch (error) {
     console.error('H2H work claim failed', error instanceof Error ? error.name : 'unknown');

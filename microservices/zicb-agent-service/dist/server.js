@@ -34,10 +34,4 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
-if (process.env.ZICB_H2H_ENABLED === 'true') {
-    void Promise.resolve().then(() => __importStar(require('./h2hServer'))).then(({ startH2hService }) => startH2hService());
-}
-else {
-    // Existing in-flight legacy jobs retain their own protocol and queue.
-    void Promise.resolve().then(() => __importStar(require('./index'))).then(() => Promise.resolve().then(() => __importStar(require('./worker'))));
-}
+void Promise.resolve().then(() => __importStar(require('./h2hServer'))).then(({ startH2hService }) => startH2hService());

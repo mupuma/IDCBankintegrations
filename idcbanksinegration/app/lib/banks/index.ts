@@ -1,6 +1,5 @@
 import type { PaymentsResponse } from '../../models/dtos';
 import { sendZanacoPayment } from './zanaco';
-import { sendZicbPayment } from './zicb';
 
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
 export const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
@@ -30,7 +29,7 @@ export async function sendPaymentToBank(
     case 'ZANACO':
       return sendZanacoPayment(payment, queueId, sourceBank);
     case 'ZICB':
-      return sendZicbPayment(payment, queueId, sourceBank);
+      throw new Error('ZICB payments must use the H2H ledger path');
     default:
       throw new Error(`Unsupported bank code: ${String(bankCode)}`);
   }

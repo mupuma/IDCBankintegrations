@@ -1,91 +1,76 @@
 # ZICB Agent Service
 
-The PayBill H2H v1 implementation is selected with `ZICB_H2H_ENABLED=true` in both
-the portal and this service. It uses the portal's durable ledger rather than the
-legacy BullMQ payment sender described below. See
-[H2H setup and recovery](../../review-artifacts/ZICB-H2H-implementation.md).
+The ZICB agent service runs the PayBill H2H v1 integration only.
 
-Run `npm test` for offline contract and recovery tests. Run `npm run build` to
-compile, then `npm start` to start the selected protocol. In H2H mode use the
-combined server entry point, not the legacy `dev:api` or `dev:worker` scripts.
+Payments are submitted through the portal's ZICB H2H ledger. The agent:
 
-The Docker build context is now the repository root because both applications
-use `shared/zicb-h2h`:
+- claims H2H work from the portal
+- sends payment submissions to ZICB
+- reconciles submitted references when required
+- receives ZICB callbacks
+- forwards callbacks to the portal
+- triggers accounting recovery when a payment is confirmed paid
+
+There is no bank-facing `/payments` route in this service.
+
+## Run
+
+```bash
+cd microservices/zicb-agent-service
+npm install
+npm run build
+npm start
+```
+
+For development:
+
+```bash
+npm run dev
+```
+
+## Docker
+
+The Docker build context is the repository root because the service uses
+`shared/zicb-h2h`:
 
 ```powershell
 docker build -f microservices/zicb-agent-service/Dockerfile -t zicb-agent .
 ```
 
-## Legacy protocol
+## Public Agent Endpoints
 
-A lightweight Node microservice for receiving payments from `idcbanksinegration` and forwarding them to ZICB via BullMQ.
+These are the endpoints ZICB calls on the agent.
 
-## Features
+```text
+GET  /health
 
-- HTTP endpoint to receive payment requests
-- BullMQ queue for retries and async processing
-- ZICB-specific payload builder and sender
-- Worker process for bank submission
+POST /api/v1/bank/internal-ft/auth/token
+POST /api/v1/bank/internal-ft/callback
 
-## Setup
+POST /api/v1/bank/other-bank-rtgs-ft/auth/token
+POST /api/v1/bank/other-bank-rtgs-ft/callback
 
-1. Install dependencies:
-
-   ```bash
-   cd microservices/zicb-agent-service
-   npm install
-   ```
-
-2. Copy `.env.example` to `.env` and configure Redis + ZICB API URL.
-
-3. Start the worker in one terminal:
-
-   ```bash
-   npm run dev src/worker.ts
-   ```
-
-4. Start the API in another terminal:
-
-   ```bash
-   npm run dev
-   ```
-
-## API
-
-POST `/payments`
-
-Request body:
-
-```json
-{
-  "bankCode": "ZICB",
-  "payment": {
-    "paymentId": "1234",
-    "accountNumber": "1234567890",
-    "branchCode": "001",
-    "accountName": "SageSystem",
-    "amount": 1000,
-    "currency": "ZMW",
-    "transactionType": "DDACCT",
-    "transactionDate": "2026-05-28",
-    "transactionReference": "REF001",
-    "remarks": "Payment through ZICB agent"
-  }
-}
+POST /api/v1/bank/other-bank-ddacc-ft/auth/token
+POST /api/v1/bank/other-bank-ddacc-ft/callback
 ```
 
-## Environment
+## Required Environment
 
-- `PORT` - HTTP server port
-- `REDIS_HOST` - Redis hostname
-- `REDIS_PORT` - Redis port
-- `REDIS_PASSWORD` - Redis password, if any
-- `ZICB_BANK_API_URL` - Bank API endpoint for ZICB submissions
-- `ZICB_SOURCE_ACCOUNT` - Default source account for ZICB payments
-- `ZICB_SOURCE_BRANCH` - Default source branch for ZICB payments
-- `ZICB_USER_NAME` - Default username for ZICB payloads
-- `ZICB_CUSTOMER_ID` - Default customer ID for ZICB payloads
-- `ZICB_IP_ADDRESS` - Default IP address for ZICB payloads
-- `ZICB_MOCK_SUCCESS_RESPONSE` - Set to `true` to return a positive ZICB completion response without calling the live bank API. Useful for testing the Sage cashbook post and app callback success path.
-- `JOB_ATTEMPTS` - Number of BullMQ retry attempts
-- `JOB_BACKOFF_MS` - Retry backoff interval in milliseconds
+```text
+PORT=4001
+APP_API_URL=https://<portal-host>
+ZICB_H2H_AGENT_KEY=<shared-agent-key>
+ZICB_H2H_WEBHOOK_USERNAME=<callback-username>
+ZICB_H2H_WEBHOOK_PASSWORD=<callback-password>
+ZICB_H2H_WEBHOOK_SIGNING_KEY=<at-least-32-characters>
+ZICB_H2H_PROFILES=<json-profile-map>
+```
+
+`ZICB_H2H_PROFILES` must provide the ZICB client credentials and base URLs for
+each approved profile.
+
+## Contract
+
+Share the API contract with ZICB from:
+
+[ZICB_H2H_API_DOCUMENTATION.md](./ZICB_H2H_API_DOCUMENTATION.md)
