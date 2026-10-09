@@ -12,6 +12,8 @@ export type PaymentsResponse = {
 
     accountNumber: string;
     amount: number;
+    amountZmw?: number;
+    exchangeRateToZmw?: number;
     currency: string;
     currencyCode: string;
     remarks: string;

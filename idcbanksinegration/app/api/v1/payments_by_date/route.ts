@@ -231,14 +231,24 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
 function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, remarks: string): NormalizedPayment {
   const vendorId = String(getRawField(appym, ['idvend', 'IDVEND'], '')).trim();
   const transactionId = buildSageTransactionId(appym);
+  const amount = Number(getRawField(appym, ['amtpaym', 'AMTPAYM'], 0));
+  const currency = String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim().toUpperCase();
+  const exchangeRateToZmw = Number(getRawField(appym, ['rateexchhc', 'RATEEXCHHC'], 0));
+  const amountZmw = currency === 'ZMW'
+    ? amount
+    : Number.isFinite(exchangeRateToZmw) && exchangeRateToZmw > 0
+      ? Number((amount * exchangeRateToZmw).toFixed(2))
+      : undefined;
 
   return {
     paymentId: transactionId,
     transactionId,
     accountNumber: bankDetails.accountNumber,
-    amount: Number(getRawField(appym, ['amtpaym', 'AMTPAYM'], 0)),
-    currency: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
-    currencyCode: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
+    amount,
+    amountZmw,
+    exchangeRateToZmw: Number.isFinite(exchangeRateToZmw) && exchangeRateToZmw > 0 ? exchangeRateToZmw : undefined,
+    currency,
+    currencyCode: currency,
     remarks,
     vendorId,
     accountName: bankDetails.accountName,
@@ -250,7 +260,7 @@ function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, 
     phoneNumber: bankDetails.phoneNumber,
     physicalAddress: bankDetails.physicalAddress,
     countryOfOrigin: bankDetails.countryOfOrigin,
-    currencyCde: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
+    currencyCde: currency,
     transactionDate: parseNumericDate(getRawField(appym, ['datebus', 'DATEBUS'], getRawField(appym, ['datermit', 'DATERMIT'], 0))),
     transactionType: mapTransactionType(String(getRawField(appym, ['paymcode', 'PAYMCODE'], ''))),
     transactionReference: transactionId,
@@ -283,6 +293,7 @@ export async function POST(request: NextRequest) {
         'longserial',
         'datermit',
         'amtpaym',
+        'rateexchhc',
         'paymcode',
         'codecurn',
         'datebus',

@@ -349,6 +349,13 @@ function transactionTypeLabel(bankCode: BankCode | '', type: PaymentsResponse['t
   return type;
 }
 
+function getZmwEquivalent(payment: EnrichedPayment) {
+  const currency = String(payment.currency || payment.currencyCode || '').toUpperCase();
+  if (currency === 'ZMW') return Number(payment.amount ?? 0);
+  const amountZmw = Number(payment.amountZmw);
+  return Number.isFinite(amountZmw) && amountZmw > 0 ? amountZmw : null;
+}
+
 function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transactionType: PaymentsResponse['transactionType'], h2h = false, scale = 2): ValidationResult {
   if (bankCode === 'ZICB' && h2h) {
     const errors = paymentErrors({ ...payment, transactionType }, scale);
@@ -398,11 +405,15 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
   }
 
   if (bankCode === 'IZB') {
-    if (transactionType === 'DDACCT' && (!Number.isFinite(amount) || amount < 1 || amount > IZB_DDACC_LIMIT)) {
-      errors.push('IZB DDACC is only allowed for other commercial bank payments from ZMW 1 to ZMW 500,000.');
+    const zmwEquivalent = getZmwEquivalent(payment);
+    if (currency !== 'ZMW' && zmwEquivalent === null) {
+      errors.push(`Sage exchange rate is required to validate IZB ${currency} payments against ZMW thresholds.`);
     }
-    if (transactionType === 'RTGS' && (!Number.isFinite(amount) || amount < IZB_DDACC_LIMIT + 1)) {
-      errors.push('IZB RTGS is only allowed for other commercial bank payments from ZMW 500,001 and above.');
+    if (transactionType === 'DDACCT' && (zmwEquivalent === null || zmwEquivalent < 1 || zmwEquivalent > IZB_DDACC_LIMIT)) {
+      errors.push('IZB DDACC is only allowed for other commercial bank payments from ZMW 1 to ZMW 500,000 equivalent.');
+    }
+    if (transactionType === 'RTGS' && (zmwEquivalent === null || zmwEquivalent < IZB_DDACC_LIMIT + 1)) {
+      errors.push('IZB RTGS is only allowed for other commercial bank payments from ZMW 500,001 equivalent and above.');
     }
     if (transactionType === 'INT' && !isIndoZambiaBeneficiary(payment)) {
       errors.push('IZB INT is only allowed when the beneficiary account is held at Indo Zambia Bank.');
@@ -1232,6 +1243,8 @@ export default function PaymentQueueDashboard() {
                   );
                   const paymentReference = payment.transactionId || payment.transactionReference || payment.paymentId;
                   const paymentDescription = payment.remarks || 'No description';
+                  const paymentCurrency = String(payment.currency || payment.currencyCode || '').toUpperCase();
+                  const paymentZmwEquivalent = getZmwEquivalent(payment);
 
                   return (
                     <tr key={payment.paymentId} className="hover:bg-slate-50/50 transition-colors group">
@@ -1256,6 +1269,14 @@ export default function PaymentQueueDashboard() {
                       </td>
                       <td className="px-6 py-4 max-w-[220px]">
                         <div className="text-sm font-bold text-slate-800 truncate">{payment.amount.toFixed(2)} {payment.currency}</div>
+                        {paymentCurrency !== 'ZMW' ? (
+                          <div className="mt-1 text-xs text-slate-500">
+                            ZMW equivalent:{' '}
+                            <span className="font-mono font-semibold text-slate-700">
+                              {paymentZmwEquivalent === null ? 'missing rate' : paymentZmwEquivalent.toFixed(2)}
+                            </span>
+                          </div>
+                        ) : null}
                         <div className="text-xs font-mono text-slate-400 mt-0.5 tracking-tight">{payment.remarks || '—'}</div>
                       </td>
                       <td className="px-6 py-4 text-sm text-slate-700 font-semibold">
