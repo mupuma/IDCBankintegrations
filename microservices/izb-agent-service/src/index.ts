@@ -21,6 +21,25 @@ const port = Number(process.env.PORT || 4101);
 app.use(cors());
 app.use(express.json());
 
+function getClientIp(req: express.Request) {
+  const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0]?.trim();
+  return forwardedFor || req.socket.remoteAddress || req.ip || 'unknown';
+}
+
+function getRequester(req: express.Request) {
+  return {
+    ip: getClientIp(req),
+    userAgent: req.headers['user-agent'] || 'unknown',
+    clientId: req.headers['x-client-id'] || req.headers['x-bank-client-id'] || 'unknown',
+    bankUser: req.headers['x-bank-user'] || req.headers['x-user'] || 'unknown',
+    requestId: req.headers['x-request-id'] || req.headers['x-correlation-id'] || 'none',
+  };
+}
+
+function logBankPull(event: string, details: Record<string, unknown>) {
+  console.log(`[izb.pull.${event}] ${JSON.stringify({ at: new Date().toISOString(), ...details })}`);
+}
+
 function isIzbServicePayload(value: unknown): value is { service: string; request: Record<string, unknown> } {
   return (
     typeof value === 'object' &&
@@ -79,16 +98,38 @@ function mapItem(it: unknown) {
 }
 
 app.post('/api/v1/payments/by_date', async (req, res) => {
+  const requester = getRequester(req);
+  const startedAt = Date.now();
+
   try {
     const providedKey = String(req.headers['x-api-key'] || '');
     if (!AGENT_API_KEY || providedKey !== AGENT_API_KEY) {
+      logBankPull('unauthorized', {
+        ...requester,
+        startDate: req.body?.startDate ?? null,
+        endDate: req.body?.endDate ?? null,
+      });
       return res.status(401).json({ error: 'Unauthorized from IZB Agent Service' });
     }
 
     if (!APP_API_URL) return res.status(500).json({ error: 'Portal APP_API_URL not configured' });
 
     const { startDate, endDate } = req.body || {};
-    if (!startDate || !endDate) return res.status(400).json({ error: 'startDate and endDate required' });
+    if (!startDate || !endDate) {
+      logBankPull('bad_request', {
+        ...requester,
+        reason: 'startDate and endDate required',
+        startDate: startDate ?? null,
+        endDate: endDate ?? null,
+      });
+      return res.status(400).json({ error: 'startDate and endDate required' });
+    }
+
+    logBankPull('requested', {
+      ...requester,
+      startDate,
+      endDate,
+    });
 
     const parseYYYYMMDD = (v: number | string) => {
       const s = String(v);
@@ -98,7 +139,15 @@ app.post('/api/v1/payments/by_date', async (req, res) => {
 
     const from = parseYYYYMMDD(startDate);
     const to = parseYYYYMMDD(endDate);
-    if (!from || !to) return res.status(400).json({ error: 'Invalid date format; expected YYYYMMDD integers' });
+    if (!from || !to) {
+      logBankPull('bad_request', {
+        ...requester,
+        reason: 'Invalid date format; expected YYYYMMDD integers',
+        startDate,
+        endDate,
+      });
+      return res.status(400).json({ error: 'Invalid date format; expected YYYYMMDD integers' });
+    }
 
     const url = new URL(`${APP_API_URL}/api/v1/izb/pull`);
     url.searchParams.set('from', from);
@@ -120,6 +169,17 @@ app.post('/api/v1/payments/by_date', async (req, res) => {
     const items = normalizePortalItems(portalJson);
     const mapped = items.map(mapItem);
 
+    logBankPull('completed', {
+      ...requester,
+      startDate,
+      endDate,
+      from,
+      to,
+      portalStatus: resp.status,
+      returnedCount: mapped.length,
+      durationMs: Date.now() - startedAt,
+    });
+
     return res.status(200).json({
       responseCode: '200',
       responseMessage: 'success',
@@ -127,7 +187,14 @@ app.post('/api/v1/payments/by_date', async (req, res) => {
       data: mapped,
     });
   } catch (err:any) {
-    console.error('payments/by_date proxy error', err);
+    console.error('[izb.pull.failed]', {
+      at: new Date().toISOString(),
+      ...requester,
+      startDate: req.body?.startDate ?? null,
+      endDate: req.body?.endDate ?? null,
+      durationMs: Date.now() - startedAt,
+      error: err instanceof Error ? err.message : String(err),
+    });
     return res.status(500).json({ error: String(err) });
   }
 });
