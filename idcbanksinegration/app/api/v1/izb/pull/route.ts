@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDatabase } from '@/app/lib/db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
+import { Op } from 'sequelize';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -66,7 +67,9 @@ export async function GET(request: NextRequest) {
   const rows = await PaymentQueueRequest.findAll({
     where: {
       bankCode: 'IZB',
-      status: 'queued',
+      status: {
+        [Op.in]: ['queued', 'pulled'],
+      },
     },
     order: [['created_at', 'ASC']],
   });
@@ -78,6 +81,7 @@ export async function GET(request: NextRequest) {
         id: row.id,
         queueId: row.queueId,
         paymentId: row.paymentId,
+        status: row.status,
         paymentDate: paymentDate(payment),
         payment,
       };
