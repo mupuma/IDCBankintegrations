@@ -38,11 +38,11 @@ test('decimal-safe batch totals accept 0.1 + 0.2 as 0.3 and reject floating drif
   b.total_amount = 0.1 + 0.2;
   assert.ok(contract.validateBatch('RTGS', b).length);
 });
-test('reject duplicate references, invalid count, BIC, dates, precision and long narration', () => {
+test('reject duplicate references, invalid count, BIC, dates and precision', () => {
   const b = batch(); b.transactions.push({ ...b.transactions[0] });
   const errors = contract.validateBatch('RTGS', b);
   assert.ok(errors.some(e => e.includes('duplicated'))); assert.ok(errors.some(e => e.includes('count')));
-  for (const change of [{ swiftCode: '' }, { transactionDate: '2026-02-30' }, { amount: 0 }, { amount: '1.001' }, { remarks: 'x'.repeat(36) }, { transactionType: 'TT' }]) {
+  for (const change of [{ swiftCode: '' }, { transactionDate: '2026-02-30' }, { amount: 0 }, { amount: '1.001' }, { transactionType: 'TT' }]) {
     assert.throws(() => contract.buildBatch({ ...payment, ...change }, options));
   }
 });

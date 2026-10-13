@@ -55,7 +55,6 @@ function paymentErrors(payment, scale = 2) {
     if (!/^[A-Z]{3}$/.test(text(payment.currency || payment.currencyCode))) errors.push('Currency must be a three-letter uppercase code');
     const date = paymentDate(payment.transactionDate);
     if (!validDate(date)) errors.push('Value date must be a valid YYYY-MM-DD date');
-    if (text(payment.remarks || payment.transactionReference).length > 35) errors.push('Transaction remarks must not exceed 35 characters');
   }
   return errors;
 }
@@ -101,7 +100,6 @@ function validateBatch(channel, batch, scale = 2) {
     if (channel === 'INTERNAL' && !/^\d{13}$/.test(text(item.account_number))) errors.push(`${prefix}: account_number must be 13 digits`);
     if (channel !== 'INTERNAL') {
       if (!validDate(item.transaction_value_date)) errors.push(`${prefix}: invalid value date`);
-      if (text(item.transaction_remarks).length > 35) errors.push(`${prefix}: remarks exceed 35 characters`);
       if (!/^[A-Z]{3}$/.test(text(item.receiver_currency))) errors.push(`${prefix}: invalid currency`);
     }
   });

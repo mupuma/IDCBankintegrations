@@ -139,7 +139,7 @@ All payment submission requests use a batch envelope.
 | --- | --- | --- | --- |
 | `prcn_number` | string | Yes | IDC item reference. Maximum length is 35 characters. ZICB must preserve this value for status checks and callbacks. |
 | `amount` | number | Yes | Transaction amount. |
-| `transaction_remarks` | string | Yes | Payment remarks. Maximum length is 35 characters. |
+| `transaction_remarks` | string | Yes | Payment remarks. |
 | `is_retry` | number | Yes | Retry flag. `0` for a new item, `1` for a retry item. |
 | `retry_count` | number | Yes | Retry count. `0` for a new item. |
 
