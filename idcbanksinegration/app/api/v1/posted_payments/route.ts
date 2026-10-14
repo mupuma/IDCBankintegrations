@@ -76,16 +76,56 @@ export async function POST(request: NextRequest) {
   let paymentToQueue = payment;
 
   if (bankCode === 'ZICB') {
-    if (!sourceBankCode) return NextResponse.json({ error: 'A source account is required' }, { status: 400 });
+    if (!sourceBankCode) {
+      terminalError('posted_payments.zicb.validation_failed', {
+        paymentId: payment.paymentId,
+        bankCode,
+        error: 'A source account is required',
+      });
+      return NextResponse.json({ success: false, error: 'A source account is required' }, { status: 400 });
+    }
     try {
       const source = await resolveSourceBank(sourceBankCode);
-      if (!source?.accountNumber || !source.transit) return NextResponse.json({ error: 'Source account details are incomplete' }, { status: 400 });
+      if (!source?.accountNumber || !source.transit) {
+        terminalError('posted_payments.zicb.validation_failed', {
+          paymentId: payment.paymentId,
+          bankCode,
+          sourceBank: sourceBankCode,
+          hasAccountNumber: Boolean(source?.accountNumber),
+          hasTransit: Boolean(source?.transit),
+          error: 'Source account details are incomplete',
+        });
+        return NextResponse.json({ success: false, error: 'Source account details are incomplete' }, { status: 400 });
+      }
+      terminalLog('posted_payments.zicb.enqueue_started', {
+        paymentId: payment.paymentId,
+        bankCode,
+        sourceBank: sourceBankCode,
+        transactionType: payment.transactionType,
+        currency: payment.currency || payment.currencyCode,
+      });
       const result = await enqueueH2h(payment, sourceBankCode);
+      terminalLog('posted_payments.zicb.enqueue_succeeded', {
+        paymentId: result.paymentId,
+        queueId: result.queueId,
+        sourceBank: sourceBankCode,
+        reference: result.reference,
+        prcn: result.prcn_number,
+      });
       await logAuditEvent({ userId: auth.id, username: auth.username, action: 'PAYMENT_POSTED', resourceType: 'payment',
         resourceId: result.paymentId, correlationId: result.queueId, summary: `${auth.username} queued a ZICB H2H payment`,
         details: { reference: result.reference, prcn: result.prcn_number }, request });
       return NextResponse.json({ success: true, ...result, dispatchStrategy: 'h2h-ledger' }, { status: 202 });
     } catch (error) {
+      terminalError('posted_payments.zicb.enqueue_failed', {
+        paymentId: payment.paymentId,
+        bankCode,
+        sourceBank: sourceBankCode,
+        transactionType: payment.transactionType,
+        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        status: error instanceof LedgerError ? error.status : 400,
+      });
       return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Unable to queue H2H payment' }, { status: error instanceof LedgerError ? error.status : 400 });
     }
   }
