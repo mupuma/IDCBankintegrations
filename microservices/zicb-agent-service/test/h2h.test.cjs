@@ -11,6 +11,23 @@ const { H2hClient } = require('../src/h2hClient.ts');
 const { processH2hWork } = require('../src/h2hRunner.ts');
 const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
+const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
+
+test('placeholder source profiles reject the actual source code with an actionable error', () => {
+  const previous = process.env.ZICB_H2H_SOURCE_PROFILES;
+  try {
+    const configured = { profileId: 'test', regionCode: 'TEST', currency: 'ZMW', amountScale: 2, channels: ['RTGS'] };
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ SOURCE_CODE: configured });
+    assert.throws(() => sourceProfile('77050'), /source account 77050.*ZICB_H2H_SOURCE_PROFILES/);
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ '77050': configured });
+    assert.deepEqual(sourceProfile('77050'), configured);
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ '77050': { ...configured, regionCode: '' } });
+    assert.throws(() => sourceProfile('77050'), /bank-approved profile ID, region code and currency/);
+  } finally {
+    if (previous === undefined) delete process.env.ZICB_H2H_SOURCE_PROFILES;
+    else process.env.ZICB_H2H_SOURCE_PROFILES = previous;
+  }
+});
 
 const payment = { paymentId: 'SAGE-1001', transactionType: 'RTGS', amount: 25.10, accountNumber: '001142662',
   accountName: 'Test Beneficiary', branchCode: '003', swiftCode: 'TESTZMLX', sortCode: '020016',

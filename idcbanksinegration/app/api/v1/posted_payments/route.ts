@@ -24,6 +24,7 @@ import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } 
 import { buildZanacoPayload, validateZanacoPayload } from '../../../lib/banks/payloadBuilders';
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
+import { sourceProfile } from '@/app/lib/zicb/config';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
@@ -85,6 +86,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'A source account is required' }, { status: 400 });
     }
     try {
+      // Reject missing bank onboarding configuration before querying source databases.
+      sourceProfile(sourceBankCode);
       const source = await resolveSourceBank(sourceBankCode);
       if (!source?.accountNumber || !source.transit) {
         terminalError('posted_payments.zicb.validation_failed', {

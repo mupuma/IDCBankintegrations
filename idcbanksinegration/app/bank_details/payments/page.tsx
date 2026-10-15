@@ -492,6 +492,8 @@ export default function PaymentQueueDashboard() {
   const [validationResults, setValidationResults] = useState<Record<string, ValidationResult>>({});
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [submissionErrors, setSubmissionErrors] = useState<Record<string, string>>({});
+  const [submittingPayments, setSubmittingPayments] = useState<Record<string, boolean>>({});
   const [previewPaymentId, setPreviewPaymentId] = useState<string | null>(null);
   const [processedTransactions, setProcessedTransactions] = useState<ProcessedTransactionRecord[]>([]);
   const [processedLoading, setProcessedLoading] = useState(false);
@@ -521,10 +523,6 @@ export default function PaymentQueueDashboard() {
     [visiblePayments, selectedPaymentIds],
   );
   const bulkAllowedTypes = bulkBank ? BANK_TRANSACTION_TYPES[bulkBank] : TRANSACTION_TYPES;
-
-  const clearMessage = () => {
-    setTimeout(() => setMessage(null), 4000);
-  };
 
   const syncPostedStatusesFromQueueItems = (items: BankQueueItem[]) => {
     const postedByPayment: Record<string, PostedPaymentRecord> = {};
@@ -646,7 +644,6 @@ export default function PaymentQueueDashboard() {
       setMessage(error?.message || 'Unable to load payments.');
     } finally {
       setLoading(false);
-      clearMessage();
     }
   };
 
@@ -731,17 +728,14 @@ export default function PaymentQueueDashboard() {
   const applyBulkSettings = () => {
     if (!selectedPayments.length) {
       setMessage('Select at least one payment first.');
-      clearMessage();
       return;
     }
     if (!bulkBank) {
       setMessage('Choose a bank to apply to the selected payments.');
-      clearMessage();
       return;
     }
     if (!BANK_TRANSACTION_TYPES[bulkBank].includes(bulkTransactionType)) {
       setMessage(`${bulkTransactionType} is not supported for ${bulkBank}.`);
-      clearMessage();
       return;
     }
 
@@ -768,7 +762,6 @@ export default function PaymentQueueDashboard() {
       return next;
     });
     setMessage(`Applied ${bulkBank} ${bulkTransactionType} settings to ${selectedPayments.length} selected payment${selectedPayments.length === 1 ? '' : 's'}.`);
-    clearMessage();
   };
 
   const handleSourceChange = (paymentId: string, value: string) => {
@@ -792,7 +785,6 @@ export default function PaymentQueueDashboard() {
     const bankCode = selectedQueues[payment.paymentId];
     if (!bankCode) {
       setMessage('Choose a queue before validating a payment.');
-      clearMessage();
       return;
     }
 
@@ -807,21 +799,20 @@ export default function PaymentQueueDashboard() {
         ? 'Payload is valid for selected queue.'
         : `Validation found ${result.errors.length} issue${result.errors.length === 1 ? '' : 's'}: ${result.errors.join('; ')}`
     );
-    clearMessage();
   };
 
   const handlePush = async (payment: EnrichedPayment) => {
+    if (submittingPayments[payment.paymentId]) return;
+    setSubmissionErrors((prev) => ({ ...prev, [payment.paymentId]: '' }));
     const bankCode = selectedQueues[payment.paymentId];
     if (!bankCode) {
       setMessage('Select a target queue before pushing payment.');
-      clearMessage();
       return;
     }
 
     const existingPost = postedPayments[payment.paymentId];
     if (existingPost && preventsPosting(existingPost.status, existingPost.bankCode)) {
       setMessage(`Payment already posted to ${existingPost.bankCode}. Each payment can only be sent to one bank.`);
-      clearMessage();
       return;
     }
 
@@ -833,10 +824,10 @@ export default function PaymentQueueDashboard() {
     if (!validation.valid) {
       setValidationResults((prev) => ({ ...prev, [payment.paymentId]: validation }));
       setMessage(`Payment cannot be submitted: ${validation.errors.join('; ')}`);
-      clearMessage();
       return;
     }
 
+    setSubmittingPayments((prev) => ({ ...prev, [payment.paymentId]: true }));
     try {
       const payload = effectivePayment;
       const response = await fetch('/api/v1/posted_payments', {
@@ -865,7 +856,6 @@ export default function PaymentQueueDashboard() {
         }));
         setSelectedQueues((prev) => ({ ...prev, [payment.paymentId]: postedBankCode }));
         setMessage(result?.error || 'Payment has already been posted.');
-        clearMessage();
         return;
       }
 
@@ -909,17 +899,18 @@ export default function PaymentQueueDashboard() {
 
       void refreshQueueItems();
       setMessage('Payment queued for async processing.');
-      clearMessage();
     } catch (error: any) {
-      setMessage(error?.message || 'Failed to push payment.');
-      clearMessage();
+      const reason = error?.message || 'Failed to push payment.';
+      setMessage(reason);
+      setSubmissionErrors((prev) => ({ ...prev, [payment.paymentId]: reason }));
+    } finally {
+      setSubmittingPayments((prev) => ({ ...prev, [payment.paymentId]: false }));
     }
   };
 
   const handleBulkPush = async () => {
     if (!selectedPayments.length) {
       setMessage('Select at least one payment to send.');
-      clearMessage();
       return;
     }
 
@@ -972,7 +963,6 @@ export default function PaymentQueueDashboard() {
 
     if (validationErrors.length) {
       setMessage(`Cannot send selected payments: ${validationErrors.slice(0, 3).join(' | ')}${validationErrors.length > 3 ? ` and ${validationErrors.length - 3} more` : ''}`);
-      clearMessage();
       return;
     }
 
@@ -998,6 +988,12 @@ export default function PaymentQueueDashboard() {
             }));
 
         for (const body of requests) {
+          const requestPayments = 'payments' in body ? body.payments : [body.payment];
+          setSubmissionErrors((prev) => {
+            const next = { ...prev };
+            for (const payment of requestPayments) delete next[payment.paymentId];
+            return next;
+          });
           const response = await fetch('/api/v1/posted_payments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1016,6 +1012,13 @@ export default function PaymentQueueDashboard() {
 
             failedCount += affectedCount;
             submissionErrors.push(validationText ? `${errorText}: ${validationText}` : errorText);
+            setSubmissionErrors((prev) => ({
+              ...prev,
+              ...Object.fromEntries(requestPayments.map((payment) => [
+                payment.paymentId,
+                validationText ? `${errorText}: ${validationText}` : errorText,
+              ])),
+            }));
             continue;
           }
 
@@ -1058,10 +1061,8 @@ export default function PaymentQueueDashboard() {
         ? ` ${submissionErrors.slice(0, 2).join(' | ')}${submissionErrors.length > 2 ? ` and ${submissionErrors.length - 2} more` : ''}`
         : '';
       setMessage(`Queued ${queuedCount} payment${queuedCount === 1 ? '' : 's'}${failedCount ? `; ${failedCount} failed to queue.${errorSummary}` : '.'}`);
-      clearMessage();
     } catch (error: any) {
       setMessage(error?.message || 'Failed to send selected payments.');
-      clearMessage();
     } finally {
       setBulkSubmitting(false);
     }
@@ -1114,8 +1115,9 @@ export default function PaymentQueueDashboard() {
         </div>
 
         {message ? (
-          <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
-            {message}
+          <div role="status" className="mt-6 flex items-start justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+            <span>{message}</span>
+            <button type="button" onClick={() => setMessage(null)} className="shrink-0 font-semibold">Dismiss</button>
           </div>
         ) : null}
 
@@ -1379,9 +1381,9 @@ export default function PaymentQueueDashboard() {
                             type="button"
                             onClick={() => handlePush(payment)}
                             className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-                            disabled={!selectedBank || !validation?.valid || isQueued || isAlreadyPosted}
+                            disabled={!selectedBank || !validation?.valid || isQueued || isAlreadyPosted || submittingPayments[payment.paymentId] || bulkSubmitting}
                           >
-                            {isAlreadyPosted ? 'Posted' : 'Push'}
+                            {isAlreadyPosted ? 'Posted' : submittingPayments[payment.paymentId] ? 'Submitting...' : 'Push'}
                           </button>
                           <button
                             type="button"
@@ -1391,6 +1393,15 @@ export default function PaymentQueueDashboard() {
                             Preview
                           </button>
                         </div>
+                        {submissionErrors[payment.paymentId] ? (
+                          <div role="alert" className="mt-3 whitespace-normal rounded-2xl border border-rose-200 bg-rose-50 p-3 text-left text-xs text-rose-700">
+                            <div className="mb-1 font-semibold">Could not queue payment</div>
+                            {submissionErrors[payment.paymentId]}
+                          </div>
+                        ) : null}
+                        {!validation && selectedBank && !isAlreadyPosted ? (
+                          <p className="mt-2 whitespace-normal text-xs text-slate-500">Validate this payment to enable Push.</p>
+                        ) : null}
                         {validation ? (
                           <div className={`mt-3 rounded-2xl px-3 py-2 text-xs font-semibold ${validation.valid ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}`}>
                             {validation.valid ? 'Payload valid' : `${validation.errors.length} issues`}

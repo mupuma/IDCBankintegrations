@@ -3,7 +3,7 @@ export function sourceProfile(sourceBank: string) {
   const profiles = JSON.parse(process.env.ZICB_H2H_SOURCE_PROFILES || '{}');
   const profile = profiles[sourceBank.toUpperCase()];
   if (!profile || typeof profile.regionCode !== 'string' || !profile.regionCode.trim() || !profile.profileId || !profile.currency) {
-    throw new Error('ZICB H2H source account profile, region code and currency must be configured');
+    throw new Error(`ZICB H2H is not configured for source account ${sourceBank.toUpperCase()}. Configure its bank-approved profile ID, region code and currency in ZICB_H2H_SOURCE_PROFILES.`);
   }
   if (!Number.isInteger(profile.amountScale) || profile.amountScale < 0 || profile.amountScale > 6) throw new Error('Configure the bank-approved amountScale for the source profile');
   return profile as { profileId: string; regionCode: string; currency: string; amountScale: number; cashbookAccount?: string; channels?: string[] };
