@@ -18,6 +18,16 @@ type ZanacoConfig = {
   requireResponseSignature: boolean;
 };
 
+export function connectionErrorCodes(error: unknown, depth = 0): string[] {
+  if (!error || typeof error !== 'object' || depth > 5) return [];
+  const value = error as { code?: unknown; cause?: unknown; errors?: unknown[] };
+  const own = typeof value.code === 'string' && /^[A-Z0-9_]{1,80}$/.test(value.code) ? [value.code] : [];
+  return [...new Set([
+    ...own, ...connectionErrorCodes(value.cause, depth + 1),
+    ...(Array.isArray(value.errors) ? value.errors.flatMap(item => connectionErrorCodes(item, depth + 1)) : []),
+  ])];
+}
+
 export class ZanacoClient {
   private token?: TokenState;
   private tokenRequest?: Promise<string>;
@@ -35,6 +45,13 @@ export class ZanacoClient {
       });
       const text = await response.text();
       return { response, text };
+    } catch (error) {
+      const host = new URL(this.config.baseUrl).host;
+      const codes = controller.signal.aborted ? ['REQUEST_TIMEOUT'] : connectionErrorCodes(error);
+      const reason = codes.length ? codes.join(', ') : 'NETWORK_ERROR';
+      // Never log authentication bodies, credentials, tokens or key contents.
+      logError('zws.connection.failed', { host, endpoint, codes: codes.length ? codes : ['NETWORK_ERROR'] });
+      throw Object.assign(new Error(`Zanaco connection to ${host} failed (${reason})`), { cause: error });
     } finally { clearTimeout(timer); }
   }
 

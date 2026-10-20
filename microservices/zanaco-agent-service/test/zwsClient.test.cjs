@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { ZanacoClient, validateZanacoConfiguration } = require('../dist/zwsClient');
+const { ZanacoClient, validateZanacoConfiguration, connectionErrorCodes } = require('../dist/zwsClient');
 const { sendZanacoPayment, queryTransactionStatus } = require('../dist/zanacoAgent');
 const { submitBulk, prepareBulkPayload, reconcileBulk } = require('../dist/bulk');
 
@@ -121,11 +121,29 @@ test('request timeout covers a stalled response body', async () => {
         else init.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       }),
     }));
-    await assert.rejects(client.getAccessToken(), /abort/i);
+    await assert.rejects(client.getAccessToken(), /REQUEST_TIMEOUT/);
   } finally {
     if (previous === undefined) delete process.env.ZANACO_REQUEST_TIMEOUT_MS;
     else process.env.ZANACO_REQUEST_TIMEOUT_MS = previous;
   }
+});
+
+test('network failures expose DNS, TLS and connection codes without credentials', async () => {
+  for (const code of ['ENOTFOUND', 'ECONNREFUSED', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']) {
+    const client = new ZanacoClient(config, async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('Underlying socket error'), { code }) });
+    });
+    await assert.rejects(client.getAccessToken(), error => {
+      assert.match(error.message, new RegExp(code));
+      assert.match(error.message, /bank\.test/);
+      assert.equal(error.message.includes(config.apiSecret), false);
+      assert.equal(error.message.includes(config.partnerPrivateKey), false);
+      return true;
+    });
+  }
+  assert.deepEqual(connectionErrorCodes(Object.assign(new Error('fetch failed'), {
+    cause: new AggregateError([Object.assign(new Error(), { code: 'ECONNREFUSED' }), Object.assign(new Error(), { code: 'ETIMEDOUT' })]),
+  })), ['ECONNREFUSED', 'ETIMEDOUT']);
 });
 
 test('unknown, malformed success and server errors never authorise transaction resubmission', async () => {

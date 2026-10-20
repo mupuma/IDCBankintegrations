@@ -346,6 +346,7 @@ function isIndoZambiaBeneficiary(payment: EnrichedPayment) {
 
 function transactionTypeLabel(bankCode: BankCode | '', type: PaymentsResponse['transactionType']) {
   if (bankCode === 'IZB' && type === 'DDACCT') return 'DDACC';
+  if (bankCode === 'ZANACO' && type === 'TT') return 'SWIFT';
   return type;
 }
 
@@ -747,7 +748,7 @@ export default function PaymentQueueDashboard() {
       for (const payment of selectedPayments) delete next[payment.paymentId];
       return next;
     });
-    setMessage(`Applied ${bulkBank} ${bulkTransactionType} settings to ${selectedPayments.length} selected payment${selectedPayments.length === 1 ? '' : 's'}.`);
+    setMessage(`Applied ${bulkBank} ${transactionTypeLabel(bulkBank, bulkTransactionType)} settings to ${selectedPayments.length} selected payment${selectedPayments.length === 1 ? '' : 's'}.`);
   };
 
   const handleSourceChange = (paymentId: string, value: string) => {
@@ -1272,7 +1273,7 @@ export default function PaymentQueueDashboard() {
                       </td>
                       <td className="px-6 py-4 text-sm text-slate-700 font-semibold">
                         <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-700">
-                          {selectedType}
+                          {transactionTypeLabel(selectedBank, selectedType)}
                         </span>
                       </td>
                       <td className="px-6 py-4">
@@ -1346,6 +1347,40 @@ export default function PaymentQueueDashboard() {
                             <option key={type} value={type}>{transactionTypeLabel(selectedBank, type)}</option>
                           ))}
                         </select>
+                        {selectedBank === 'ZANACO' && selectedType === 'TT' ? (
+                          <div className="mt-3 space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs text-slate-700">
+                            <p className="font-semibold">SWIFT payment details</p>
+                            <p>Requires beneficiary BIC/SWIFT code, physical address, TPIN, purpose code and sector code.</p>
+                            {([
+                              ['tpin', 'TPIN', 20],
+                              ['purposeCode', 'Purpose code', 8],
+                              ['sectorCode', 'Sector code', 8],
+                            ] as const).map(([field, label, maxLength]) => (
+                              <label key={field} className="block space-y-1">
+                                <span>{label} <span className="text-rose-700">*</span></span>
+                                <input
+                                  type="text"
+                                  value={field === 'tpin' ? payment.tpin ?? payment.tpIn ?? '' : payment[field] ?? ''}
+                                  maxLength={maxLength}
+                                  disabled={isAlreadyPosted || submittingPayments[payment.paymentId] || bulkSubmitting}
+                                  onChange={(event) => {
+                                    const value = event.target.value;
+                                    setPayments((prev) => prev.map((row) => row.paymentId === payment.paymentId
+                                      ? { ...row, [field]: value, ...(field === 'tpin' ? { tpIn: value } : {}) }
+                                      : row));
+                                    setValidationResults((prev) => {
+                                      const next = { ...prev };
+                                      delete next[payment.paymentId];
+                                      return next;
+                                    });
+                                    setSubmissionErrors((prev) => ({ ...prev, [payment.paymentId]: '' }));
+                                  }}
+                                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400 disabled:opacity-60"
+                                />
+                              </label>
+                            ))}
+                          </div>
+                        ) : null}
                         {selectedBank === 'IZB' ? (
                           <div className="mt-3 rounded-2xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
                             <div className="mb-1 font-semibold">IZB transaction type rules</div>
@@ -1516,7 +1551,7 @@ export default function PaymentQueueDashboard() {
                 <h2 className="text-lg font-semibold text-slate-900">Bank Payload Preview</h2>
                 <p className="text-sm text-slate-500">Review the normalized payment payload before queue push.</p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Bank: {selectedQueues[previewPayment.paymentId] || 'None selected'} • Type: {transactionOverrides[previewPayment.paymentId] ?? previewPayment.transactionType}
+                  Bank: {selectedQueues[previewPayment.paymentId] || 'None selected'} • Type: {transactionTypeLabel(selectedQueues[previewPayment.paymentId] || '', transactionOverrides[previewPayment.paymentId] ?? previewPayment.transactionType)}
                 </p>
                 {!selectedQueues[previewPayment.paymentId] ? (
                   <p className="text-xs text-amber-400 mt-2">
