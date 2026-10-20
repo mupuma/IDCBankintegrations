@@ -10,9 +10,16 @@ function todayIsoDate() {
 }
 
 function zanacoValueDate(value: string | Date | undefined) {
-  const formatted = value ? formatDate(value) : '';
   const today = todayIsoDate();
-  if (!formatted || !/^\d{4}-\d{2}-\d{2}$/.test(formatted)) return today;
+  if (!value) return today;
+  const raw = String(value).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const date = new Date(`${raw}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== raw) return raw;
+    return raw < today ? today : raw;
+  }
+  const formatted = formatDate(value);
+  if (!formatted) return raw;
   return formatted < today ? today : formatted;
 }
 
@@ -27,25 +34,18 @@ function normalizeString(value: unknown) {
 }
 
 function referenceSuffix(seed: string) {
-  let hash = 5381;
+  let hash = BigInt('14695981039346656037');
+  const mask = (BigInt(1) << BigInt(64)) - BigInt(1);
   for (let index = 0; index < seed.length; index += 1) {
-    hash = ((hash << 5) + hash) + seed.charCodeAt(index);
-    hash >>>= 0;
+    hash = ((hash ^ BigInt(seed.charCodeAt(index))) * BigInt('1099511628211')) & mask;
   }
-  return hash.toString(16).toUpperCase().padStart(8, '0');
+  return hash.toString(16).toUpperCase().padStart(16, '0');
 }
 
 function zanacoExternalTranRef(payment: PaymentsResponse, maxLength: number) {
-  const base = (payment.transactionReference || String(payment.paymentId || '')).replace(/[^a-zA-Z0-9]/g, '');
-  if (maxLength !== 20 || base.length >= 20) return base.slice(0, maxLength);
-
-  const seed = base || JSON.stringify({
-    paymentId: payment.paymentId,
-    vendorId: payment.vendorId,
-    amount: payment.amount,
-    transactionDate: payment.transactionDate,
-  });
-  return `${base}${referenceSuffix(seed)}${referenceSuffix(`${seed}:ddac`)}`.slice(0, 20);
+  const seed = normalizeString(payment.paymentId || payment.transactionReference);
+  if (!seed) return '';
+  return `${referenceSuffix(seed)}${referenceSuffix(`IDC:${seed}`)}${referenceSuffix(`DDAC:${seed}`)}`.slice(0, maxLength);
 }
 
 function buildCommonRequest(payment: PaymentsResponse, source?: any) {
@@ -127,16 +127,19 @@ export function buildIzbPayload(payment: PaymentsResponse, transactionType: Paym
 
 export function buildZanacoPayload(payment: PaymentsResponse, transactionType: PaymentsResponse['transactionType'], source?: any) {
   const requestBase = buildCommonRequest(payment, source);
-  const normalizedTransactionType = String(transactionType || '').toUpperCase();
+  const normalizedTransactionType = String(transactionType || '').trim().toUpperCase();
+  if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(normalizedTransactionType)) {
+    throw new Error('Unsupported Zanaco transaction type. Choose INT, RTGS, DDACCT or TT.');
+  }
   const debitAccount = requestBase.srcAcc;
-  const creditAccount = requestBase.accountNumber;
+  const creditAccount = normalizeString(requestBase.accountNumber);
   const externalTranRef = zanacoExternalTranRef(payment, ['DDACCT', 'DDAC'].includes(normalizedTransactionType) ? 20 : 16);
-  const ccy = requestBase.payCurrency.toUpperCase();
-  const amount = String(requestBase.amount);
+  const ccy = normalizeString(payment.currency || payment.currencyCode).toUpperCase();
+  const amount = ['string', 'number'].includes(typeof payment.amount) ? String(requestBase.amount) : 'NaN';
   const valueDate = zanacoValueDate(payment.transactionDate);
   const paymentDetails = requestBase.remarks.slice(0, 105);
-  const name = requestBase.accountName || requestBase.customerId || 'Beneficiary';
-  const address = [requestBase.plotNo, requestBase.streetName, requestBase.town].filter(Boolean).join(', ') || requestBase.bankName || 'Zambia';
+  const name = normalizeString(requestBase.accountName);
+  const address = [requestBase.plotNo, requestBase.streetName, requestBase.town].map(normalizeString).filter(Boolean).join(', ');
 
   if (normalizedTransactionType === 'INT') {
     return {
@@ -163,7 +166,7 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
         debitAccount,
         creditAccount,
         externalTranRef,
-        duplicatableExternalRef: (payment as any).duplicatableExternalRef || '',
+        duplicatableExternalRef: normalizeString((payment as any).duplicatableExternalRef),
         ccy,
         product: 'SWIFT',
         amount,
@@ -171,10 +174,10 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
         paymentDetails,
         name,
         address: address.slice(0, 105),
-        bicCode: requestBase.swiftCode,
-        tpin: (payment as any).tpin || (payment as any).tpIn || '',
-        purposeCode: (payment as any).purposeCode || '',
-        sectorCode: (payment as any).sectorCode || '',
+        bicCode: normalizeString(requestBase.swiftCode),
+        tpin: normalizeString((payment as any).tpin || (payment as any).tpIn),
+        purposeCode: normalizeString((payment as any).purposeCode),
+        sectorCode: normalizeString((payment as any).sectorCode),
       },
     };
   }
@@ -192,7 +195,7 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
         paymentDetails,
         name,
         address,
-        sortCode: requestBase.sortCode || requestBase.branchCode,
+        sortCode: normalizeString(requestBase.sortCode) || normalizeString(requestBase.branchCode),
       },
     };
   }
@@ -209,7 +212,7 @@ export function buildZanacoPayload(payment: PaymentsResponse, transactionType: P
       paymentDetails,
       name,
       address,
-      bicCode: requestBase.swiftCode,
+      bicCode: normalizeString(requestBase.swiftCode),
     },
   };
 }
@@ -323,19 +326,31 @@ export function validateZicbPayload(payload: { service: string; request: Record<
 
 export function validateZanacoPayload(payload: { service: string; request: Record<string, unknown> }) {
   const errors: string[] = [];
+  if (!['ZANACO_INTERNAL', 'ZANACO_RTGS', 'ZANACO_DDAC', 'ZANACO_SWIFT'].includes(payload?.service)) {
+    return ['Unsupported Zanaco payment service'];
+  }
+  if (!payload.request || typeof payload.request !== 'object' || Array.isArray(payload.request)) return ['request must be an object'];
   const request = payload.request;
   const value = (field: string) => String(request[field] ?? '').trim();
   const requireFields = (fields: string[]) => fields.forEach((field) => {
     if (!value(field)) errors.push(`request.${field} is required`);
   });
-  const amount = Number(request.amount);
+  const amount = ['string', 'number'].includes(typeof request.amount) ? Number(request.amount) : NaN;
   const transferRefMax = payload.service === 'ZANACO_DDAC' ? 20 : 16;
   const duplicatableExternalRef = value('duplicatableExternalRef');
 
   requireFields(['debitAccount', 'creditAccount', 'externalTranRef', 'ccy', 'amount', 'valueDate', 'paymentDetails', 'name']);
   if (!Number.isFinite(amount) || amount <= 0) errors.push('request.amount must be a positive number');
-  if (!/^[A-Z]{3}$/.test(value('ccy').toUpperCase())) errors.push('request.ccy must be a three-letter currency code');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value('valueDate'))) errors.push('request.valueDate must be a valid YYYY-MM-DD date');
+  if (!/^[A-Z]{3}$/.test(value('ccy'))) errors.push('request.ccy must be a three-letter uppercase currency code');
+  const valueDate = value('valueDate');
+  const date = new Date(`${valueDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(valueDate) || Number.isNaN(date.getTime())
+    || date.toISOString().slice(0, 10) !== valueDate || valueDate < todayIsoDate()) {
+    errors.push('request.valueDate must be a valid YYYY-MM-DD date that is today or in the future');
+  }
+  for (const [field, max] of [['creditAccount', 20], ['paymentDetails', 105], ['name', 105]] as const) {
+    if (value(field).length > max) errors.push(`request.${field} must be ${max} characters or less`);
+  }
   if (value('externalTranRef').length < 6 || value('externalTranRef').length > transferRefMax || !/^[a-zA-Z0-9]+$/.test(value('externalTranRef'))) {
     errors.push(`request.externalTranRef must be 6-${transferRefMax} alphanumeric characters`);
   }
@@ -349,7 +364,11 @@ export function validateZanacoPayload(payload: { service: string; request: Recor
   if (payload.service === 'ZANACO_INTERNAL' && value('bicCode') !== 'ZNCOZMLUXXX') {
     errors.push('request.bicCode must be ZNCOZMLUXXX for internal Zanaco transfers');
   }
-  if (payload.service === 'ZANACO_RTGS') requireFields(['bicCode']);
+  if (payload.service === 'ZANACO_INTERNAL' || payload.service === 'ZANACO_RTGS') {
+    requireFields(['address', 'bicCode']);
+    if (value('address').length > 105) errors.push('request.address must be 105 characters or less');
+    if (value('bicCode').length > 11) errors.push('request.bicCode must be 11 characters or less');
+  }
   if (payload.service === 'ZANACO_DDAC' && !/^\d{6}$/.test(value('sortCode'))) {
     errors.push('request.sortCode must be 6 digits for DDAC transfers');
   }
@@ -368,6 +387,78 @@ export function validateZanacoPayload(payload: { service: string; request: Recor
     if (value('purposeCode').length > 8) errors.push('request.purposeCode must be 8 characters or less');
     if (value('sectorCode').length > 8) errors.push('request.sectorCode must be 8 characters or less');
   }
+
+  return errors;
+}
+
+export function validateZanacoPaymentSelection(payment: PaymentsResponse, transactionType: PaymentsResponse['transactionType'], source?: { accountNumber?: string | null }) {
+  if (!source) return { valid: false, errors: ['Source account is required for Zanaco payments.'] };
+  if (!String(payment.paymentId ?? '').trim()) return { valid: false, errors: ['A stable Sage paymentId is required for Zanaco payments.'] };
+  try {
+    const errors = validateZanacoPayload(buildZanacoPayload(payment, transactionType, source));
+    return { valid: errors.length === 0, errors };
+  } catch (error) {
+    return { valid: false, errors: [error instanceof Error ? error.message : 'Unable to validate Zanaco payment.'] };
+  }
+}
+
+// Keep bulk queue validation aligned with the agent; parity is covered by tests.
+export function validateZanacoBulkPayload(prepared: { service: string; request: Record<string, unknown> }) {
+  const errors: string[] = [];
+  const transferType = prepared.service.replace('ZANACO_BULK_', '');
+  if (!['INTERNAL', 'RTGS', 'DDAC', 'SWIFT'].includes(transferType)) return ['Unsupported Zanaco bulk service'];
+  const request = prepared.request ?? {};
+  const items = Array.isArray(request.items) ? request.items as Record<string, unknown>[] : [];
+  const text = (value: unknown) => typeof value === 'string' ? value.trim() : value === undefined || value === null ? '' : String(value);
+  const totalAmount = Number(request.totalAmount);
+  const descriptionMax = transferType === 'RTGS' ? 500 : 140;
+  const refMax = transferType === 'DDAC' ? 20 : 16;
+  const refMin = transferType === 'DDAC' ? 16 : 1;
+  const isBulkAccount = (value: string) => /^\d{9}$/.test(value) || /^\d{13}$/.test(value);
+
+  if (!text(request.batchName)) errors.push('batchName is required');
+  if (text(request.batchName).length > 100) errors.push('batchName must be 100 characters or less');
+  if (text(request.description).length > descriptionMax) errors.push(`description must be ${descriptionMax} characters or less`);
+  if (!/^[A-Z]{3}$/.test(text(request.currency).toUpperCase())) errors.push('currency must be a three-letter ISO currency code');
+  if (!Number.isInteger(Number(request.totalCount)) || Number(request.totalCount) <= 0) errors.push('totalCount must be a positive integer');
+  if (!Number.isFinite(totalAmount) || totalAmount <= 0) errors.push('totalAmount must be a positive number');
+  if (!items.length) errors.push('items must contain at least one transfer');
+  if (items.length > 1000) errors.push('items cannot exceed 1000 transfers');
+  if (Number(request.totalCount) !== items.length) errors.push('totalCount must match items length');
+  if (items.some(item => !item || typeof item !== 'object' || Array.isArray(item))) return [...errors, 'items must contain transfer objects'];
+  const refs = items.map(item => text(item.externalTranRef));
+  if (new Set(refs).size !== refs.length) errors.push('externalTranRef must be unique within the batch');
+  if (items.some(item => item.ccy && text(item.ccy).toUpperCase() !== text(request.currency).toUpperCase())) errors.push('all items must use the batch currency');
+  if (items.some(item => item.valueDate && request.valueDate && text(item.valueDate) !== text(request.valueDate))) errors.push('all items must use the batch valueDate');
+
+  const computedTotal = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  if (items.length && Math.abs(computedTotal - totalAmount) > 0.01) errors.push('totalAmount must equal the sum of item amounts');
+
+  items.forEach((item, index) => {
+    const prefix = `items[${index}]`;
+    const requireField = (field: string) => {
+      if (!text(item[field])) errors.push(`${prefix}.${field} is required`);
+    };
+    requireField('debitAccount');
+    requireField('creditAccount');
+    requireField('externalTranRef');
+    requireField('amount');
+    requireField('name');
+    if (text(item.debitAccount) && !isBulkAccount(text(item.debitAccount))) errors.push(`${prefix}.debitAccount must be 9 or 13 digits`);
+    if (text(item.creditAccount) && !isBulkAccount(text(item.creditAccount))) errors.push(`${prefix}.creditAccount must be 9 or 13 digits`);
+    if (text(item.externalTranRef) && (text(item.externalTranRef).length < refMin || text(item.externalTranRef).length > refMax)) {
+      errors.push(`${prefix}.externalTranRef must be ${transferType === 'DDAC' ? '16-20' : '16 or fewer'} characters`);
+    }
+    if (text(item.name).length > 140) errors.push(`${prefix}.name must be 140 characters or less`);
+    if (text(item.paymentDetails).length > 140) errors.push(`${prefix}.paymentDetails must be 140 characters or less`);
+    if (!Number.isFinite(Number(item.amount)) || Number(item.amount) <= 0) errors.push(`${prefix}.amount must be positive`);
+    if (transferType === 'RTGS' && !text(item.bicCode)) errors.push(`${prefix}.bicCode is required for RTGS`);
+    if (transferType === 'DDAC' && !/^\d{6}$/.test(text(item.sortCode))) errors.push(`${prefix}.sortCode must be 6 digits for DDAC`);
+    if (transferType === 'SWIFT') {
+      ['address', 'bicCode', 'tpin', 'purposeCode', 'sectorCode'].forEach(requireField);
+      if (text(item.address).length > 255) errors.push(`${prefix}.address must be 255 characters or less`);
+    }
+  });
 
   return errors;
 }

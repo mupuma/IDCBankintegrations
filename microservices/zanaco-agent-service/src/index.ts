@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { paymentQueue } from './queue';
+import { enqueuePaymentWork } from './queue';
 import { isZanacoServicePayload } from './zanacoValidation';
 import { prepareZanacoPayload, prepareZanacoServicePayload } from './zanacoAgent';
 import { getBatchDetail, getBatchStatus, isBulkService, prepareBulkPayload, validateBulkPayload } from './bulk';
@@ -112,12 +112,7 @@ app.get('/health', (_req, res) => {
 });
 
 async function enqueue(payment: unknown, queueId: string, sourceBank?: string | null, reportToPortal = false) {
-  return paymentQueue.add('send-zanaco-payment', { payment, queueId, sourceBank, reportToPortal }, {
-    attempts: Number(process.env.JOB_ATTEMPTS || 3),
-    backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
-    removeOnComplete: true,
-    removeOnFail: false,
-  });
+  return enqueuePaymentWork(payment, queueId, sourceBank, reportToPortal);
 }
 
 app.listen(port, () => {

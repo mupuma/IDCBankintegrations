@@ -21,7 +21,7 @@ import { PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
 import { resolveSourceBank } from '@/app/lib/sourceAccounts';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
-import { buildZanacoPayload, validateZanacoPayload } from '../../../lib/banks/payloadBuilders';
+import { buildZanacoPayload, validateZanacoPayload, validateZanacoBulkPayload } from '../../../lib/banks/payloadBuilders';
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
 import { sourceProfile } from '@/app/lib/zicb/config';
@@ -134,7 +134,10 @@ export async function POST(request: NextRequest) {
   }
 
   if (bankCode === 'ZANACO') {
-    const selectedTransactionType = String(payment.transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
+    if (!String(payment.paymentId ?? '').trim()) {
+      return NextResponse.json({ success: false, error: 'A stable Sage paymentId is required for Zanaco payments.' }, { status: 400 });
+    }
+    const selectedTransactionType = String(payment.transactionType ?? '').trim().toUpperCase() as PaymentsResponse['transactionType'];
     if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(selectedTransactionType)) {
       return NextResponse.json(
         { success: false, error: 'transactionType must be one of INT, RTGS, DDACCT, DDAC, TT, SWIFT for Zanaco payments.' },
@@ -241,7 +244,7 @@ export async function POST(request: NextRequest) {
       return requeueFailedReservedPayment({
         request,
         auth,
-        payment,
+        payment: paymentToQueue,
         paymentId,
         bankCode,
         sourceBankCode,
@@ -450,6 +453,14 @@ async function postManyPayments(input: {
     );
   }
 
+  if (payments.length > 1000 || payments.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return NextResponse.json({ success: false, error: 'Bulk payments must contain 2 to 1000 payment objects.' }, { status: 400 });
+  }
+  const paymentIds = payments.map(row => String(row.paymentId ?? '').trim());
+  if (paymentIds.some(id => !id) || new Set(paymentIds).size !== paymentIds.length) {
+    return NextResponse.json({ success: false, error: 'Every bulk payment must have a unique, non-empty Sage paymentId.' }, { status: 400 });
+  }
+
   if (bankCode !== 'ZANACO') {
     terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'bulk flow not configured for bank' });
     return NextResponse.json(
@@ -466,8 +477,11 @@ async function postManyPayments(input: {
     );
   }
 
-  const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
-  const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).toUpperCase() === effectiveType);
+  const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').trim().toUpperCase() as PaymentsResponse['transactionType'];
+  if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(effectiveType)) {
+    return NextResponse.json({ success: false, error: 'Unsupported Zanaco bulk transaction type.' }, { status: 400 });
+  }
+  const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).trim().toUpperCase() === effectiveType);
   if (!sameType) {
     terminalError('posted_payments.bulk.validation_failed', { bankCode, transactionType: effectiveType, error: 'mixed transaction types' });
     return NextResponse.json(
@@ -530,6 +544,9 @@ async function postManyPayments(input: {
 
   const totalAmount = itemRequests.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
   const currency = String(itemRequests[0]?.ccy ?? 'ZMW');
+  if (itemRequests.some(item => item.ccy !== currency || item.valueDate !== itemRequests[0].valueDate)) {
+    return NextResponse.json({ success: false, error: 'Bulk payments must use one currency and one value date. Split the selection into separate batches.' }, { status: 400 });
+  }
   const bulkPayload = {
     service,
     request: {
@@ -547,6 +564,11 @@ async function postManyPayments(input: {
       sourceBank: sourceBankCode,
     },
   };
+
+  const bulkValidationErrors = validateZanacoBulkPayload(bulkPayload);
+  if (bulkValidationErrors.length) {
+    return NextResponse.json({ success: false, error: 'Invalid Zanaco bulk transfer', validationErrors: bulkValidationErrors }, { status: 400 });
+  }
 
   try {
     const db = await getSequelize();

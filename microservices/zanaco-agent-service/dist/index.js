@@ -109,12 +109,7 @@ app.get('/health', (_req, res) => {
     res.json({ status: 'ok', service: 'zanaco-agent-service' });
 });
 async function enqueue(payment, queueId, sourceBank, reportToPortal = false) {
-    return queue_1.paymentQueue.add('send-zanaco-payment', { payment, queueId, sourceBank, reportToPortal }, {
-        attempts: Number(process.env.JOB_ATTEMPTS || 3),
-        backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
-        removeOnComplete: true,
-        removeOnFail: false,
-    });
+    return (0, queue_1.enqueuePaymentWork)(payment, queueId, sourceBank, reportToPortal);
 }
 app.listen(port, () => {
     console.log(`Zanaco agent service running on http://localhost:${port}`);

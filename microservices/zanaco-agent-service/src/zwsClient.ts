@@ -22,7 +22,21 @@ export class ZanacoClient {
   private token?: TokenState;
   private tokenRequest?: Promise<string>;
 
-  constructor(private readonly config = loadZanacoConfig()) {}
+  constructor(private readonly config = loadZanacoConfig(), private readonly transport: typeof fetch = fetch) {}
+
+  private async request(endpoint: string, init: RequestInit) {
+    const timeoutMs = Number(process.env.ZANACO_REQUEST_TIMEOUT_MS || 90000);
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('ZANACO_REQUEST_TIMEOUT_MS must be positive');
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.transport(`${this.config.baseUrl}${endpoint}`, {
+        ...init, signal: controller.signal, redirect: 'error',
+      });
+      const text = await response.text();
+      return { response, text };
+    } finally { clearTimeout(timer); }
+  }
 
   async send(prepared: ZanacoPreparedRequest) {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -45,12 +59,13 @@ export class ZanacoClient {
     }
 
     let response: Response;
+    let text: string;
     try {
-      response = await fetch(`${this.config.baseUrl}${prepared.endpoint}`, {
+      ({ response, text } = await this.request(prepared.endpoint, {
         method: prepared.method,
         headers,
         body: prepared.method === 'GET' ? undefined : bodyText || undefined,
-      });
+      }));
     } catch (error) {
       logError('zws.request.failed', {
         service: prepared.service,
@@ -60,7 +75,6 @@ export class ZanacoClient {
       throw error;
     }
 
-    const text = await response.text();
     const data = parseResponseBody(text);
     logEvent('zws.response.received', {
       service: prepared.service,
@@ -70,6 +84,8 @@ export class ZanacoClient {
       bodyType: typeof data,
     });
     this.verifyResponse(text, data, response.headers.get('signature'));
+    // Refresh credentials on the next enquiry; never replay a payment here.
+    if (response.status === 401 && this.token) this.token.expiresAt = 0;
 
     return { status: response.status, ok: response.ok, data };
   }
@@ -135,7 +151,7 @@ export class ZanacoClient {
   private async authRequest(endpoint: string, payload: Record<string, unknown>) {
     const bodyText = compactJson(payload);
     logEvent('zws.auth.request', { endpoint, grantType: payload.grantType });
-    const response = await fetch(`${this.config.baseUrl}${endpoint}`, {
+    const { response, text } = await this.request(endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -143,12 +159,11 @@ export class ZanacoClient {
       },
       body: bodyText,
     });
-    const text = await response.text();
     const data = parseResponseBody(text);
     this.verifyResponse(text, data, response.headers.get('signature'));
     if (!response.ok) {
-      logError('zws.auth.response_error', { endpoint, status: response.status, body: text });
-      throw new Error(`Zanaco authentication failed (${response.status}): ${text}`);
+      logError('zws.auth.response_error', { endpoint, status: response.status });
+      throw new Error(`Zanaco authentication failed (HTTP ${response.status}); verify bank credentials, key registration and source-IP whitelisting`);
     }
     logEvent('zws.auth.response', { endpoint, status: response.status });
     return data;
@@ -160,6 +175,7 @@ export class ZanacoClient {
     const refreshToken = String(response?.refreshToken ?? '');
     if (!accessToken || !refreshToken) throw new Error('Zanaco authentication response missing token fields');
     const ttlMs = Number(process.env.ZANACO_ACCESS_TOKEN_TTL_MS || 30 * 60 * 1000);
+    if (!Number.isFinite(ttlMs) || ttlMs <= 0) throw new Error('ZANACO_ACCESS_TOKEN_TTL_MS must be positive');
     this.token = { accessToken, refreshToken, expiresAt: Date.now() + ttlMs };
   }
 
@@ -181,7 +197,7 @@ export class ZanacoClient {
   }
 
   private verifyResponse(text: string, data: unknown, headerSignature: string | null) {
-    if (!text) return;
+    if (!text) throw new Error('Zanaco returned an empty response');
 
     const bodySignature = data && typeof data === 'object'
       ? String((data as { signature?: unknown }).signature ?? '')
@@ -222,7 +238,24 @@ function loadZanacoConfig(): ZanacoConfig {
     if (key === 'zanacoPublicKey' && !requireResponseSignature) continue;
     if (!value) throw new Error(`Missing required Zanaco config: ${key}`);
   }
+  const url = new URL(required.baseUrl);
+  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) {
+    throw new Error('ZANACO_BASE_URL must use HTTPS without embedded credentials, query or fragment');
+  }
+  const privateKey = crypto.createPrivateKey(normalizePem(required.partnerPrivateKey));
+  if (privateKey.asymmetricKeyType !== 'rsa') throw new Error('ZANACO_PRIVATE_KEY must be an RSA private key');
+  if (required.zanacoPublicKey) {
+    const publicKey = crypto.createPublicKey(normalizePem(required.zanacoPublicKey));
+    if (publicKey.asymmetricKeyType !== 'rsa') throw new Error('ZANACO_PUBLIC_KEY must be an RSA public key');
+  }
   return required;
+}
+
+export function validateZanacoConfiguration() {
+  loadZanacoConfig();
+  if (!process.env.APP_API_URL?.trim() || !process.env.BANK_PULL_API_KEY?.trim()) {
+    throw new Error('APP_API_URL and BANK_PULL_API_KEY are required for portal communication');
+  }
 }
 
 function compactJson(value: unknown) {

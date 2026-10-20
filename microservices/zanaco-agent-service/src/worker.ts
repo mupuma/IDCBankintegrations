@@ -1,123 +1,45 @@
 import 'dotenv/config';
-import { buildWorker, paymentQueue, queueScheduler } from './queue';
+import { buildWorker, enqueuePaymentWork, queueScheduler, reserveBankReferences, markSubmissionStarted } from './queue';
+import { processPaymentJob } from './paymentProcessor';
 import { isZanacoServicePayload } from './zanacoValidation';
-import { prepareZanacoPayload, prepareZanacoServicePayload, sendZanacoPayment } from './zanacoAgent';
-import { claimNextPayment, emitAgentAudit, reportPaymentProcessing, reportPaymentResult } from './portalQueueClient';
-import { isBulkService, prepareBulkPayload, submitBulk } from './bulk';
+import { prepareZanacoPayload, prepareZanacoServicePayload, sendZanacoPayment, queryTransactionStatus, isPaymentSubmission } from './zanacoAgent';
+import { claimNextPayment, emitAgentAudit, reportPaymentResult } from './portalQueueClient';
+import { isBulkService, prepareBulkPayload, submitBulk, reconcileBulk } from './bulk';
 import { logEvent, logError } from './log';
+import { validateZanacoConfiguration } from './zwsClient';
 
+validateZanacoConfiguration();
 const worker = buildWorker(async (job) => {
-  const payload = job.data as { payment: unknown; queueId?: string; sourceBank?: string | null; reportToPortal?: boolean };
-  if (!payload?.payment) throw new Error('Job missing payment payload');
-
-  const queueId = payload.queueId;
-  const attempts = job.attemptsMade + 1;
-  const hasMoreRetries = typeof job.opts.attempts === 'number'
-    ? job.attemptsMade < job.opts.attempts - 1
-    : false;
-
-  const reportToPortal = Boolean(queueId && payload.reportToPortal);
-
-  if (reportToPortal && queueId) await reportPaymentProcessing(queueId, attempts);
-
-  const correlationId = queueId || (payload.payment as any)?.paymentId || (payload.payment as any)?.transactionReference;
-  const paymentId = (payload.payment as any)?.paymentId || (payload.payment as any)?.transactionReference || correlationId;
-  const service = (payload.payment as any)?.service;
-  const transactionType = (payload.payment as any)?.transactionType ?? (payload.payment as any)?.meta?.transactionType;
-
-  logEvent('worker.job.started', {
-    jobId: job.id,
-    queueId,
-    paymentId,
-    service,
-    transactionType,
-    attempts,
-    hasMoreRetries,
-    reportToPortal,
+  logEvent('worker.job.started', { jobId: job.id, queueId: job.data?.queueId, attempts: job.attemptsMade + 1 });
+  return processPaymentJob(job, {
+    prepare(payment: unknown) {
+      if (!payment) throw new Error('Job missing payment payload');
+      if (isZanacoServicePayload(payment)) {
+        return isBulkService(payment.service)
+          ? prepareBulkPayload(payment.service, payment.request)
+          : prepareZanacoServicePayload(payment);
+      }
+      return prepareZanacoPayload(payment as any);
+    },
+    submit: prepared => isBulkService(prepared.service) ? submitBulk(prepared) : sendZanacoPayment(prepared),
+    reserve: (prepared, queueId) => isPaymentSubmission(prepared) || isBulkService(prepared.service)
+      ? reserveBankReferences(prepared, queueId) : Promise.resolve(),
+    beginSubmission: markSubmissionStarted,
+    reconcile: (prepared, previous) => isBulkService(prepared.service)
+      ? reconcileBulk(previous)
+      : prepared.service === 'ZANACO_NFS_TRANSFER'
+        ? Promise.resolve({ success: false, status: 503, unknown: true, error: 'NFS status recovery requires bank confirmation; manual reconciliation required' })
+        : isPaymentSubmission(prepared) ? queryTransactionStatus(prepared.externalTranRef) : sendZanacoPayment(prepared),
+    report: async (queueId, result, attempts) => {
+      await reportPaymentResult(queueId, result, attempts);
+      await emitAgentAudit({
+        action: result.success ? 'AGENT_SEND_SUCCEEDED' : result.unknown || result.accepted ? 'AGENT_SEND_UNKNOWN' : 'AGENT_SEND_FAILED',
+        correlationId: queueId, resourceId: queueId,
+        summary: `Zanaco outcome reported for ${queueId}`,
+        details: { attempts, status: result.status, error: result.error },
+      });
+    },
   });
-
-  await emitAgentAudit({
-    action: 'AGENT_SEND_STARTED',
-    correlationId,
-    resourceId: paymentId,
-    summary: `Zanaco agent started payment ${paymentId ?? 'unknown'}`,
-    details: { queueId, attempts },
-  });
-
-  try {
-    let result;
-    if (isZanacoServicePayload(payload.payment)) {
-      if (isBulkService(payload.payment.service)) {
-        logEvent('worker.job.prepare_bulk', { jobId: job.id, queueId, paymentId, service: payload.payment.service });
-        result = await submitBulk(prepareBulkPayload(payload.payment.service, payload.payment.request));
-      } else {
-        logEvent('worker.job.prepare_service', { jobId: job.id, queueId, paymentId, service: payload.payment.service });
-        result = await sendZanacoPayment(prepareZanacoServicePayload(payload.payment));
-      }
-    } else {
-      logEvent('worker.job.prepare_payment', { jobId: job.id, queueId, paymentId, transactionType });
-      result = await sendZanacoPayment(prepareZanacoPayload(payload.payment as any));
-    }
-
-    logEvent('worker.job.result', {
-      jobId: job.id,
-      queueId,
-      paymentId,
-      success: result.success,
-      status: result.status,
-      retryable: result.retryable,
-      unknown: result.unknown,
-      error: result.error,
-    });
-
-    if (reportToPortal && queueId) {
-      if (result.success || !hasMoreRetries || !result.retryable) {
-        await reportPaymentResult(queueId, result, attempts);
-        logEvent('worker.portal.reported_result', { jobId: job.id, queueId, paymentId, status: result.success ? 'success' : result.unknown ? 'unknown' : 'failed', attempts });
-      } else {
-        await reportPaymentProcessing(queueId, attempts, result.error);
-        logEvent('worker.portal.reported_processing', { jobId: job.id, queueId, paymentId, attempts, error: result.error });
-      }
-    }
-
-    await emitAgentAudit({
-      action: result.success ? 'AGENT_SEND_SUCCEEDED' : result.unknown ? 'AGENT_SEND_UNKNOWN' : 'AGENT_SEND_FAILED',
-      correlationId,
-      resourceId: paymentId,
-      summary: result.success ? `Zanaco agent completed payment ${paymentId ?? 'unknown'}` : `Zanaco agent could not confirm payment ${paymentId ?? 'unknown'}`,
-      details: { queueId, attempts, result },
-    });
-
-    if (!result.success && result.retryable && hasMoreRetries) throw new Error(result.error || 'Zanaco retryable failure');
-    return result;
-  } catch (error: any) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    logError('worker.job.exception', {
-      jobId: job.id,
-      queueId,
-      paymentId,
-      attempts,
-      hasMoreRetries,
-      error: errorMessage,
-    });
-    if (reportToPortal && queueId) {
-      if (!hasMoreRetries) {
-        await reportPaymentResult(queueId, { success: false, status: error?.status ?? 500, error: errorMessage }, attempts);
-        logEvent('worker.portal.reported_exception', { jobId: job.id, queueId, paymentId, attempts, error: errorMessage });
-      } else {
-        await reportPaymentProcessing(queueId, attempts, errorMessage);
-        logEvent('worker.portal.reported_retry', { jobId: job.id, queueId, paymentId, attempts, error: errorMessage });
-      }
-    }
-    await emitAgentAudit({
-      action: hasMoreRetries ? 'AGENT_RETRY_SCHEDULED' : 'AGENT_SEND_FAILED',
-      correlationId,
-      resourceId: paymentId,
-      summary: hasMoreRetries ? `Zanaco agent retry scheduled for ${paymentId ?? 'unknown'}` : `Zanaco agent failed payment ${paymentId ?? 'unknown'}`,
-      details: { queueId, attempts, error: errorMessage },
-    });
-    throw error;
-  }
 });
 
 let claiming = false;
@@ -127,17 +49,7 @@ async function claimPortalWork() {
   try {
     const item = await claimNextPayment();
     if (!item) return;
-    await paymentQueue.add('send-zanaco-payment', {
-      payment: item.payment,
-      queueId: item.queueId,
-      sourceBank: item.sourceBank ?? null,
-      reportToPortal: true,
-    }, {
-      attempts: Number(process.env.JOB_ATTEMPTS || 3),
-      backoff: { type: 'exponential', delay: Number(process.env.JOB_BACKOFF_MS || 5000) },
-      removeOnComplete: true,
-      removeOnFail: false,
-    });
+    await enqueuePaymentWork(item.payment, item.queueId, item.sourceBank ?? null, true);
     logEvent('worker.portal.claimed', {
       queueId: item.queueId,
       paymentId: item.paymentId,

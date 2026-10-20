@@ -1,7 +1,6 @@
 import type { JobResult, PaymentsResponse, ZanacoPreparedRequest, ZanacoServicePayload } from './types';
 import { buildZanacoRequest, validateZanacoPreparedRequest, validateZanacoServicePayload } from './zanacoValidation';
 import { ZanacoClient } from './zwsClient';
-import { logError } from './log';
 
 let client: ZanacoClient | null = null;
 
@@ -35,7 +34,8 @@ export function prepareZanacoServicePayload(payload: ZanacoServicePayload) {
     method: payload.service.startsWith('ZANACO_GET_') ? 'GET' : 'POST',
     request: payload.request,
     transferType: transferTypeForService(payload.service),
-    externalTranRef: typeof payload.request.externalTranRef === 'string' ? payload.request.externalTranRef : undefined,
+    externalTranRef: typeof payload.request.externalTranRef === 'string' ? payload.request.externalTranRef
+      : typeof payload.request.transactionRef === 'string' ? payload.request.transactionRef : undefined,
   };
   const validationErrors = validateZanacoPreparedRequest(prepared);
   if (validationErrors.length) {
@@ -46,83 +46,60 @@ export function prepareZanacoServicePayload(payload: ZanacoServicePayload) {
   return prepared;
 }
 
-export async function sendZanacoPayment(prepared: ZanacoPreparedRequest): Promise<JobResult> {
-  try {
-    const response = await getClient().send(prepared);
-    const body = response.data as { response?: Record<string, unknown> } | undefined;
-    const inner = body?.response;
-    const respCode = String(inner?.respCode ?? '');
-    const respDesc = String(inner?.respDesc ?? '');
-    const externalTranRef = String(inner?.externalTranRef ?? prepared.externalTranRef ?? '');
+export function isPaymentSubmission(prepared: ZanacoPreparedRequest) {
+  return ['ZANACO_INTERNAL', 'ZANACO_RTGS', 'ZANACO_DDAC', 'ZANACO_SWIFT',
+    'ZANACO_MASKED_DISBURSEMENT', 'ZANACO_COLLECTION', 'ZANACO_NFS_TRANSFER'].includes(prepared.service);
+}
 
-    if (response.ok && ['ZWS-01', 'ZWS-00', '00'].includes(respCode)) {
+type BankTransport = Pick<ZanacoClient, 'send'>;
+export async function sendZanacoPayment(prepared: ZanacoPreparedRequest, bank: BankTransport = getClient()): Promise<JobResult> {
+  try {
+    const response = await bank.send(prepared);
+    const inner = (response.data as { response?: Record<string, unknown> } | undefined)?.response;
+    const code = String(inner?.respCode ?? '');
+    const description = String(inner?.respDesc ?? '');
+    const mutation = isPaymentSubmission(prepared);
+    const returnedRef = String(inner?.externalTranRef ?? inner?.transactionRef ?? '');
+    const identityMatches = !prepared.externalTranRef || returnedRef === prepared.externalTranRef;
+    const postingRef = String(inner?.tranRefNo ?? inner?.rrn ?? '');
+    const successCodes = mutation ? (prepared.service === 'ZANACO_NFS_TRANSFER' ? ['00'] : ['ZWS-01']) : ['ZWS-01', 'ZWS-00', '00'];
+    if (response.ok && response.status !== 202 && successCodes.includes(code)
+      && (!mutation || (identityMatches && postingRef))) {
       return { success: true, status: response.status, data: response.data };
     }
-
-    if (respCode === 'ZWS-51' || isDuplicateReference(respCode, respDesc, response.status)) {
-      const statusResult = await queryTransactionStatus(externalTranRef || prepared.externalTranRef);
-      return statusResult.success ? statusResult : {
-        success: false,
-        status: response.status,
-        data: response.data,
-        error: respDesc || 'Unable to determine transaction status',
-        unknown: true,
-        retryable: respCode === 'ZWS-51',
-      };
+    // A duplicate belonging to another caller is a conflict, never proof of payment.
+    if (code === 'ZWS-56') return { success: false, status: response.status, data: response.data, error: description || 'Reference belongs to another caller; manual review required' };
+    if (['ZWS-53', 'ZWS-57'].includes(code) && !/duplicate/i.test(description)) {
+      return { success: false, status: response.status, data: response.data, error: description || 'Bank rejected the payment' };
     }
-
-    if (response.status >= 500) {
-      return { success: false, status: response.status, data: response.data, error: respDesc || 'Zanaco server error', retryable: true };
+    if (response.status >= 500 || response.status === 202 || code === 'ZWS-51'
+      || (mutation && response.ok) || (code === 'ZWS-53' && /duplicate/i.test(description))) {
+      return { success: false, status: response.status, data: response.data, unknown: true,
+        error: description || 'Bank outcome is uncertain; status enquiry required' };
     }
-
-    return { success: false, status: response.status, data: response.data, error: respDesc || `Zanaco request failed (${response.status})` };
-  } catch (error: any) {
-    const externalTranRef = prepared.externalTranRef;
-    if (externalTranRef) {
-      try {
-        const statusResult = await queryTransactionStatus(externalTranRef);
-        if (statusResult.success) return statusResult;
-      } catch (statusError) {
-        logError('zanaco.status_lookup_after_error.failed', {
-          externalTranRef,
-          error: statusError instanceof Error ? statusError.message : String(statusError),
-        });
-      }
-    }
-    return {
-      success: false,
-      status: error?.status ?? 500,
-      error: error instanceof Error ? error.message : String(error),
-      unknown: true,
-      retryable: true,
-    };
+    return { success: false, status: response.status, data: response.data, error: description || `Zanaco request failed (${response.status})` };
+  } catch (error) {
+    return { success: false, status: 503, unknown: true,
+      error: error instanceof Error ? error.message : String(error) };
   }
 }
 
-function isDuplicateReference(respCode: string, respDesc: string, httpStatus: number) {
-  const description = respDesc.toLowerCase();
-  return (respCode === 'ZWS-56' && httpStatus === 409)
-    || (respCode === 'ZWS-53' && description.includes('duplicate') && description.includes('externaltranref'));
-}
-
-export async function queryTransactionStatus(externalTranRef?: string): Promise<JobResult> {
-  if (!externalTranRef) {
-    return { success: false, status: 400, error: 'externalTranRef is required for status lookup' };
-  }
-  const response = await getClient().send({
-    service: 'ZANACO_TRANSFER_STATUS',
-    endpoint: '/zws-fcubs-service/api/v1/flex/transferStatus',
-    method: 'POST',
-    request: { externalTranRef },
-    externalTranRef,
+export async function queryTransactionStatus(externalTranRef?: string, bank: BankTransport = getClient()): Promise<JobResult> {
+  if (!externalTranRef) return { success: false, status: 409, unknown: true, error: 'No recoverable transaction reference; manual review required' };
+  const response = await bank.send({
+    service: 'ZANACO_TRANSFER_STATUS', endpoint: '/zws-fcubs-service/api/v1/flex/transferStatus',
+    method: 'POST', request: { externalTranRef }, externalTranRef,
   });
   const inner = (response.data as { response?: Record<string, unknown> } | undefined)?.response;
-  const respCode = String(inner?.respCode ?? '');
-  const tranRefNo = String(inner?.tranRefNo ?? '');
-
-  if (respCode === 'ZWS-01' && tranRefNo) return { success: true, status: response.status, data: response.data };
-  if (respCode === 'ZWS-51') return { success: false, status: response.status, data: response.data, error: 'Unable to determine transaction status', unknown: true, retryable: true };
-  return { success: false, status: response.status, data: response.data, error: String(inner?.respDesc ?? 'Transaction status lookup did not confirm success') };
+  const code = String(inner?.respCode ?? '');
+  if (response.ok && response.status !== 202 && code === 'ZWS-01' && inner?.tranRefNo
+    && inner.externalTranRef === externalTranRef) {
+    return { success: true, status: response.status, data: response.data };
+  }
+  if (code === 'ZWS-56') return { success: false, status: response.status, data: response.data, error: 'Reference belongs to another caller; manual review required' };
+  // Not-found, malformed and unavailable status responses do not authorise resubmission.
+  return { success: false, status: response.status, data: response.data, unknown: true,
+    error: String(inner?.respDesc ?? 'Status enquiry did not confirm payment; manual review or further status enquiry required') };
 }
 
 function endpointForService(service: string) {

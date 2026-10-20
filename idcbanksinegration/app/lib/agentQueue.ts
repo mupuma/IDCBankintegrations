@@ -95,26 +95,33 @@ export async function reportBankQueueResult(
 ) {
   await connectDatabase();
 
-  const existing = await PaymentQueueRequest.findOne({ where: { queueId } });
-  if (existing && JSON.parse(existing.paymentPayload)?.h2hProtocol === 'h2h-v1') {
-    throw new Error('H2H payments must use authenticated H2H outcome reporting');
-  }
+  const sequelize = await getSequelize();
+  return sequelize.transaction(async (transaction) => {
+    const existing = await PaymentQueueRequest.findOne({ where: { queueId }, transaction, lock: transaction.LOCK.UPDATE });
+    if (!existing) return false;
+    // Stalled workers or delayed reports must not downgrade confirmed settlement.
+    if (existing.bankCode === 'ZANACO' && ['success', 'paid'].includes(existing.status)
+      && !['success', 'paid'].includes(updates.status)) return true;
+    if (existing && JSON.parse(existing.paymentPayload)?.h2hProtocol === 'h2h-v1') {
+      throw new Error('H2H payments must use authenticated H2H outcome reporting');
+    }
 
-  const statusUpdate: Record<string, unknown> = {
-    status: updates.status,
-    lastError: updates.error ?? null,
-    ...(updates.attempts !== undefined ? { attempts: updates.attempts } : {}),
-    ...(updates.response !== undefined ? { responsePayload: JSON.stringify(updates.response) } : {}),
-  };
+    const statusUpdate: Record<string, unknown> = {
+      status: updates.status,
+      lastError: updates.error ?? null,
+      ...(updates.attempts !== undefined ? { attempts: updates.attempts } : {}),
+      ...(updates.response !== undefined ? { responsePayload: JSON.stringify(updates.response) } : {}),
+    };
 
-  if (updates.status === 'success' || updates.status === 'failed' || updates.status === 'queued') {
-    statusUpdate.lockedBy = null;
-    statusUpdate.lockedAt = null;
-  } else if (updates.agentId) {
-    statusUpdate.lockedBy = updates.agentId;
-    statusUpdate.lockedAt = new Date();
-  }
+    if (updates.status === 'success' || updates.status === 'failed' || updates.status === 'queued') {
+      statusUpdate.lockedBy = null;
+      statusUpdate.lockedAt = null;
+    } else if (updates.agentId) {
+      statusUpdate.lockedBy = updates.agentId;
+      statusUpdate.lockedAt = new Date();
+    }
 
-  const [count] = await PaymentQueueRequest.update(statusUpdate as any, { where: { queueId } });
-  return count > 0;
+    const [count] = await PaymentQueueRequest.update(statusUpdate as any, { where: { queueId }, transaction });
+    return count > 0;
+  });
 }

@@ -42,6 +42,12 @@ export function validateBulkPayload(prepared: ZanacoPreparedRequest) {
   if (!items.length) errors.push('items must contain at least one transfer');
   if (items.length > 1000) errors.push('items cannot exceed 1000 transfers');
   if (Number(request.totalCount) !== items.length) errors.push('totalCount must match items length');
+  if (items.some(item => !item || typeof item !== 'object' || Array.isArray(item))) return [...errors, 'items must contain transfer objects'];
+  const refs = items.map(item => text(item.externalTranRef));
+  if (new Set(refs).size !== refs.length) errors.push('externalTranRef must be unique within the batch');
+  if (items.some(item => item.ccy && text(item.ccy).toUpperCase() !== text(request.currency).toUpperCase())) errors.push('all items must use the batch currency');
+  if (items.some(item => item.valueDate && request.valueDate && text(item.valueDate) !== text(request.valueDate))) errors.push('all items must use the batch valueDate');
+
   const computedTotal = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   if (items.length && Math.abs(computedTotal - totalAmount) > 0.01) errors.push('totalAmount must equal the sum of item amounts');
 
@@ -74,23 +80,34 @@ export function validateBulkPayload(prepared: ZanacoPreparedRequest) {
   return errors;
 }
 
-export async function submitBulk(prepared: ZanacoPreparedRequest): Promise<JobResult> {
+export async function submitBulk(prepared: ZanacoPreparedRequest, bank: Pick<ZanacoClient, 'send'> = getClient()): Promise<JobResult> {
   const validationErrors = validateBulkPayload(prepared);
   if (validationErrors.length) return { success: false, status: 400, error: 'Invalid Zanaco bulk payload', data: { validationErrors } };
 
-  const response = await getClient().send(prepared);
+  const response = await bank.send(prepared);
   const inner = (response.data as { response?: Record<string, unknown> } | undefined)?.response;
   const respCode = String(inner?.respCode ?? '');
   const status = String(inner?.status ?? '');
   if (response.ok && ['00', 'ZWS-01'].includes(respCode) && status === 'PENDING_APPROVAL') {
-    return { success: true, status: response.status, data: response.data };
+    return { success: false, accepted: true, status: response.status, data: response.data };
   }
   return {
     success: false,
     status: response.status,
     data: response.data,
     error: String(inner?.respDesc ?? `Zanaco bulk request failed (${response.status})`),
-    retryable: response.status >= 500,
+    unknown: response.status >= 500 || response.ok,
+  };
+}
+
+export async function reconcileBulk(previous?: JobResult): Promise<JobResult> {
+  // The supplied ZWS guide does not specify Nexus final batch/item states.
+  // Preserve acceptance for manual reconciliation instead of claiming settlement
+  // or guessing a response schema that could authorise duplicate payments.
+  return {
+    success: false, status: previous?.status ?? 503, data: previous?.data,
+    accepted: previous?.accepted, unknown: !previous?.accepted,
+    error: 'Bulk payment requires reconciliation using the bank batch reference; automatic resubmission is disabled',
   };
 }
 

@@ -58,6 +58,7 @@ export type JobResult = {
   error?: string;
   retryable?: boolean;
   unknown?: boolean;
+  accepted?: boolean;
 };
 
 export type QueueReportStatus =

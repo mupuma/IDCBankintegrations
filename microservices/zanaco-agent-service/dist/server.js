@@ -34,4 +34,6 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
+const zwsClient_1 = require("./zwsClient");
+(0, zwsClient_1.validateZanacoConfiguration)();
 void Promise.resolve().then(() => __importStar(require('./index'))).then(() => Promise.resolve().then(() => __importStar(require('./worker'))));

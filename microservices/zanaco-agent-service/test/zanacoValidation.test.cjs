@@ -3,11 +3,45 @@ const test = require('node:test');
 const {
   buildZanacoRequest,
   validateZanacoPreparedRequest,
+  validateZanacoServicePayload,
 } = require('../dist/zanacoValidation');
 const {
   prepareBulkPayload,
   validateBulkPayload,
 } = require('../dist/bulk');
+
+test('direct payment service payloads reject omitted mandatory fields', () => {
+  const errors = validateZanacoServicePayload({ service: 'ZANACO_RTGS', request: { debitAccount: '1234567890123', bicCode: 'INZAZMLUXXX' } });
+  for (const field of ['creditAccount', 'externalTranRef', 'ccy', 'amount', 'valueDate', 'paymentDetails', 'name']) {
+    assert.ok(errors.some(error => error.includes(`${field} is required`)), field);
+  }
+});
+
+test('references use the complete stable identity and remain identical across retries', () => {
+  const payment = { ...basePayment, transactionType: 'RTGS', swiftCode: 'INZAZMLUXXX' };
+  const source = { accountNumber: '1234567890123' };
+  const first = buildZanacoRequest({ ...payment, paymentId: 'PREFIX123456789012345-A' }, source);
+  const second = buildZanacoRequest({ ...payment, paymentId: 'PREFIX123456789012345-B' }, source);
+  assert.notEqual(first.externalTranRef, second.externalTranRef);
+  assert.equal(first.externalTranRef, buildZanacoRequest({ ...payment, paymentId: 'PREFIX123456789012345-A' }, source).externalTranRef);
+  assert.match(first.externalTranRef, /^[A-Z0-9]{16}$/);
+});
+
+test('portal and agent generate the same references for all single transfer types', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const Module = require('node:module');
+  const ts = require('typescript');
+  const filename = path.resolve(__dirname, '../../../idcbanksinegration/app/lib/banks/payloadBuilders.ts');
+  const module = new Module(filename);
+  module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, filename);
+  for (const type of ['INT', 'RTGS', 'DDACCT', 'TT']) {
+    const payment = { ...basePayment, transactionType: type };
+    const source = { accountNumber: '1234567890123' };
+    assert.equal(module.exports.buildZanacoPayload(payment, type, source).request.externalTranRef,
+      buildZanacoRequest(payment, source).externalTranRef, type);
+  }
+});
 
 const basePayment = {
   paymentId: 'PAYMENT123456',
@@ -18,6 +52,7 @@ const basePayment = {
   transactionDate: '2099-01-01',
   transactionReference: 'REF1234567890',
   remarks: 'Supplier payment',
+  physicalAddress: { plotNo: '10', streetName: 'Cairo Road', town: 'Lusaka' },
 };
 
 test('builds and validates Zanaco internal transfers', () => {

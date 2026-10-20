@@ -37,6 +37,8 @@ export async function claimNextPayment(): Promise<ClaimedPortalItem | null> {
   logEvent('portal.claim.request', { appApiUrl, agentId });
   const response = await fetch(`${appApiUrl}/api/v1/agent_queue/claim`, {
     method: 'POST',
+    signal: AbortSignal.timeout(120000),
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'x-bank-api-key': bankPullApiKey,
@@ -68,6 +70,8 @@ export async function emitAgentAudit(event: { action: string; correlationId?: st
   try {
     await fetch(`${appApiUrl}/api/v1/agent_audit`, {
       method: 'POST',
+      signal: AbortSignal.timeout(120000),
+      redirect: 'error',
       headers: {
         'Content-Type': 'application/json',
         'x-agent-audit-key': agentAuditApiKey,
@@ -93,12 +97,14 @@ async function reportQueueStatus(queueId: string, report: QueueStatusReport) {
 
   if (!appApiUrl || !bankPullApiKey) {
     logError('portal.report.config_missing', { queueId, status: report.status, hasAppApiUrl: Boolean(appApiUrl), hasBankPullApiKey: Boolean(bankPullApiKey) });
-    return;
+    throw new Error('APP_API_URL and BANK_PULL_API_KEY are required for portal reporting');
   }
 
   logEvent('portal.report.request', { queueId, status: report.status, attempts: report.attempts, error: report.error });
   const response = await fetch(`${appApiUrl}/api/v1/agent_queue/report`, {
     method: 'POST',
+    signal: AbortSignal.timeout(120000),
+    redirect: 'error',
     headers: {
       'Content-Type': 'application/json',
       'x-bank-api-key': bankPullApiKey,
@@ -127,7 +133,7 @@ export async function reportPaymentProcessing(queueId: string, attempts?: number
 
 export async function reportPaymentResult(queueId: string, result: JobResult, attempts?: number) {
   await reportQueueStatus(queueId, {
-    status: result.success ? 'success' : result.unknown ? 'unknown' : 'failed',
+    status: result.success ? 'success' : result.accepted ? 'accepted' : result.unknown ? 'unknown' : 'failed',
     response: result.data,
     error: result.error,
     attempts,

@@ -6,7 +6,7 @@ import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
-import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPayload } from '@/app/lib/banks/payloadBuilders';
+import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPaymentSelection } from '@/app/lib/banks/payloadBuilders';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
@@ -691,21 +691,7 @@ export default function PaymentQueueDashboard() {
     payment: EnrichedPayment,
     transactionType: PaymentsResponse['transactionType'],
   ): ValidationResult => {
-    const source = selectedSourceFor(payment.paymentId);
-    const errors: string[] = [];
-
-    if (!source) {
-      errors.push('Source account is required for Zanaco payments.');
-      return { valid: false, errors };
-    }
-
-    const payload = buildZanacoPayload({ ...payment, transactionType }, transactionType, source);
-    errors.push(...validateZanacoPayload(payload));
-
-    return {
-      valid: errors.length === 0,
-      errors,
-    };
+    return validateZanacoPaymentSelection(payment, transactionType, selectedSourceFor(payment.paymentId));
   };
 
   const togglePaymentSelection = (paymentId: string, checked: boolean) => {
@@ -861,14 +847,14 @@ export default function PaymentQueueDashboard() {
 
       if (!response.ok || !result.success) {
         const validationErrors = Array.isArray(result?.validationErrors)
-          ? result.validationErrors.map(formatZicbValidationIssue)
+          ? result.validationErrors.map((issue: unknown) => bankCode === 'ZICB' ? formatZicbValidationIssue(issue) : String(issue))
           : [];
         if (validationErrors.length) {
           setValidationResults((prev) => ({
             ...prev,
             [payment.paymentId]: { valid: false, errors: validationErrors },
           }));
-          throw new Error(`ZICB transfer cannot be submitted: ${validationErrors.join(' ')}`);
+          throw new Error(`${bankCode} transfer cannot be submitted: ${validationErrors.join(' ')}`);
         }
         throw new Error(result?.error || 'The payment could not be submitted to the selected bank queue.');
       }
@@ -953,7 +939,10 @@ export default function PaymentQueueDashboard() {
       }
 
       const sourceBank = selectedSources[payment.paymentId] || null;
-      const key = `${bankCode}:${transactionType}:${sourceBank || ''}`;
+      const zanacoRequest = bankCode === 'ZANACO'
+        ? buildZanacoPayload(effectivePayment, transactionType, selectedSourceFor(payment.paymentId)).request
+        : undefined;
+      const key = `${bankCode}:${transactionType}:${sourceBank || ''}:${zanacoRequest?.ccy || ''}:${zanacoRequest?.valueDate || ''}`;
       const group = groups.get(key) ?? { bankCode, transactionType, sourceBank, payments: [] };
       group.payments.push(effectivePayment);
       groups.set(key, group);
@@ -1008,7 +997,7 @@ export default function PaymentQueueDashboard() {
               ? Object.entries(result.validationByPayment as Record<string, string[]>)
                   .map(([paymentId, errors]) => `${paymentId}: ${Array.isArray(errors) ? errors.join('; ') : String(errors)}`)
                   .join(' | ')
-              : '';
+              : Array.isArray(result?.validationErrors) ? result.validationErrors.join('; ') : '';
 
             failedCount += affectedCount;
             submissionErrors.push(validationText ? `${errorText}: ${validationText}` : errorText);

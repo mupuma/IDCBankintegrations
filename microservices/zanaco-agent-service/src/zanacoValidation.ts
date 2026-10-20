@@ -13,6 +13,7 @@ function text(value: unknown) {
 }
 
 function amountValue(value: unknown) {
+  if (typeof value !== 'string' && typeof value !== 'number') return NaN;
   const amount = Number(value);
   return Number.isFinite(amount) ? amount : NaN;
 }
@@ -89,26 +90,20 @@ function validateExternalRef(errors: string[], value: string, max = 16) {
 }
 
 function referenceSuffix(seed: string) {
-  let hash = 5381;
+  let hash = BigInt('14695981039346656037');
+  const mask = (BigInt(1) << BigInt(64)) - BigInt(1);
   for (let index = 0; index < seed.length; index += 1) {
-    hash = ((hash << 5) + hash) + seed.charCodeAt(index);
-    hash >>>= 0;
+    hash = ((hash ^ BigInt(seed.charCodeAt(index))) * BigInt('1099511628211')) & mask;
   }
-  return hash.toString(16).toUpperCase().padStart(8, '0');
+  return hash.toString(16).toUpperCase().padStart(16, '0');
 }
 
 function externalTranRefFrom(payment: PaymentsResponse, kind: string) {
-  const base = text(payment.transactionReference || payment.paymentId).replace(/[^a-zA-Z0-9]/g, '');
-  if (kind !== 'DDAC') return base.slice(0, 16);
-
-  if (base.length >= 20) return base.slice(0, 20);
-  const seed = base || JSON.stringify({
-    paymentId: payment.paymentId,
-    vendorId: payment.vendorId,
-    amount: payment.amount,
-    transactionDate: payment.transactionDate,
-  });
-  return `${base}${referenceSuffix(seed)}${referenceSuffix(`${seed}:ddac`)}`.slice(0, 20);
+  const seed = text(payment.paymentId || payment.transactionReference);
+  if (!seed) return '';
+  // Hash the entire stable identity, not a truncated/sanitised prefix. Redis
+  // reserves the resulting bank reference before submission to detect collisions.
+  return `${referenceSuffix(seed)}${referenceSuffix(`IDC:${seed}`)}${referenceSuffix(`DDAC:${seed}`)}`.slice(0, kind === 'DDAC' ? 20 : 16);
 }
 
 export function buildZanacoRequest(payment: PaymentsResponse, source?: { accountNumber?: string | null; transit?: string | null; name?: string | null }): ZanacoPreparedRequest {
@@ -116,11 +111,11 @@ export function buildZanacoRequest(payment: PaymentsResponse, source?: { account
   const debitAccount = text(payment.srcAcc) || text(source?.accountNumber);
   const creditAccount = text(payment.accountNumber);
   const externalTranRef = externalTranRefFrom(payment, kind);
-  const ccy = text(payment.currency || payment.currencyCode || payment.currencyCde || 'ZMW').toUpperCase();
+  const ccy = text(payment.currency || payment.currencyCode || payment.currencyCde).toUpperCase();
   const valueDate = zanacoValueDate(payment.transactionDate || new Date());
   const paymentDetails = text(payment.remarks || payment.transactionReference || 'IDC payment').slice(0, 105);
-  const name = text(payment.accountName || payment.vendorId || 'Beneficiary').slice(0, 105);
-  const address = (addressFrom(payment) || text(payment.bankName) || 'Zambia').slice(0, 105);
+  const name = text(payment.accountName).slice(0, 105);
+  const address = addressFrom(payment).slice(0, 105);
   const amount = String(amountValue(payment.amount));
   const duplicatableExternalRef = text(payment.duplicatableExternalRef) || crypto.randomUUID();
 
@@ -250,6 +245,16 @@ export function validateZanacoPreparedRequest(payload: ZanacoPreparedRequest) {
   const val = (field: string) => text(request[field]);
   const amount = amountValue(request.amount);
 
+  if (['INTERNAL', 'RTGS', 'DDAC', 'SWIFT', 'MASKED', 'COLLECTION'].includes(String(payload.transferType ?? ''))) {
+    for (const field of ['debitAccount', 'creditAccount', 'externalTranRef', 'ccy', 'amount', 'valueDate', 'paymentDetails', 'name']) {
+      if (!val(field)) errors.push(`${field} is required`);
+    }
+  }
+  if (['INTERNAL', 'RTGS', 'COLLECTION'].includes(String(payload.transferType ?? ''))) {
+    ensureLength(errors, 'address', val('address'), 105);
+    ensureLength(errors, 'bicCode', val('bicCode'), 11);
+  }
+
   if (payload.method === 'POST' && !payload.endpoint.includes('/queryInstitutions') && !payload.endpoint.includes('/status') && !payload.endpoint.includes('/detail')) {
     if (!request || typeof request !== 'object') errors.push('request body is required');
   }
@@ -338,11 +343,17 @@ export function validateZanacoServicePayload(payload: ZanacoServicePayload) {
     case 'ZANACO_GET_SWIFT_BIC':
       break;
     default:
+      const transferTypes: Record<string, ZanacoPreparedRequest['transferType']> = {
+        ZANACO_INTERNAL: 'INTERNAL', ZANACO_RTGS: 'RTGS', ZANACO_DDAC: 'DDAC',
+        ZANACO_SWIFT: 'SWIFT', ZANACO_MASKED_DISBURSEMENT: 'MASKED', ZANACO_COLLECTION: 'COLLECTION',
+      };
+      if (!transferTypes[payload.service]) return [`Unsupported Zanaco service: ${payload.service}`];
       errors.push(...validateZanacoPreparedRequest({
         service: payload.service,
         endpoint: '',
         method: 'POST',
         request,
+        transferType: transferTypes[payload.service],
       }));
   }
 

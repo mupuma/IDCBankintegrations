@@ -1,0 +1,25 @@
+[Unit]
+Description=IDC Zanaco Agent API and Worker
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/AppFiles/IDCBankintegrations/microservices/zanaco-agent-service
+Environment=NODE_ENV=production
+Environment=DOTENV_CONFIG_PATH=/AppFiles/IDCBankintegrations/microservices/zanaco-agent-service/.env
+ExecStartPre=/usr/bin/test -r /AppFiles/IDCBankintegrations/microservices/zanaco-agent-service/.env
+ExecStart=/usr/bin/node /AppFiles/IDCBankintegrations/microservices/zanaco-agent-service/dist/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zanaco-agent
+
+[Install]
+WantedBy=multi-user.target
