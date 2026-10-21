@@ -2,7 +2,7 @@ import { QueryTypes } from 'sequelize';
 import { connectDatabase } from './db';
 import sage, { connectSageDatabase } from './sageDb';
 import { VendorBankDetail } from '../models/internal/VendorBankDetail';
-import { normalizeVendorBankRecord } from './vendorBankRead';
+import { normalizeVendorBankRecord, vendorBankFailureDetails, vendorBankReadError } from './vendorBankRead';
 
 const legacyFields: Record<string, string> = {
   vendorid: 'VENDORID', accven: 'ACCVEN', accname: 'ACCNAME', bankid: 'BANKID',
@@ -16,6 +16,8 @@ let imported: Promise<{ warning?: string }> | null = null;
 // SQL Server is a read-only source here. Existing bank details are copied into
 // MySQL once per process, only for vendors not already maintained in the portal.
 export async function importLegacyVendorBanks() {
+  let stage: 'sage_read' | 'portal_save' = 'sage_read';
+  try {
   await connectSageDatabase();
   const schema = process.env.SAGE_VENBANK_SCHEMA?.trim();
   const table = schema ? `${quote(schema)}.[VENBANK]` : '[VENBANK]';
@@ -31,6 +33,7 @@ export async function importLegacyVendorBanks() {
   const select = Object.entries(legacyFields).filter(([, column]) => available.has(column))
     .map(([property, column]) => `${quote(column)} AS ${quote(property)}`).join(', ');
   const rows = await sage.query<Record<string, unknown>>(`SELECT ${select} FROM ${table}`, { type: QueryTypes.SELECT });
+  stage = 'portal_save';
   for (const row of rows) {
     const vendorid = String(row.vendorid ?? '').trim();
     if (!vendorid) continue;
@@ -42,14 +45,20 @@ export async function importLegacyVendorBanks() {
     await VendorBankDetail.findOrCreate({ where: { vendorid }, defaults: { ...values, vendorid }, paranoid: false });
   }
   return {};
+  } catch (cause) {
+    throw Object.assign(new Error('Vendor bank import failed'), { importStage: stage, cause });
+  }
 }
 
 export async function connectVendorBankDatabase() {
   await connectDatabase();
   if (!imported) imported = importLegacyVendorBanks().catch(error => {
     imported = null;
-    console.warn('Legacy Sage bank detail import unavailable; using portal MySQL records', error instanceof Error ? error.name : 'DatabaseError');
-    return { warning: 'Sage bank detail lookup is unavailable. Saved portal records are shown; check the portal server log if existing vendors are missing.' };
+    const stage = (error as { importStage?: string }).importStage || 'sage_read';
+    const details = vendorBankFailureDetails(error);
+    console.warn('Vendor bank import failed; saved portal records retained', { stage, ...details });
+    const explanation = stage === 'portal_save' ? 'Sage bank details were read, but saving them to portal MySQL failed.' : 'Reading bank details from Sage failed.';
+    return { warning: `${explanation} ${details.code ? `(${details.code}${details.column ? `: ${details.column}` : ''}) ` : ''}${vendorBankReadError(error)}` };
   });
   return await imported;
 }

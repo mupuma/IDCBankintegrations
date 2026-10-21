@@ -459,7 +459,7 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
           </div>
           <div>
             <label className={labelStyle}>Phone Number</label>
-            <input type="text" className={formInputStyle} placeholder="e.g. +44 20 7946 0958" value={formData.phoneNumber} onChange={handleChange('phoneNumber')} />
+            <input type="text" maxLength={255} className={formInputStyle} placeholder="e.g. +44 20 7946 0958" value={formData.phoneNumber} onChange={handleChange('phoneNumber')} />
           </div>
         </DisplayCard>
       </form>

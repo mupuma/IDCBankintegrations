@@ -7,6 +7,7 @@ Vendor bank details, TPIN, SWIFT purpose and sector codes are maintained in the 
 1. For the old deployed build, set `SAGE_SYNC_VENBANK_SCHEMA=false` and restart the portal to stop its startup migration immediately.
 2. Deploy this updated portal and run `npm run build`, then restart its service. The new build completely removes SQL Server schema synchronization; that old flag cannot re-enable it.
 3. With `DB_SYNC=true`, the portal creates its missing MySQL table automatically without deleting existing data. With `DB_SYNC=false`, apply `sql/create_vendor_bank_details.sql` to the **portal MySQL database only**.
+   The updated build also widens an existing portal `PHONE_NUMBER VARCHAR(20)` column to `VARCHAR(255)` so multi-number Sage contact values remain intact. It does not narrow larger VARCHAR or TEXT columns. With `DB_SYNC=false`, use `sql/widen_vendor_bank_phone.sql` in portal MySQL. This upgrade never runs on SQL Server.
 4. Existing visible Sage VENBANK rows are read and copied into MySQL when a vendor has no portal record. Only columns that actually exist in SQL Server are selected. Saved portal corrections and soft-deleted portal records are not overwritten or resurrected. SQL Server IDs are not copied, so existing browser tabs should be refreshed after deployment.
 5. If Sage VENBANK is inaccessible or absent, portal MySQL vendor details remain available. No replacement SQL Server table is created. `SAGE_VENBANK_SCHEMA` optionally selects the existing source schema for read-only import.
 
@@ -27,3 +28,5 @@ SAGE_VENDOR_BANK_OPTIONAL_FIELDS={"tpin":["TPIN"],"purposeCode":["PURPOSE"],"sec
 After saving vendor details, fetch payments again. Payment rows display the saved values rather than a data-entry form. Bank validations remain active, and already queued instructions retain their original payloads.
 
 Database failures remain distinct from empty search results. Server logs provide the underlying database error. `sql/check_venbank_access.sql` is an optional read-only diagnostic; no SQL Server migrations are needed for the portal fields.
+
+Vendor import diagnostics identify whether the failure happened while reading Sage or saving the copy in MySQL. A MySQL contact-width failure must not be reported as lost Sage connectivity. Diagnostic logs include error codes and column names without record values.

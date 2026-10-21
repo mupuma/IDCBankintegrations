@@ -111,7 +111,7 @@ export class VendorBankDetail extends Model<VendorBankDetail, VenbankCreationAtt
   declare email?: string;
 
   @Column({
-    type: DataType.STRING(20),
+    type: DataType.STRING(255),
     field: 'PHONE_NUMBER',
     allowNull: true
   })
