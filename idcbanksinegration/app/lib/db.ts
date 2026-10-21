@@ -66,12 +66,14 @@ import { ProcessedTransaction } from '../models/internal/Processed_transactions'
 import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
+import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  PaymentRecoveryAction,
   ZicbH2hPayment,
   PaymentDispatchReservation,
   ZicbH2hEvent,

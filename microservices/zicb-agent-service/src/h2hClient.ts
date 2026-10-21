@@ -66,9 +66,9 @@ export class H2hClient {
   }
   async submit(id: string, channel: Channel, batch: Batch, scale: number): Promise<Outcome> {
     const errors = validateBatch(channel, batch, scale);
-    if (errors.length) return { state: 'rejected', error: errors.join('; ') };
+    if (errors.length) return { state: 'rejected', notSent: true, notSentReason: 'validation', error: errors.join('; ') };
     // Acquire credentials before the submission boundary; a token failure sends no money.
-    try { await this.token(id); } catch { return { state: 'rejected', error: 'H2H authentication/configuration failed before submission' }; }
+    try { await this.token(id); } catch { return { state: 'rejected', notSent: true, notSentReason: 'authentication', error: 'H2H authentication/configuration failed before submission' }; }
     try {
       const result = await this.authenticated(id, this.businessUrl(id, channel, 'send-money'), 'POST', batch);
       return submissionOutcome(result.status, result.body);

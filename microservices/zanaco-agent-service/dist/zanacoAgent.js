@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.authenticateZanaco = authenticateZanaco;
 exports.prepareZanacoPayload = prepareZanacoPayload;
 exports.prepareZanacoServicePayload = prepareZanacoServicePayload;
 exports.isPaymentSubmission = isPaymentSubmission;
@@ -12,6 +13,7 @@ function getClient() {
     client ?? (client = new zwsClient_1.ZanacoClient());
     return client;
 }
+async function authenticateZanaco() { await getClient().getAccessToken(); }
 function prepareZanacoPayload(payment, source) {
     const prepared = (0, zanacoValidation_1.buildZanacoRequest)(payment, source);
     const validationErrors = (0, zanacoValidation_1.validateZanacoPreparedRequest)(prepared);
@@ -69,7 +71,7 @@ async function sendZanacoPayment(prepared, bank = getClient()) {
         if (code === 'ZWS-56')
             return { success: false, status: response.status, data: response.data, error: description || 'Reference belongs to another caller; manual review required' };
         if (['ZWS-53', 'ZWS-57'].includes(code) && !/duplicate/i.test(description)) {
-            return { success: false, status: response.status, data: response.data, error: description || 'Bank rejected the payment' };
+            return { success: false, status: response.status, data: response.data, confirmedRejected: true, error: description || 'Bank rejected the payment' };
         }
         if (response.status >= 500 || response.status === 202 || code === 'ZWS-51'
             || (mutation && response.ok) || (code === 'ZWS-53' && /duplicate/i.test(description))) {

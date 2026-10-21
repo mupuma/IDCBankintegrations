@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.authenticateBulk = authenticateBulk;
 exports.isBulkService = isBulkService;
 exports.prepareBulkPayload = prepareBulkPayload;
 exports.validateBulkPayload = validateBulkPayload;
@@ -13,6 +14,7 @@ function getClient() {
     client ?? (client = new zwsClient_1.ZanacoClient());
     return client;
 }
+async function authenticateBulk() { await getClient().getAccessToken(); }
 function isBulkService(service) {
     return ['ZANACO_BULK_INTERNAL', 'ZANACO_BULK_RTGS', 'ZANACO_BULK_DDAC', 'ZANACO_BULK_SWIFT'].includes(service);
 }

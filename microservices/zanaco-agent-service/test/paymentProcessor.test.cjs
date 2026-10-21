@@ -37,6 +37,32 @@ test('portal failure after bank success retries only reporting after process res
   assert.equal(f.calls.report.length, 2);
 });
 
+test('authentication failure stays before the submission boundary and resumes once credentials work', async () => {
+  const f = fixture();
+  let authCalls = 0, markers = 0;
+  f.operations.authorize = async () => { if (++authCalls === 1) throw new Error('ENOTFOUND'); };
+  f.operations.beginSubmission = async () => { markers++; return true; };
+  await assert.rejects(processPaymentJob(f.job(), f.operations), /ENOTFOUND/);
+  assert.equal(f.stored().checkpoint.phase, 'prepared');
+  assert.equal(f.stored().checkpoint.result.notSent, true);
+  assert.equal(markers, 0);
+  assert.equal(f.calls.submit, 0);
+  assert.equal((await processPaymentJob(f.job(1), f.operations)).success, true);
+  assert.equal(markers, 1);
+  assert.equal(f.calls.submit, 1);
+});
+
+test('validation rejection fences a stalled worker before recording not-sent proof', async () => {
+  const f = fixture();
+  let validations = 0, started = false;
+  f.operations.prepare = () => { if (++validations === 1) throw new Error('Invalid beneficiary'); return prepared; };
+  f.operations.beginSubmission = async () => { if (started) return false; started = true; return true; };
+  f.operations.reconcile = async () => { f.calls.reconcile++; return unknown; };
+  await Promise.allSettled([processPaymentJob(f.job(), f.operations), processPaymentJob(f.job(), f.operations)]);
+  assert.equal(f.calls.submit, 0);
+  assert.equal(f.calls.reconcile, 1);
+});
+
 test('lost submission response and repeated ZWS-51 retry only status enquiries', async () => {
   const f = fixture();
   f.operations.submit = async () => { f.calls.submit++; throw new Error('Connection reset'); };

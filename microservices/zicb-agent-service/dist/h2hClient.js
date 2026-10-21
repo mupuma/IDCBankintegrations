@@ -91,13 +91,13 @@ class H2hClient {
     async submit(id, channel, batch, scale) {
         const errors = (0, zicb_h2h_1.validateBatch)(channel, batch, scale);
         if (errors.length)
-            return { state: 'rejected', error: errors.join('; ') };
+            return { state: 'rejected', notSent: true, notSentReason: 'validation', error: errors.join('; ') };
         // Acquire credentials before the submission boundary; a token failure sends no money.
         try {
             await this.token(id);
         }
         catch {
-            return { state: 'rejected', error: 'H2H authentication/configuration failed before submission' };
+            return { state: 'rejected', notSent: true, notSentReason: 'authentication', error: 'H2H authentication/configuration failed before submission' };
         }
         try {
             const result = await this.authenticated(id, this.businessUrl(id, channel, 'send-money'), 'POST', batch);

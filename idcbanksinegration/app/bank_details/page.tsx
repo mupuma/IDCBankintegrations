@@ -21,6 +21,9 @@ interface Venbank {
   sortcde: string;
   brnch: string;
   swiftcde: string;
+  tpin: string;
+  purposeCode: string;
+  sectorCode: string;
   countryOfOrigin: string;
   email: string;
   phoneNumber: string;
@@ -170,6 +173,9 @@ function BankViewModal({ open, onClose, data }: { open: boolean; onClose: () => 
         <DataField label="Sort Code" value={data.sortcde} isMono />
         <DataField label="Branch Location" value={data.brnch} />
         <DataField label="SWIFT Code" value={data.swiftcde} isMono />
+        <DataField label="Taxpayer identification number (TPIN)" value={data.tpin} isMono />
+        <DataField label="SWIFT payment purpose code" value={data.purposeCode} isMono />
+        <DataField label="SWIFT business sector code" value={data.sectorCode} isMono />
       </DisplayCard>
       <DisplayCard title="Physical Address Details" accentColor="violet">
         <DataField label="Plot No" value={data.physicalAddress?.plotNo || ''} />
@@ -205,6 +211,9 @@ interface VendorOption {
   sortcde?: string;
   brnch?: string;
   swiftcde?: string;
+  tpin?: string;
+  purposeCode?: string;
+  sectorCode?: string;
   email?: string;
   venbankPhoneNumber?: string;
   physicalAddress?: string;
@@ -237,6 +246,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
     sortcde: '',
     brnch: '',
     swiftcde: '',
+    tpin: '',
+    purposeCode: '',
+    sectorCode: '',
     streetName: '',
     town: '',
     plotNo: '',
@@ -255,6 +267,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
         sortcde: initialData.sortcde || '',
         brnch: initialData.brnch || '',
         swiftcde: initialData.swiftcde || '',
+        tpin: initialData.tpin || '',
+        purposeCode: initialData.purposeCode || '',
+        sectorCode: initialData.sectorCode || '',
         streetName: initialData.physicalAddress?.streetName || '',
         town: initialData.physicalAddress?.town || '',
         plotNo: initialData.physicalAddress?.plotNo || '',
@@ -265,7 +280,7 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
     } else {
       setFormData({
         vendorid: '', accven: '', accname: '', bankid: '', sortcde: '',
-        brnch: '', swiftcde: '', streetName: '', town: '', plotNo: '',
+        brnch: '', swiftcde: '', tpin: '', purposeCode: '', sectorCode: '', streetName: '', town: '', plotNo: '',
         countryOfOrigin: '', email: '', phoneNumber: '',
       });
     }
@@ -285,6 +300,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
         sortcde: selected?.sortcde || prev.sortcde,
         brnch: selected?.brnch || prev.brnch,
         swiftcde: selected?.swiftcde || prev.swiftcde,
+        tpin: selected?.tpin || '',
+        purposeCode: selected?.purposeCode || '',
+        sectorCode: selected?.sectorCode || '',
         email: selected?.email || prev.email,
         phoneNumber: selected?.venbankPhoneNumber || selected?.phoneNumber || prev.phoneNumber,
         streetName: address?.streetName || prev.streetName,
@@ -401,6 +419,21 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
           <div>
             <label className={labelStyle}>SWIFT Code</label>
             <input type="text" className={`${formInputStyle} font-mono`} placeholder="e.g. ABBYGB2L" value={formData.swiftcde} onChange={handleChange('swiftcde')} />
+          </div>
+          <div className="md:col-span-2">
+            <label className={labelStyle}>Taxpayer identification number (TPIN)</label>
+            <input type="text" maxLength={20} className={`${formInputStyle} font-mono`} value={formData.tpin} onChange={handleChange('tpin')} />
+            <p className="mt-1 text-xs text-slate-500">Use the vendor's TPIN. Loaded from Sage when available, or enter it here. Required for Zanaco SWIFT payments.</p>
+          </div>
+          <div>
+            <label className={labelStyle}>SWIFT payment purpose code</label>
+            <input type="text" maxLength={8} className={formInputStyle} value={formData.purposeCode} onChange={handleChange('purposeCode')} />
+            <p className="mt-1 text-xs text-slate-500">Zanaco's code describing why this vendor is paid. Ask Zanaco for the applicable code; a free-text payment description is not a code.</p>
+          </div>
+          <div>
+            <label className={labelStyle}>SWIFT business sector code</label>
+            <input type="text" maxLength={8} className={formInputStyle} value={formData.sectorCode} onChange={handleChange('sectorCode')} />
+            <p className="mt-1 text-xs text-slate-500">Zanaco's code for the applicable business sector. Use the bank-provided code. Confirm both codes still apply before sending each SWIFT payment.</p>
           </div>
         </DisplayCard>
         <DisplayCard title="Physical Address & Contact Details" accentColor="violet">

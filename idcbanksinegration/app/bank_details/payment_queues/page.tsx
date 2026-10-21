@@ -5,6 +5,9 @@ import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
+import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
+import { usePortalUser } from '@/app/lib/usePortalUser';
+import { PERMISSIONS } from '@/app/lib/permissions';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 
@@ -45,6 +48,8 @@ function getQueueResponseDetails(item: BankQueueItem) {
 }
 
 export default function PaymentQueuesPage() {
+  const { hasPermission } = usePortalUser();
+  const [recoveryItem, setRecoveryItem] = useState<BankQueueItem | null>(null);
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -189,18 +194,19 @@ export default function PaymentQueuesPage() {
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Attempts</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Updated</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Error</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Recovery</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {error ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-rose-700">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-rose-700">
                     {error}
                   </td>
                 </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-500">
                     {loading ? 'Loading queue items...' : 'No queue transactions found.'}
                   </td>
                 </tr>
@@ -239,6 +245,9 @@ export default function PaymentQueuesPage() {
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
+                    <td className="px-5 py-4 text-sm">
+                      {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
+                    </td>
                   </tr>
                 ))
               )}
@@ -253,6 +262,9 @@ export default function PaymentQueuesPage() {
           onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
         />
       </div>
+      {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
+        canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
+        onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
     </div>
   );
 }

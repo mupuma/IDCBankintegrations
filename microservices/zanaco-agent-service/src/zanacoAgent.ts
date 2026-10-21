@@ -9,6 +9,8 @@ function getClient() {
   return client;
 }
 
+export async function authenticateZanaco() { await getClient().getAccessToken(); }
+
 export function prepareZanacoPayload(payment: PaymentsResponse, source?: { accountNumber?: string | null; transit?: string | null; name?: string | null }) {
   const prepared = buildZanacoRequest(payment, source);
   const validationErrors = validateZanacoPreparedRequest(prepared);
@@ -70,7 +72,7 @@ export async function sendZanacoPayment(prepared: ZanacoPreparedRequest, bank: B
     // A duplicate belonging to another caller is a conflict, never proof of payment.
     if (code === 'ZWS-56') return { success: false, status: response.status, data: response.data, error: description || 'Reference belongs to another caller; manual review required' };
     if (['ZWS-53', 'ZWS-57'].includes(code) && !/duplicate/i.test(description)) {
-      return { success: false, status: response.status, data: response.data, error: description || 'Bank rejected the payment' };
+      return { success: false, status: response.status, data: response.data, confirmedRejected: true, error: description || 'Bank rejected the payment' };
     }
     if (response.status >= 500 || response.status === 202 || code === 'ZWS-51'
       || (mutation && response.ok) || (code === 'ZWS-53' && /duplicate/i.test(description))) {

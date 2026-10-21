@@ -333,6 +333,8 @@ async function requeueFailedReservedPayment(input: {
   sourceBankCode: string | null;
 }) {
   const { request, auth, payment, paymentId, bankCode, sourceBankCode } = input;
+  if (bankCode === 'ZANACO') return NextResponse.json({ success: false,
+    error: 'Use the recovery controls on Bank Queue Processing to resume or correct this instruction. Posting it again cannot authorise a second bank submission.', recoveryRequired: true, paymentId }, { status: 409 });
   const paymentKey = createHash('sha256').update(paymentId).digest('hex');
   const reservation = await PaymentDispatchReservation.findOne({ where: { paymentKey } });
   terminalLog('posted_payments.retry.lookup', { paymentId, bankCode, sourceBank: sourceBankCode, hasReservation: Boolean(reservation) });

@@ -16,6 +16,7 @@ type MissingVendorRow = {
   addressLine2: string;
   city: string;
   country: string;
+  taxNumber: string;
   paymentCount: number;
   lastPaymentDate: number | null;
 };
@@ -46,6 +47,7 @@ export async function GET(request: NextRequest) {
           MAX(LTRIM(RTRIM(v.TEXTSTRE2))) AS addressLine2,
           MAX(LTRIM(RTRIM(v.NAMECITY))) AS city,
           MAX(LTRIM(RTRIM(v.CODECTRY))) AS country,
+          MAX(LTRIM(RTRIM(v.TAXNBR))) AS taxNumber,
           COUNT(*) AS paymentCount,
           MAX(CAST(p.DATEBUS AS INT)) AS lastPaymentDate
         FROM APPYM p
@@ -79,6 +81,7 @@ export async function GET(request: NextRequest) {
           plotNo: row.addressLine2,
           town: row.city,
           country: row.country,
+          taxNumber: row.taxNumber,
           optionalFields: optionalFields.get(vendorid),
         });
 
@@ -92,6 +95,9 @@ export async function GET(request: NextRequest) {
           sortcde: bankDetails.sortCode,
           brnch: bankDetails.branchCode,
           swiftcde: bankDetails.swiftCode,
+          tpin: bankDetails.tpin,
+          purposeCode: bankDetails.purposeCode,
+          sectorCode: bankDetails.sectorCode,
           email: bankDetails.email,
           venbankPhoneNumber: bankDetails.phoneNumber,
           physicalAddress: [

@@ -8,6 +8,8 @@ function getClient() {
   return client;
 }
 
+export async function authenticateBulk() { await getClient().getAccessToken(); }
+
 export function isBulkService(service: string) {
   return ['ZANACO_BULK_INTERNAL', 'ZANACO_BULK_RTGS', 'ZANACO_BULK_DDAC', 'ZANACO_BULK_SWIFT'].includes(service);
 }

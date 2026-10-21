@@ -114,7 +114,7 @@ function referenceSuffix(seed) {
     return hash.toString(16).toUpperCase().padStart(16, '0');
 }
 function externalTranRefFrom(payment, kind) {
-    const seed = text(payment.paymentId || payment.transactionReference);
+    const seed = text(payment.recoveryAttemptId || payment.paymentId || payment.transactionReference);
     if (!seed)
         return '';
     // Hash the entire stable identity, not a truncated/sanitised prefix. Redis

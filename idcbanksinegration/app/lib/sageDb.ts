@@ -12,6 +12,7 @@ import { Cbbthd } from '../models/sage_entities/Cbbthd';
 import { Cbbtm } from '../models/sage_entities/Cbbtm';
 import { Cboptio } from '../models/sage_entities/Cboptio';
 import { Venbank } from '../models/sage_entities/Venbank';
+import { VENBANK_SCHEMA_SQL } from './venbankSchema';
 
 const host = process.env.SAGE_DB_HOST ?? 'localhost';
 const port = Number(process.env.SAGE_DB_PORT ?? 50593);
@@ -60,35 +61,11 @@ let sageConnectionPromise: Promise<void> | null = null;
 let sageConnectionReady = false;
 
 async function ensureVenbankCustomColumns(): Promise<void> {
-  if (venbankSchemaChecked || process.env.SAGE_SYNC_VENBANK_SCHEMA !== 'true') {
+  if (venbankSchemaChecked || process.env.SAGE_SYNC_VENBANK_SCHEMA === 'false') {
     return;
   }
 
-  await sageSequelize.query(`
-    IF OBJECT_ID('VENBANK', 'U') IS NOT NULL
-    BEGIN
-      IF COL_LENGTH('VENBANK', 'PHYSICAL_ADDRESS') IS NULL
-        ALTER TABLE [VENBANK] ADD [PHYSICAL_ADDRESS] NVARCHAR(MAX) NULL;
-
-      IF COL_LENGTH('VENBANK', 'COUNTRY_OF_ORIGIN') IS NULL
-        ALTER TABLE [VENBANK] ADD [COUNTRY_OF_ORIGIN] VARCHAR(100) NULL;
-
-      IF COL_LENGTH('VENBANK', 'EMAIL') IS NULL
-        ALTER TABLE [VENBANK] ADD [EMAIL] VARCHAR(255) NULL;
-
-      IF COL_LENGTH('VENBANK', 'PHONE_NUMBER') IS NULL
-        ALTER TABLE [VENBANK] ADD [PHONE_NUMBER] VARCHAR(20) NULL;
-
-      IF COL_LENGTH('VENBANK', 'SORTCDE') IS NULL
-        ALTER TABLE [VENBANK] ADD [SORTCDE] VARCHAR(20) NULL;
-
-      IF COL_LENGTH('VENBANK', 'BRNCH') IS NULL
-        ALTER TABLE [VENBANK] ADD [BRNCH] VARCHAR(255) NULL;
-
-      IF COL_LENGTH('VENBANK', 'SWIFTCDE') IS NULL
-        ALTER TABLE [VENBANK] ADD [SWIFTCDE] VARCHAR(20) NULL;
-    END
-  `);
+  await sageSequelize.query(VENBANK_SCHEMA_SQL);
 
   venbankSchemaChecked = true;
 }

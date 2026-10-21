@@ -43,7 +43,7 @@ function referenceSuffix(seed: string) {
 }
 
 function zanacoExternalTranRef(payment: PaymentsResponse, maxLength: number) {
-  const seed = normalizeString(payment.paymentId || payment.transactionReference);
+  const seed = normalizeString((payment as any).recoveryAttemptId || payment.paymentId || payment.transactionReference);
   if (!seed) return '';
   return `${referenceSuffix(seed)}${referenceSuffix(`IDC:${seed}`)}${referenceSuffix(`DDAC:${seed}`)}`.slice(0, maxLength);
 }

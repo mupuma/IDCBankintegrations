@@ -52,4 +52,4 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
   return { records, updates, post: body => route.POST({ json: async () => body }) };
 }
 
-module.exports = { builders, routeFixture };
+module.exports = { load, builders, routeFixture };

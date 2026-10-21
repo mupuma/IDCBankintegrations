@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.queueScheduler = exports.paymentQueue = exports.ZANACO_QUEUE_NAME = void 0;
+exports.findPaymentWork = findPaymentWork;
+exports.submissionStarted = submissionStarted;
 exports.markSubmissionStarted = markSubmissionStarted;
 exports.reserveBankReferences = reserveBankReferences;
 exports.enqueuePaymentWork = enqueuePaymentWork;
@@ -16,6 +18,13 @@ const connection = {
 exports.ZANACO_QUEUE_NAME = process.env.ZANACO_QUEUE_NAME || 'zanaco-payments';
 exports.paymentQueue = new bullmq_1.Queue(exports.ZANACO_QUEUE_NAME, { connection });
 exports.queueScheduler = new bullmq_1.JobScheduler(exports.ZANACO_QUEUE_NAME, { connection });
+async function findPaymentWork(queueId) {
+    return exports.paymentQueue.getJob((0, node_crypto_1.createHash)('sha256').update(queueId).digest('hex'));
+}
+async function submissionStarted(queueId) {
+    const client = await exports.paymentQueue.client;
+    return Boolean(await client.get(`${exports.ZANACO_QUEUE_NAME}:submission:${(0, node_crypto_1.createHash)('sha256').update(queueId).digest('hex')}`));
+}
 async function markSubmissionStarted(queueId) {
     const client = await exports.paymentQueue.client;
     const key = `${exports.ZANACO_QUEUE_NAME}:submission:${(0, node_crypto_1.createHash)('sha256').update(queueId).digest('hex')}`;

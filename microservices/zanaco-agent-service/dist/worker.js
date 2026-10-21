@@ -6,6 +6,7 @@ const paymentProcessor_1 = require("./paymentProcessor");
 const zanacoValidation_1 = require("./zanacoValidation");
 const zanacoAgent_1 = require("./zanacoAgent");
 const portalQueueClient_1 = require("./portalQueueClient");
+const recovery_1 = require("./recovery");
 const bulk_1 = require("./bulk");
 const log_1 = require("./log");
 const zwsClient_1 = require("./zwsClient");
@@ -13,6 +14,7 @@ const zwsClient_1 = require("./zwsClient");
 const worker = (0, queue_1.buildWorker)(async (job) => {
     (0, log_1.logEvent)('worker.job.started', { jobId: job.id, queueId: job.data?.queueId, attempts: job.attemptsMade + 1 });
     return (0, paymentProcessor_1.processPaymentJob)(job, {
+        authorize: prepared => (0, bulk_1.isBulkService)(prepared.service) ? (0, bulk_1.authenticateBulk)() : (0, zanacoAgent_1.authenticateZanaco)(),
         prepare(payment) {
             if (!payment)
                 throw new Error('Job missing payment payload');
@@ -67,10 +69,39 @@ async function claimPortalWork() {
         claiming = false;
     }
 }
+let recovering = false;
+async function claimRecoveryWork() {
+    if (recovering)
+        return;
+    recovering = true;
+    try {
+        const command = await (0, portalQueueClient_1.claimNextRecovery)();
+        if (command) {
+            let success = true, message;
+            try {
+                message = await (0, recovery_1.applyRecoveryCommand)(command, { find: queue_1.findPaymentWork, submissionStarted: queue_1.submissionStarted, report: portalQueueClient_1.reportPaymentResult });
+            }
+            catch (error) {
+                success = false;
+                message = error instanceof Error ? error.message : String(error);
+            }
+            await (0, portalQueueClient_1.reportRecovery)(command, success, message);
+            (0, log_1.logEvent)('worker.recovery.completed', { actionId: command.actionId, queueId: command.queueId, success, message });
+        }
+    }
+    catch (error) {
+        (0, log_1.logError)('worker.recovery.failed', { error: error instanceof Error ? error.message : String(error) });
+    }
+    finally {
+        recovering = false;
+    }
+}
 if (process.env.APP_API_URL) {
     const intervalMs = Number(process.env.PORTAL_CLAIM_INTERVAL_MS || 5000);
     setInterval(() => void claimPortalWork(), intervalMs);
     void claimPortalWork();
+    setInterval(() => void claimRecoveryWork(), intervalMs);
+    void claimRecoveryWork();
 }
 worker.on('completed', (job, returnvalue) => {
     (0, log_1.logEvent)('worker.job.completed', { jobId: job.id, queueId: job.data?.queueId, returnvalue });

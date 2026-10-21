@@ -15,6 +15,14 @@ export const ZANACO_QUEUE_NAME = process.env.ZANACO_QUEUE_NAME || 'zanaco-paymen
 export const paymentQueue = new Queue<PaymentWork>(ZANACO_QUEUE_NAME, { connection });
 export const queueScheduler = new JobScheduler(ZANACO_QUEUE_NAME, { connection });
 
+export async function findPaymentWork(queueId: string) {
+  return paymentQueue.getJob(createHash('sha256').update(queueId).digest('hex'));
+}
+export async function submissionStarted(queueId: string) {
+  const client = await paymentQueue.client;
+  return Boolean(await client.get(`${ZANACO_QUEUE_NAME}:submission:${createHash('sha256').update(queueId).digest('hex')}`));
+}
+
 export async function markSubmissionStarted(queueId: string) {
   const client = await paymentQueue.client;
   const key = `${ZANACO_QUEUE_NAME}:submission:${createHash('sha256').update(queueId).digest('hex')}`;

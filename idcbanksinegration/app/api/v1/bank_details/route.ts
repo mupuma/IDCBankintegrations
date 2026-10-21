@@ -120,6 +120,8 @@ import { logAuditEvent } from '../../../lib/auditLog';
 import { Venbank } from '../../../models/sage_entities/Venbank';
 import { Op, Sequelize } from 'sequelize';
 import { connectSageDatabase } from '../../../lib/sageDb';
+import { loadVendorSwiftDetails, mergeVendorSwiftDetails } from '../../../lib/sageVendorBankDetails';
+import { validateVendorSwiftDetails } from '../../../lib/vendorSwiftValidation';
 
 function normalizeVenbank(bank: any) {
   const record = bank.toJSON ? bank.toJSON() : bank;
@@ -199,7 +201,8 @@ export async function GET(request: NextRequest) {
       order: [['id', 'ASC']],
     });
     
-    const normalizedBanks = banks.map(normalizeVenbank);
+    const sageDetails = await loadVendorSwiftDetails(banks.map(bank => bank.vendorid || ''));
+    const normalizedBanks = banks.map(bank => ({ ...normalizeVenbank(bank), ...mergeVendorSwiftDetails({ ...bank.toJSON() }, sageDetails.get((bank.vendorid || '').trim())) }));
     hasNextPage = normalizedBanks.length > limit;
     const data = hasNextPage ? normalizedBanks.slice(0, -1) : normalizedBanks;
     nextCursor = hasNextPage ? data[data.length - 1]?.id : null;
@@ -229,7 +232,8 @@ export async function GET(request: NextRequest) {
       order: [['id', 'DESC']],
     });
     
-    const normalizedBanks = banks.map(normalizeVenbank);
+    const sageDetails = await loadVendorSwiftDetails(banks.map(bank => bank.vendorid || ''));
+    const normalizedBanks = banks.map(bank => ({ ...normalizeVenbank(bank), ...mergeVendorSwiftDetails({ ...bank.toJSON() }, sageDetails.get((bank.vendorid || '').trim())) }));
     
     // Calculate pagination metadata
     const totalPages = Math.ceil(totalItems / limit);
@@ -260,6 +264,8 @@ export async function POST(request: NextRequest) {
   try {
     await connectSageDatabase();
     const body = await request.json();
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
     
     // Validate required fields
     if (!body.vendorid || !body.accname) {
@@ -289,8 +295,11 @@ export async function POST(request: NextRequest) {
       sortcde: body.sortcde || '',
       brnch: body.brnch || '',
       swiftcde: body.swiftcde || '',
+      tpin: body.tpin?.trim() || null,
+      purposeCode: body.purposeCode?.trim() || null,
+      sectorCode: body.sectorCode?.trim() || null,
       physicalAddress: body.physicalAddress || { streetName: '', town: '', plotNo: '' },
-      countryoforigin: body.countryOfOrigin || '',
+      countryOfOrigin: body.countryOfOrigin || '',
       email: body.email || '',
       phoneNumber: body.phoneNumber || '',
     });
@@ -343,6 +352,8 @@ export async function PUT(request: NextRequest) {
     }
     
     const body = await request.json();
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
     
     // Validate required fields
     if (!body.vendorid || !body.accname) {
@@ -368,6 +379,9 @@ export async function PUT(request: NextRequest) {
       sortcde: body.sortcde || '',
       brnch: body.brnch || '',
       swiftcde: body.swiftcde || '',
+      ...(body.tpin !== undefined ? { tpin: body.tpin?.trim() || null } : {}),
+      ...(body.purposeCode !== undefined ? { purposeCode: body.purposeCode?.trim() || null } : {}),
+      ...(body.sectorCode !== undefined ? { sectorCode: body.sectorCode?.trim() || null } : {}),
       physicalAddress: body.physicalAddress || { streetName: '', town: '', plotNo: '' },
       countryOfOrigin: body.countryOfOrigin || '',
       email: body.email || '',

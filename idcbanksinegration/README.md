@@ -1,5 +1,9 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+For Zanaco and ZICB recovery controls, deployment migration and operator instructions, see [Payment recovery](./PAYMENT_RECOVERY.md).
+
+For vendor TPIN, SWIFT code defaults, Sage fallback and automatic schema additions, see [Vendor SWIFT details](./VENDOR_SWIFT_DETAILS.md).
+
 ## Getting Started
 
 First, run the development server:

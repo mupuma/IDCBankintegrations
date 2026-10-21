@@ -1,11 +1,29 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.claimNextRecovery = claimNextRecovery;
+exports.reportRecovery = reportRecovery;
 exports.claimNextPayment = claimNextPayment;
 exports.emitAgentAudit = emitAgentAudit;
 exports.reportPaymentProcessing = reportPaymentProcessing;
 exports.reportPaymentResult = reportPaymentResult;
 exports.reportAccepted = reportAccepted;
 const log_1 = require("./log");
+async function recoveryRequest(method, body) {
+    const { appApiUrl, bankPullApiKey } = getPortalConfig();
+    if (!appApiUrl || !bankPullApiKey)
+        throw new Error('Portal configuration is missing');
+    const response = await fetch(`${appApiUrl}/api/v1/agent_recovery`, {
+        method, headers: { 'Content-Type': 'application/json', 'x-bank-api-key': bankPullApiKey },
+        body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(120000),
+    });
+    if (!response.ok)
+        throw new Error(`Recovery request failed (HTTP ${response.status})`);
+    return response.json();
+}
+async function claimNextRecovery() { return (await recoveryRequest('POST')).item ?? null; }
+async function reportRecovery(command, success, message) {
+    await recoveryRequest('PATCH', { actionId: command.actionId, leaseToken: command.leaseToken, success, message });
+}
 function getPortalConfig() {
     return {
         appApiUrl: process.env.APP_API_URL?.trim().replace(/\/$/, ''),
@@ -111,7 +129,11 @@ async function reportPaymentProcessing(queueId, attempts, error) {
 async function reportPaymentResult(queueId, result, attempts) {
     await reportQueueStatus(queueId, {
         status: result.success ? 'success' : result.accepted ? 'accepted' : result.unknown ? 'unknown' : 'failed',
-        response: result.data,
+        response: {
+            ...(result.data && typeof result.data === 'object' ? result.data : {}),
+            recovery: { protocol: 'zanaco-recovery-v1', notSent: Boolean(result.notSent),
+                retryable: Boolean(result.notSent && result.retryable), confirmedRejected: Boolean(result.confirmedRejected) },
+        },
         error: result.error,
         attempts,
     });

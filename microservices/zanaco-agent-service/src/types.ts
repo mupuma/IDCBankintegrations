@@ -59,6 +59,8 @@ export type JobResult = {
   retryable?: boolean;
   unknown?: boolean;
   accepted?: boolean;
+  notSent?: boolean;
+  confirmedRejected?: boolean;
 };
 
 export type QueueReportStatus =

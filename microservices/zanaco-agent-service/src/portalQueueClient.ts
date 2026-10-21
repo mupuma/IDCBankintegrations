@@ -1,6 +1,22 @@
 import type { JobResult, QueueReportStatus } from './types';
 
 import { logEvent, logError } from './log';
+import type { RecoveryCommand } from './recovery';
+
+async function recoveryRequest(method: string, body?: unknown) {
+  const { appApiUrl, bankPullApiKey } = getPortalConfig();
+  if (!appApiUrl || !bankPullApiKey) throw new Error('Portal configuration is missing');
+  const response = await fetch(`${appApiUrl}/api/v1/agent_recovery`, {
+    method, headers: { 'Content-Type': 'application/json', 'x-bank-api-key': bankPullApiKey },
+    body: body === undefined ? undefined : JSON.stringify(body), redirect: 'error', signal: AbortSignal.timeout(120000),
+  });
+  if (!response.ok) throw new Error(`Recovery request failed (HTTP ${response.status})`);
+  return response.json();
+}
+export async function claimNextRecovery(): Promise<RecoveryCommand | null> { return (await recoveryRequest('POST')).item ?? null; }
+export async function reportRecovery(command: RecoveryCommand, success: boolean, message: string) {
+  await recoveryRequest('PATCH', { actionId: command.actionId, leaseToken: command.leaseToken, success, message });
+}
 
 function getPortalConfig() {
   return {
@@ -134,7 +150,11 @@ export async function reportPaymentProcessing(queueId: string, attempts?: number
 export async function reportPaymentResult(queueId: string, result: JobResult, attempts?: number) {
   await reportQueueStatus(queueId, {
     status: result.success ? 'success' : result.accepted ? 'accepted' : result.unknown ? 'unknown' : 'failed',
-    response: result.data,
+    response: {
+      ...(result.data && typeof result.data === 'object' ? result.data : {}),
+      recovery: { protocol: 'zanaco-recovery-v1', notSent: Boolean(result.notSent),
+        retryable: Boolean(result.notSent && result.retryable), confirmedRejected: Boolean(result.confirmedRejected) },
+    },
     error: result.error,
     attempts,
   });

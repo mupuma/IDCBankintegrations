@@ -99,7 +99,7 @@ function referenceSuffix(seed: string) {
 }
 
 function externalTranRefFrom(payment: PaymentsResponse, kind: string) {
-  const seed = text(payment.paymentId || payment.transactionReference);
+  const seed = text((payment as any).recoveryAttemptId || payment.paymentId || payment.transactionReference);
   if (!seed) return '';
   // Hash the entire stable identity, not a truncated/sanitised prefix. Redis
   // reserves the resulting bank reference before submission to detect collisions.

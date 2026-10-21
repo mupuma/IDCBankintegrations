@@ -10,6 +10,7 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Op } from 'sequelize';
 import { createHash } from 'node:crypto';
+import { loadVendorSwiftDetails, mergeVendorSwiftDetails } from '@/app/lib/sageVendorBankDetails';
 
 type SageRawRecord = Record<string, unknown>;
 type NormalizedPayment = PaymentsResponse & {
@@ -28,6 +29,9 @@ type VendorBankDetails = {
   branchCode: string;
   sortCode: string;
   swiftCode: string;
+  tpin: string;
+  purposeCode: string;
+  sectorCode: string;
   countryOfOrigin: string;
   email: string;
   phoneNumber: string;
@@ -44,6 +48,9 @@ const VENBANK_ATTRIBUTES = [
   'sortcde',
   'brnch',
   'swiftcde',
+  'tpin',
+  'purposeCode',
+  'sectorCode',
   'physicalAddress',
   'countryOfOrigin',
   'email',
@@ -141,6 +148,7 @@ function normalizeVenbank(bank: SageRawRecord | undefined): VendorBankDetails {
     branchCode: trimString(getRawField(bank, ['brnch', 'BRNCH'], '')),
     sortCode: trimString(getRawField(bank, ['sortcde', 'SORTCDE'], '')),
     swiftCode: trimString(getRawField(bank, ['swiftcde', 'SWIFTCDE'], '')),
+    ...mergeVendorSwiftDetails(bank || {}),
     countryOfOrigin: trimString(getRawField(bank, ['countryOfOrigin', 'COUNTRY_OF_ORIGIN'], '')),
     email: trimString(getRawField(bank, ['email', 'EMAIL'], '')),
     phoneNumber: trimString(getRawField(bank, ['phoneNumber', 'PHONE_NUMBER'], '')),
@@ -255,6 +263,9 @@ function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, 
     branchCode: bankDetails.branchCode,
     sortCode: bankDetails.sortCode,
     swiftCode: bankDetails.swiftCode,
+    tpin: bankDetails.tpin,
+    purposeCode: bankDetails.purposeCode,
+    sectorCode: bankDetails.sectorCode,
     bankName: bankDetails.bankName,
     email: bankDetails.email,
     phoneNumber: bankDetails.phoneNumber,
@@ -324,6 +335,7 @@ export async function POST(request: NextRequest) {
     if (seededVendorCount > 0) {
       venbankByVendor = await loadVenbanksByVendor(vendorIds);
     }
+    const sageSwiftDetails = await loadVendorSwiftDetails(vendorIds);
 
     const aptcrPairs = new Set<string>();
     const aptcrSearch: Array<{ cntbtch: number; cntentr: number }> = [];
@@ -358,6 +370,7 @@ export async function POST(request: NextRequest) {
     const enriched = payments.map((appym) => {
       const vendorId = String(getRawField(appym, ['idvend', 'IDVEND'], '')).trim();
       const bankDetails = normalizeVenbank(venbankByVendor.get(vendorId));
+      Object.assign(bankDetails, mergeVendorSwiftDetails(venbankByVendor.get(vendorId) || {}, sageSwiftDetails.get(vendorId)));
       const cntbtch = getRawField(appym, ['cntbtch', 'CNTBTCH'], '');
       const cntitem = getRawField(appym, ['cntitem', 'CNTITEM'], '');
       const remarks = aptcrMap.get(`${cntbtch}|${cntitem}`) || '';

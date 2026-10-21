@@ -426,13 +426,13 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
 
   if (bankCode === 'ZANACO' && transactionType === 'TT') {
     if (!(payment as any).tpin && !(payment as any).tpIn) {
-      errors.push('TPIN is required for Zanaco SWIFT payments.');
+      errors.push('Add the vendor TPIN in Vendor bank details, then fetch payments again for Zanaco SWIFT.');
     }
     if (!(payment as any).purposeCode) {
-      errors.push('Purpose code is required for Zanaco SWIFT payments.');
+      errors.push('Add the Zanaco SWIFT purpose code in Vendor bank details, then fetch payments again.');
     }
     if (!(payment as any).sectorCode) {
-      errors.push('Sector code is required for Zanaco SWIFT payments.');
+      errors.push('Add the Zanaco SWIFT sector code in Vendor bank details, then fetch payments again.');
     }
   }
 
@@ -530,7 +530,7 @@ export default function PaymentQueueDashboard() {
 
     setQueueStatuses((prev) => {
       const next = { ...prev };
-      for (const item of items) {
+      for (const item of [...items].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))) {
         if (!item.paymentId || !item.bankCode || !preventsPosting(item.status, item.bankCode)) {
           continue;
         }
@@ -1074,6 +1074,7 @@ export default function PaymentQueueDashboard() {
             <p className="mt-2 max-w-2xl text-sm text-slate-600">
               Fetch posted Sage payments, enrich each record with vendor bank details, validate queue-specific payloads, and push only when the payload is ready.
             </p>
+            <p className="mt-2 text-sm text-slate-600">For existing failed or uncertain instructions, use <a href="/bank_details/payment_queues" className="font-semibold underline">Bank Queue Processing recovery controls</a>.</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <label className="space-y-2 text-sm text-slate-600">
@@ -1351,34 +1352,9 @@ export default function PaymentQueueDashboard() {
                           <div className="mt-3 space-y-3 rounded-2xl border border-blue-200 bg-blue-50 p-3 text-xs text-slate-700">
                             <p className="font-semibold">SWIFT payment details</p>
                             <p>Requires beneficiary BIC/SWIFT code, physical address, TPIN, purpose code and sector code.</p>
-                            {([
-                              ['tpin', 'TPIN', 20],
-                              ['purposeCode', 'Purpose code', 8],
-                              ['sectorCode', 'Sector code', 8],
-                            ] as const).map(([field, label, maxLength]) => (
-                              <label key={field} className="block space-y-1">
-                                <span>{label} <span className="text-rose-700">*</span></span>
-                                <input
-                                  type="text"
-                                  value={field === 'tpin' ? payment.tpin ?? payment.tpIn ?? '' : payment[field] ?? ''}
-                                  maxLength={maxLength}
-                                  disabled={isAlreadyPosted || submittingPayments[payment.paymentId] || bulkSubmitting}
-                                  onChange={(event) => {
-                                    const value = event.target.value;
-                                    setPayments((prev) => prev.map((row) => row.paymentId === payment.paymentId
-                                      ? { ...row, [field]: value, ...(field === 'tpin' ? { tpIn: value } : {}) }
-                                      : row));
-                                    setValidationResults((prev) => {
-                                      const next = { ...prev };
-                                      delete next[payment.paymentId];
-                                      return next;
-                                    });
-                                    setSubmissionErrors((prev) => ({ ...prev, [payment.paymentId]: '' }));
-                                  }}
-                                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 outline-none focus:border-blue-400 disabled:opacity-60"
-                                />
-                              </label>
-                            ))}
+                            <p>These details are loaded from the vendor's saved bank details and Sage. To add or correct them, open <a href="/bank_details" target="_blank" rel="noopener noreferrer" className="font-semibold underline">Vendor bank details</a>, save the record, then fetch payments again.</p>
+                            <p>TPIN: {payment.tpin || payment.tpIn || 'Missing'} | Purpose code: {payment.purposeCode || 'Missing'} | Sector code: {payment.sectorCode || 'Missing'}</p>
+                            <p>Purpose and sector codes are bank-defined codes. Confirm the saved codes apply to this payment.</p>
                           </div>
                         ) : null}
                         {selectedBank === 'IZB' ? (

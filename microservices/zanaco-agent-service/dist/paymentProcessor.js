@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.processPaymentJob = processPaymentJob;
-const unresolved = (result) => Boolean(result.unknown || result.accepted);
+const unresolved = (result) => Boolean(result.unknown || result.accepted || (result.notSent && result.retryable));
 const uncertain = (error) => ({
     success: false, status: 503, unknown: true,
     error: error instanceof Error ? error.message : String(error),
@@ -28,7 +28,11 @@ async function processPaymentJob(job, operations) {
             prepared = operations.prepare(job.data.payment);
         }
         catch (error) {
-            const result = { success: false, status: 400, error: error instanceof Error ? error.message : String(error) };
+            // Fence any overlapping worker before asserting that validation prevented
+            // submission. A stale worker must not send after this outcome is reported.
+            const fenced = operations.beginSubmission ? await operations.beginSubmission(job.data.queueId) : true;
+            const result = { success: false, status: fenced ? 400 : 409, notSent: fenced, unknown: !fenced,
+                error: fenced ? error instanceof Error ? error.message : String(error) : 'Instruction already started; reconcile the original reference before any correction' };
             checkpoint = { phase: 'outcome', result };
             await save(checkpoint);
         }
@@ -49,6 +53,19 @@ async function processPaymentJob(job, operations) {
         return checkpoint.result;
     let result;
     if (checkpoint.phase === 'prepared') {
+        // Authentication sends no payment. Keep this checkpoint resumable if login
+        // fails; only cross the durable submission boundary after credentials work.
+        try {
+            await operations.authorize?.(checkpoint.prepared);
+        }
+        catch (error) {
+            result = { success: false, status: 503, notSent: true, retryable: true, error: error instanceof Error ? error.message : String(error) };
+            await save({ ...checkpoint, result, reported: false });
+            if (job.data.reportToPortal && job.data.queueId)
+                await operations.report(job.data.queueId, result, job.attemptsMade + 1);
+            await save({ ...job.data.checkpoint, reported: true });
+            throw new Error(result.error || 'Authentication failed before payment submission');
+        }
         // Reference collisions are rejected before the submission marker/network call.
         if (operations.reserve) {
             try {
@@ -63,7 +80,7 @@ async function processPaymentJob(job, operations) {
                 return result;
             }
         }
-        checkpoint = { ...checkpoint, phase: 'submitting' };
+        checkpoint = { ...checkpoint, phase: 'submitting', result: undefined, reported: false };
         await save(checkpoint);
         try {
             // A separate atomic marker fences overlapping/stalled BullMQ workers even

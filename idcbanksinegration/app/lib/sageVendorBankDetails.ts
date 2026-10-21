@@ -8,6 +8,9 @@ export type SageVendorBankDetails = {
   branchCode: string;
   sortCode: string;
   swiftCode: string;
+  tpin: string;
+  purposeCode: string;
+  sectorCode: string;
   countryOfOrigin: string;
   email: string;
   phoneNumber: string;
@@ -31,6 +34,9 @@ const DEFAULT_OPTIONAL_FIELDS: OptionalFieldMap = {
   branchCode: ['BRANCH', 'BRNCODE'],
   sortCode: ['SORTCODE'],
   swiftCode: ['SWIFT', 'BIC'],
+  tpin: ['TPIN'],
+  purposeCode: ['PURPOSE', 'PURPOSECODE'],
+  sectorCode: ['SECTOR', 'SECTORCODE'],
   countryOfOrigin: ['COUNTRY'],
   email: ['BNKEMAIL', 'EMAIL'],
   phoneNumber: ['BNKPHONE', 'PHONE'],
@@ -119,6 +125,7 @@ export function buildVendorBankDetails(input: {
   town?: string;
   plotNo?: string;
   country?: string;
+  taxNumber?: string;
   optionalFields?: Map<string, string>;
 }): SageVendorBankDetails {
   const fields = vendorBankOptionalFieldMap();
@@ -135,6 +142,9 @@ export function buildVendorBankDetails(input: {
     branchCode: readValue(values, fields.branchCode),
     sortCode: readValue(values, fields.sortCode),
     swiftCode: readValue(values, fields.swiftCode),
+    tpin: readValue(values, fields.tpin) || normalize(input.taxNumber),
+    purposeCode: readValue(values, fields.purposeCode),
+    sectorCode: readValue(values, fields.sectorCode),
     countryOfOrigin,
     email,
     phoneNumber,
@@ -156,4 +166,32 @@ export function buildVendorBankDetails(input: {
   ].filter(([, value]) => !value).map(([field]) => field);
 
   return details;
+}
+
+export type VendorSwiftDetails = Pick<SageVendorBankDetails, 'tpin' | 'purposeCode' | 'sectorCode'>;
+
+// Saved VENBANK values take precedence. Read fallback values without writing
+// over vendor details whenever payments are refreshed from Sage.
+export function mergeVendorSwiftDetails(saved: Record<string, unknown>, sage?: VendorSwiftDetails): VendorSwiftDetails {
+  return {
+    tpin: normalize(saved.tpin ?? saved.TPIN) || sage?.tpin || '',
+    purposeCode: normalize(saved.purposeCode ?? saved.PURPOSE_CODE) || sage?.purposeCode || '',
+    sectorCode: normalize(saved.sectorCode ?? saved.SECTOR_CODE) || sage?.sectorCode || '',
+  };
+}
+
+export async function loadVendorSwiftDetails(vendorIds: string[]): Promise<Map<string, VendorSwiftDetails>> {
+  const ids = Array.from(new Set(vendorIds.map(normalize).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const rows = await sageSequelize.query<{ vendorId: string; taxNumber: string }>(
+    `SELECT LTRIM(RTRIM(VENDORID)) AS vendorId, LTRIM(RTRIM(TAXNBR)) AS taxNumber
+     FROM APVEN WHERE LTRIM(RTRIM(VENDORID)) IN (:vendorIds)`,
+    { replacements: { vendorIds: ids }, type: QueryTypes.SELECT },
+  );
+  const optionalFields = await loadVendorOptionalFields(ids);
+  const taxes = new Map(rows.map(row => [normalize(row.vendorId), normalize(row.taxNumber)]));
+  return new Map(ids.map(vendorId => {
+    const details = buildVendorBankDetails({ vendorId, taxNumber: taxes.get(vendorId), optionalFields: optionalFields.get(vendorId) });
+    return [vendorId, { tpin: details.tpin, purposeCode: details.purposeCode, sectorCode: details.sectorCode }];
+  }));
 }

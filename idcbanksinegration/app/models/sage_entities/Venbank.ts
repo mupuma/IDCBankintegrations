@@ -78,6 +78,15 @@ export class Venbank extends Model<Venbank, VenbankCreationAttributes> {
   })
   declare swiftcde?: string;
 
+  @Column({ type: DataType.STRING(20), field: 'TPIN', allowNull: true })
+  declare tpin?: string;
+
+  @Column({ type: DataType.STRING(8), field: 'PURPOSE_CODE', allowNull: true })
+  declare purposeCode?: string;
+
+  @Column({ type: DataType.STRING(8), field: 'SECTOR_CODE', allowNull: true })
+  declare sectorCode?: string;
+
   @Column({
     type: DataType.JSON,
     field: 'PHYSICAL_ADDRESS',

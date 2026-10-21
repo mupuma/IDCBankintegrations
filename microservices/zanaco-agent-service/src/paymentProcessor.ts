@@ -18,6 +18,7 @@ export interface DurableJob {
 }
 export interface PaymentOperations {
   prepare(payment: unknown): ZanacoPreparedRequest;
+  authorize?(prepared: ZanacoPreparedRequest): Promise<void>;
   reserve?(prepared: ZanacoPreparedRequest, queueId: string): Promise<void>;
   beginSubmission?(queueId: string): Promise<boolean>;
   submit(prepared: ZanacoPreparedRequest): Promise<JobResult>;
@@ -25,7 +26,7 @@ export interface PaymentOperations {
   report(queueId: string, result: JobResult, attempts: number): Promise<void>;
 }
 
-const unresolved = (result: JobResult) => Boolean(result.unknown || result.accepted);
+const unresolved = (result: JobResult) => Boolean(result.unknown || result.accepted || (result.notSent && result.retryable));
 const uncertain = (error: unknown): JobResult => ({
   success: false, status: 503, unknown: true,
   error: error instanceof Error ? error.message : String(error),
@@ -51,7 +52,11 @@ export async function processPaymentJob(job: DurableJob, operations: PaymentOper
     let prepared: ZanacoPreparedRequest;
     try { prepared = operations.prepare(job.data.payment); }
     catch (error) {
-      const result: JobResult = { success: false, status: 400, error: error instanceof Error ? error.message : String(error) };
+      // Fence any overlapping worker before asserting that validation prevented
+      // submission. A stale worker must not send after this outcome is reported.
+      const fenced = operations.beginSubmission ? await operations.beginSubmission(job.data.queueId!) : true;
+      const result: JobResult = { success: false, status: fenced ? 400 : 409, notSent: fenced, unknown: !fenced,
+        error: fenced ? error instanceof Error ? error.message : String(error) : 'Instruction already started; reconcile the original reference before any correction' };
       checkpoint = { phase: 'outcome', result };
       await save(checkpoint);
     }
@@ -73,6 +78,16 @@ export async function processPaymentJob(job: DurableJob, operations: PaymentOper
 
   let result: JobResult;
   if (checkpoint.phase === 'prepared') {
+    // Authentication sends no payment. Keep this checkpoint resumable if login
+    // fails; only cross the durable submission boundary after credentials work.
+    try { await operations.authorize?.(checkpoint.prepared!); }
+    catch (error) {
+      result = { success: false, status: 503, notSent: true, retryable: true, error: error instanceof Error ? error.message : String(error) };
+      await save({ ...checkpoint, result, reported: false });
+      if (job.data.reportToPortal && job.data.queueId) await operations.report(job.data.queueId, result, job.attemptsMade + 1);
+      await save({ ...job.data.checkpoint!, reported: true });
+      throw new Error(result.error || 'Authentication failed before payment submission');
+    }
     // Reference collisions are rejected before the submission marker/network call.
     if (operations.reserve) {
       try { await operations.reserve(checkpoint.prepared!, job.data.queueId!); }
@@ -84,7 +99,7 @@ export async function processPaymentJob(job: DurableJob, operations: PaymentOper
         return result;
       }
     }
-    checkpoint = { ...checkpoint, phase: 'submitting' };
+    checkpoint = { ...checkpoint, phase: 'submitting', result: undefined, reported: false };
     await save(checkpoint);
     try {
       // A separate atomic marker fences overlapping/stalled BullMQ workers even

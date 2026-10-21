@@ -33,17 +33,18 @@ export async function syncSchemaAddOnly(instance: Sequelize, models: RegisteredM
     const exists = await tableExists(queryInterface, tableName);
 
     if (!exists) {
-      await model.sync();
+      await model.sync({ force: false, alter: false });
       console.log(`Created table: ${tableName}`);
       continue;
     }
 
     const tableDescription = await queryInterface.describeTable(tableName);
+    const existingColumns = new Set(Object.keys(tableDescription).map(name => name.toLowerCase()));
     const attributes = model.getAttributes();
 
     for (const [attrName, attribute] of Object.entries(attributes)) {
       const columnName = (attribute.field as string | undefined) ?? attrName;
-      if (tableDescription[columnName]) {
+      if (existingColumns.has(columnName.toLowerCase())) {
         continue;
       }
 

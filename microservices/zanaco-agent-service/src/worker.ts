@@ -1,10 +1,11 @@
 import 'dotenv/config';
-import { buildWorker, enqueuePaymentWork, queueScheduler, reserveBankReferences, markSubmissionStarted } from './queue';
+import { buildWorker, enqueuePaymentWork, queueScheduler, reserveBankReferences, markSubmissionStarted, findPaymentWork, submissionStarted } from './queue';
 import { processPaymentJob } from './paymentProcessor';
 import { isZanacoServicePayload } from './zanacoValidation';
-import { prepareZanacoPayload, prepareZanacoServicePayload, sendZanacoPayment, queryTransactionStatus, isPaymentSubmission } from './zanacoAgent';
-import { claimNextPayment, emitAgentAudit, reportPaymentResult } from './portalQueueClient';
-import { isBulkService, prepareBulkPayload, submitBulk, reconcileBulk } from './bulk';
+import { prepareZanacoPayload, prepareZanacoServicePayload, sendZanacoPayment, queryTransactionStatus, isPaymentSubmission, authenticateZanaco } from './zanacoAgent';
+import { claimNextPayment, emitAgentAudit, reportPaymentResult, claimNextRecovery, reportRecovery } from './portalQueueClient';
+import { applyRecoveryCommand } from './recovery';
+import { isBulkService, prepareBulkPayload, submitBulk, reconcileBulk, authenticateBulk } from './bulk';
 import { logEvent, logError } from './log';
 import { validateZanacoConfiguration } from './zwsClient';
 
@@ -12,6 +13,7 @@ validateZanacoConfiguration();
 const worker = buildWorker(async (job) => {
   logEvent('worker.job.started', { jobId: job.id, queueId: job.data?.queueId, attempts: job.attemptsMade + 1 });
   return processPaymentJob(job, {
+    authorize: prepared => isBulkService(prepared.service) ? authenticateBulk() : authenticateZanaco(),
     prepare(payment: unknown) {
       if (!payment) throw new Error('Job missing payment payload');
       if (isZanacoServicePayload(payment)) {
@@ -63,10 +65,29 @@ async function claimPortalWork() {
   }
 }
 
+let recovering = false;
+async function claimRecoveryWork() {
+  if (recovering) return;
+  recovering = true;
+  try {
+    const command = await claimNextRecovery();
+    if (command) {
+      let success = true, message: string;
+      try { message = await applyRecoveryCommand(command, { find: findPaymentWork, submissionStarted, report: reportPaymentResult }); }
+      catch (error) { success = false; message = error instanceof Error ? error.message : String(error); }
+      await reportRecovery(command, success, message);
+      logEvent('worker.recovery.completed', { actionId: command.actionId, queueId: command.queueId, success, message });
+    }
+  } catch (error) { logError('worker.recovery.failed', { error: error instanceof Error ? error.message : String(error) }); }
+  finally { recovering = false; }
+}
+
 if (process.env.APP_API_URL) {
   const intervalMs = Number(process.env.PORTAL_CLAIM_INTERVAL_MS || 5000);
   setInterval(() => void claimPortalWork(), intervalMs);
   void claimPortalWork();
+  setInterval(() => void claimRecoveryWork(), intervalMs);
+  void claimRecoveryWork();
 }
 
 worker.on('completed', (job: any, returnvalue: any) => {

@@ -105,8 +105,8 @@ test('single POST requires a selected, complete source account', async () => {
   assert.equal(f.records.length, 0);
 });
 
-test('valid single POST and failed-reservation retry preserve validated debit details for agent-pull', async () => {
-  for (const [type, retry] of [['INT', false], ['RTGS', false], ['DDACCT', false], ['DDAC', false], ['TT', false], ['SWIFT', false], ['RTGS', true]]) {
+test('valid single POST preserves validated debit details for agent-pull', async () => {
+  for (const [type, retry] of [['INT', false], ['RTGS', false], ['DDACCT', false], ['DDAC', false], ['TT', false], ['SWIFT', false]]) {
     const f = routeFixture({ retry });
     const response = await f.post(body({ ...payment, transactionType: type }));
     assert.equal(response.status, 200);
@@ -115,6 +115,14 @@ test('valid single POST and failed-reservation retry preserve validated debit de
     assert.equal(queued.srcAcc, source.accountNumber);
     assert.doesNotThrow(() => prepareZanacoPayload(queued));
   }
+});
+
+test('posting a previously reserved failed payment cannot bypass recovery controls', async () => {
+  const f = routeFixture({ retry: true });
+  const response = await f.post(body(payment));
+  assert.equal(response.status, 409);
+  assert.equal(response.body.recoveryRequired, true);
+  assert.equal(f.updates.length, 0);
 });
 
 test('bulk POST rejects unsupported types, duplicate IDs, mixed currencies and mixed dates', async () => {

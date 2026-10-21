@@ -5,6 +5,7 @@ import { PERMISSIONS } from '@/app/lib/permissions';
 import { logAuditEvent } from '@/app/lib/auditLog';
 import { connectSageDatabase } from '@/app/lib/sageDb';
 import { Venbank } from '@/app/models/sage_entities/Venbank';
+import { validateVendorSwiftDetails } from '@/app/lib/vendorSwiftValidation';
 
 function normalizeVenbank(bank: any) {
   const record = bank.toJSON ? bank.toJSON() : bank;
@@ -35,6 +36,11 @@ export async function PUT(
     }
     
     const body = await request.json();
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
+    for (const field of ['tpin', 'purposeCode', 'sectorCode']) {
+      if (body[field] !== undefined) body[field] = body[field]?.trim() || null;
+    }
     await bank.update(body);
     
     // Fetch updated record
