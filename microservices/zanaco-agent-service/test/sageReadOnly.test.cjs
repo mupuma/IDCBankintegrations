@@ -67,6 +67,7 @@ test('legacy vendor import reads only existing SQL Server columns and writes exc
   const findOptions = [];
   const store = load(prefix + 'lib/vendorBankStore.ts', {
     './db': { connectDatabase: async () => {} },
+    './sageVendorSync': { syncSageVendorMaster: async () => ({ sageVendorCount: 0, addedCount: 0 }) },
     './sageDb': { __esModule: true, connectSageDatabase: async () => {}, default: { query: async query => {
       policy.assertSageQueryAllowed(query); sql.push(query);
       if (query.includes('sys.columns')) return ['VENDORID', 'ACCVEN', 'ACCNAME', 'PHYSICAL_ADDRESS'].map(name => ({ name }));
@@ -90,6 +91,7 @@ test('missing or hidden Sage VENBANK never triggers table creation', async () =>
   const sql = [];
   const store = load(prefix + 'lib/vendorBankStore.ts', {
     './db': { connectDatabase: async () => {} },
+    './sageVendorSync': { syncSageVendorMaster: async () => ({ sageVendorCount: 0, addedCount: 0 }) },
     './sageDb': { __esModule: true, connectSageDatabase: async () => {}, default: { query: async query => { sql.push(query); return []; } } },
     '../models/internal/VendorBankDetail': { VendorBankDetail: { findOrCreate: () => assert.fail('no legacy rows to copy') } },
     './vendorBankRead': load(prefix + 'lib/vendorBankRead.ts'),

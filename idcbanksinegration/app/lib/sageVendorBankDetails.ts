@@ -89,21 +89,26 @@ export async function loadVendorOptionalFields(vendorIds: string[]) {
   const byVendor = new Map<string, Map<string, string>>();
   if (!ids.length) return byVendor;
 
-  let rows: { vendorId: string; optfield: string; value: string }[];
-  try { rows = await sageSequelize.query<{ vendorId: string; optfield: string; value: string }>(
+  const rows: { vendorId: string; optfield: string; value: string }[] = [];
+  try {
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const batch = await sageSequelize.query<{ vendorId: string; optfield: string; value: string }>(
     `
       SELECT
         LTRIM(RTRIM(VENDORID)) AS vendorId,
         UPPER(LTRIM(RTRIM(OPTFIELD))) AS optfield,
-        LTRIM(RTRIM(CAST([VALUE] AS NVARCHAR(255)))) AS value
+        LTRIM(RTRIM(CAST([VALUE] AS NVARCHAR(MAX)))) AS value
       FROM APVENO
       WHERE LTRIM(RTRIM(VENDORID)) IN (:vendorIds)
     `,
     {
-      replacements: { vendorIds: ids },
+      replacements: { vendorIds: ids.slice(offset, offset + 500) },
       type: QueryTypes.SELECT,
     },
-  ); } catch (error) {
+      );
+      rows.push(...batch);
+    }
+  } catch (error) {
     const sqlError = error as { original?: { number?: number }; parent?: { number?: number }; number?: number };
     if ((sqlError.original?.number ?? sqlError.parent?.number ?? sqlError.number) !== 208) throw error;
     // Optional field storage is not available in every Sage company. Reading

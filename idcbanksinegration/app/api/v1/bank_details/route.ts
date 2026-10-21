@@ -132,7 +132,7 @@ export async function GET(request: NextRequest) {
   const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_READ);
   if (isAuthError(auth)) return auth;
   try {
-  const store = await connectVendorBankDatabase();
+  const store = await connectVendorBankDatabase(request.nextUrl.searchParams.get('refreshSage') === 'true');
   
   const searchParams = request.nextUrl.searchParams;
   
@@ -205,6 +205,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       warning: store?.warning,
+      sageVendorCount: store?.sageVendorCount,
       data: data,
       pagination: {
         limit: limit,
@@ -241,6 +242,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       warning: store?.warning,
+      sageVendorCount: store?.sageVendorCount,
       data: normalizedBanks,
       pagination: {
         currentPage: page,

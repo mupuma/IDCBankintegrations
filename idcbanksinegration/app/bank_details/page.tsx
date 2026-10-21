@@ -224,7 +224,7 @@ interface VendorOption {
   country?: string;
   paymentCount?: number;
   lastPaymentDate?: number | null;
-  bankDetailsStatus?: 'missing' | 'incomplete';
+  bankDetailsStatus?: 'missing' | 'incomplete' | 'complete';
 }
 
 function parseVendorAddress(value?: string) {
@@ -385,13 +385,13 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
                 <option value="">Select vendor ID</option>
                 {vendorOptions.map((vendor) => (
                   <option key={vendor.vendorid} value={vendor.vendorid}>
-                    {vendor.vendorid}{vendor.vendname ? ` - ${vendor.vendname}` : ''}{vendor.bankDetailsStatus === 'incomplete' ? ' (complete existing)' : ''}
+                    {vendor.vendorid}{vendor.vendname ? ` - ${vendor.vendname}` : ''}{vendor.bankDetailsStatus === 'complete' ? ' (saved details)' : vendor.bankDetailsId ? ' (complete existing)' : ''}
                   </option>
                 ))}
               </select>
             )}
             {!isEditMode && vendorOptions.length === 0 && (
-              <p className="text-xs text-rose-600 mt-2">No available vendor IDs to assign. Either all vendor master entries already have bank details or the vendor list could not be loaded.</p>
+              <p className="text-xs text-rose-600 mt-2">No Sage vendors were loaded. Refresh the vendor list or check the Sage connection.</p>
             )}
           </div>
           <div>
@@ -477,6 +477,7 @@ export default function BankManagementPage() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
+  const [sageVendorCount, setSageVendorCount] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [vendorOptions, setVendorOptions] = useState<VendorOption[]>([]);
@@ -526,7 +527,7 @@ export default function BankManagementPage() {
     setPage(0);
   }, [debouncedSearchTerm, debouncedFilterVendor]);
 
-  const fetchBanks = useCallback(async () => {
+  const fetchBanks = useCallback(async (refreshSage = false) => {
     setLoading(true);
     setLoadError('');
     setLoadWarning('');
@@ -535,6 +536,7 @@ export default function BankManagementPage() {
         page: page.toString(), // 0-indexed
         limit: rowsPerPage.toString(),
       });
+      if (refreshSage) params.set('refreshSage', 'true');
       
       if (debouncedSearchTerm.trim()) {
         params.append('search', debouncedSearchTerm.trim());
@@ -560,6 +562,7 @@ export default function BankManagementPage() {
       console.log('API Response:', data);
       
       if (data.success) {
+        setSageVendorCount(typeof data.sageVendorCount === 'number' ? data.sageVendorCount : null);
         setLoadWarning(data.warning || '');
         setBanks(Array.isArray(data.data) ? data.data : []);
         setTotalItems(data.pagination?.totalItems || 0);
@@ -744,9 +747,9 @@ export default function BankManagementPage() {
               Add Record
             </button>
             <button
-              onClick={fetchBanks}
+              onClick={() => { void fetchBanks(true); void fetchVendorOptions(); }}
               className="p-2.5 bg-slate-100 text-slate-600 border border-slate-200/50 rounded-xl hover:bg-slate-200/70 transition-all outline-none"
-              title="Refresh"
+              title="Refresh all vendors from Sage"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -863,11 +866,12 @@ export default function BankManagementPage() {
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs font-semibold text-slate-500">
             {banks.length > 0 ? (
-              `Showing ${startItem} – ${endItem} of ${totalItems} structural records`
+              `Showing ${startItem} – ${endItem} of ${totalItems} vendors`
             ) : (
               loadError ? 'Bank records unavailable' : 'No records found'
             )}
           </span>
+          {sageVendorCount !== null ? <span className="text-xs text-slate-500">Sage vendor master: {sageVendorCount}</span> : null}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Per Page:</span>
