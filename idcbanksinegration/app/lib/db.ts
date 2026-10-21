@@ -69,7 +69,7 @@ import { SourceAccount } from '../models/internal/SourceAccount';
 import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
-import { widenPortalVendorPhone } from './portalVendorSchema';
+import { widenPortalVendorStorage } from './portalVendorSchema';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
@@ -142,7 +142,7 @@ async function ensureSchemaSynced(instance: Sequelize): Promise<void> {
 
   // Add missing portal tables/columns, then apply the specific widening fix.
   await syncSchemaAddOnly(instance, INTERNAL_MODELS);
-  await widenPortalVendorPhone(instance);
+  await widenPortalVendorStorage(instance);
   schemaSynced = true;
   console.log('Portal MySQL schema checks completed without data deletion');
 }

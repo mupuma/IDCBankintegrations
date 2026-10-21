@@ -39,54 +39,54 @@ export class VendorBankDetail extends Model<VendorBankDetail, VenbankCreationAtt
  declare vendorid?: string;
 
   @Column({
-    type: DataType.STRING(50),
+    type: DataType.TEXT('long'),
     field: 'ACCVEN',
     allowNull: true
   })
  declare accven?: string;
 
   @Column({
-    type: DataType.STRING(255),
+    type: DataType.TEXT('long'),
     field: 'ACCNAME',
     allowNull: true
   })
  declare accname?: string;
 
   @Column({
-    type: DataType.STRING(20),
+    type: DataType.TEXT('long'),
     field: 'BANKID',
     allowNull: true
   })
   declare bankid?: string;
 
   @Column({
-    type: DataType.STRING(20),
+    type: DataType.TEXT('long'),
     field: 'SORTCDE',
     allowNull: true
   })
   declare sortcde?: string;
 
   @Column({
-    type: DataType.STRING(255),
+    type: DataType.TEXT('long'),
     field: 'BRNCH',
     allowNull: true
   })
   declare brnch?: string;
 
   @Column({
-    type: DataType.STRING(20),
+    type: DataType.TEXT('long'),
     field: 'SWIFTCDE',
     allowNull: true
   })
   declare swiftcde?: string;
 
-  @Column({ type: DataType.STRING(20), field: 'TPIN', allowNull: true })
+  @Column({ type: DataType.TEXT('long'), field: 'TPIN', allowNull: true })
   declare tpin?: string;
 
-  @Column({ type: DataType.STRING(8), field: 'PURPOSE_CODE', allowNull: true })
+  @Column({ type: DataType.TEXT('long'), field: 'PURPOSE_CODE', allowNull: true })
   declare purposeCode?: string;
 
-  @Column({ type: DataType.STRING(8), field: 'SECTOR_CODE', allowNull: true })
+  @Column({ type: DataType.TEXT('long'), field: 'SECTOR_CODE', allowNull: true })
   declare sectorCode?: string;
 
   @Column({
@@ -97,21 +97,21 @@ export class VendorBankDetail extends Model<VendorBankDetail, VenbankCreationAtt
   declare physicalAddress?: PhysicalAddress;
 
   @Column({
-    type: DataType.STRING(100),
+    type: DataType.TEXT('long'),
     field: 'COUNTRY_OF_ORIGIN',
     allowNull: true
   })
   declare countryOfOrigin?: string;
 
   @Column({
-    type: DataType.STRING(255),
+    type: DataType.TEXT('long'),
     field: 'EMAIL',
     allowNull: true
   })
   declare email?: string;
 
   @Column({
-    type: DataType.STRING(255),
+    type: DataType.TEXT('long'),
     field: 'PHONE_NUMBER',
     allowNull: true
   })

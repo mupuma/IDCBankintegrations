@@ -23,7 +23,7 @@ export function vendorBankReadError(error: unknown) {
     if (Array.isArray(item.errors)) pending.push(...item.errors);
   }
   if (code === 'ER_NO_SUCH_TABLE') return 'The portal MySQL vendor table is missing. Enable DB_SYNC=true or apply create_vendor_bank_details.sql to the portal MySQL database.';
-  if (code === 'ER_DATA_TOO_LONG') return 'A portal MySQL vendor column is too short for the Sage value. Apply the portal contact-column upgrade; do not alter SQL Server or truncate the source value.';
+  if (code === 'ER_DATA_TOO_LONG') return 'A portal MySQL vendor column is too short for the Sage value. Apply widen_vendor_bank_text.sql to portal MySQL; keep the full source value and leave SQL Server unchanged.';
   if (code === 'ER_ACCESS_DENIED_ERROR' || code === 'ER_TABLEACCESS_DENIED_ERROR') return 'The portal MySQL database account lacks access. Check DB_USER, DB_NAME and portal table permissions.';
   if (number === 207) return 'Sage is missing a source column. Check the configured company database and server log; portal vendor fields belong in MySQL, not SQL Server.';
   if (number === 208) return 'A required Sage table was not found. Check SAGE_DB_NAME and that VENBANK exists in the selected company database.';
