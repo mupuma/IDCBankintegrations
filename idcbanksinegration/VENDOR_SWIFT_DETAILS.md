@@ -1,26 +1,29 @@
-# Vendor TPIN and SWIFT details
+# Vendor bank details: portal MySQL, Sage read-only source
 
-Enter TPIN under **Vendor bank details**, alongside the existing SWIFT code. The same record now holds the SWIFT payment purpose and business sector codes. These fields are optional for domestic payments and required when sending Zanaco SWIFT payments. The payment list displays them for review and no longer presents an entry form.
+Vendor bank details, TPIN, SWIFT purpose and sector codes are maintained in the portal MySQL table `vendor_bank_details`. Portal create/edit/delete actions do not change SQL Server. Source accounts, queue records and recovery history also remain in MySQL.
 
-TPIN is read in this order: saved `VENBANK.TPIN`, Sage vendor optional field `TPIN` in `APVENO`, then the Sage vendor tax number `APVEN.TAXNBR`. Confirm the Sage tax number contains the required TPIN. Saved values are never overwritten during payment refresh. The portal can save a TPIN when none exists in Sage.
+## Deployment
 
-Purpose and sector codes are bank-defined classifications. Obtain the applicable codes from Zanaco; do not substitute the payment remarks. The saved vendor defaults must apply to the payment being sent. They can also come from Sage optional fields `PURPOSE` / `PURPOSECODE` and `SECTOR` / `SECTORCODE`. Custom optional field names can be mapped in the portal environment, for example:
+1. For the old deployed build, set `SAGE_SYNC_VENBANK_SCHEMA=false` and restart the portal to stop its startup migration immediately.
+2. Deploy this updated portal and run `npm run build`, then restart its service. The new build completely removes SQL Server schema synchronization; that old flag cannot re-enable it.
+3. With `DB_SYNC=true`, the portal creates its missing MySQL table automatically without deleting existing data. With `DB_SYNC=false`, apply `sql/create_vendor_bank_details.sql` to the **portal MySQL database only**.
+4. Existing visible Sage VENBANK rows are read and copied into MySQL when a vendor has no portal record. Only columns that actually exist in SQL Server are selected. Saved portal corrections and soft-deleted portal records are not overwritten or resurrected. SQL Server IDs are not copied, so existing browser tabs should be refreshed after deployment.
+5. If Sage VENBANK is inaccessible or absent, portal MySQL vendor details remain available. No replacement SQL Server table is created. `SAGE_VENBANK_SCHEMA` optionally selects the existing source schema for read-only import.
+
+No SQL Server ALTER, CREATE, DROP, TRUNCATE, GRANT, administrative commands or dynamic execution is allowed through the Sage connection. The old SQL Server VENBANK migration is retired. Do not run earlier instructions to grant ALTER or apply SQL Server schema additions.
+
+Existing Sage cashbook posting remains enabled by default, as authorized. No new environment variable is required for that existing accounting flow. If `SAGE_ALLOW_CASHBOOK_WRITES` was explicitly set to `false`, remove that override or set it to `true` to keep cashbook posting enabled. SQL Server schema changes remain blocked regardless of this setting. Vendor maintenance continues to write only to portal MySQL.
+
+## TPIN and SWIFT fields
+
+TPIN is read in this order: saved portal MySQL value, Sage optional field `TPIN` in `APVENO`, then `APVEN.TAXNBR`. Existing legacy VENBANK values are copied to MySQL if readable. The portal does not update those source values. If APVENO is absent, optional-field lookup falls back to the vendor tax number. Confirm the Sage tax number contains the required TPIN.
+
+Purpose and sector codes are bank-defined classifications. Obtain the applicable codes from Zanaco and confirm that the saved defaults apply to each payment. These codes are not free-text payment remarks. Sage optional field aliases are `PURPOSE` / `PURPOSECODE` and `SECTOR` / `SECTORCODE`; custom aliases can be configured with:
 
 ```dotenv
 SAGE_VENDOR_BANK_OPTIONAL_FIELDS={"tpin":["TPIN"],"purposeCode":["PURPOSE"],"sectorCode":["SECTOR"]}
 ```
 
-After editing vendor details, fetch payments again so the payment list receives the saved values. All bank payload validations remain active. This does not change already queued instructions.
+After saving vendor details, fetch payments again. Payment rows display the saved values rather than a data-entry form. Bank validations remain active, and already queued instructions retain their original payloads.
 
-## Automatic schema additions
-
-On first database connection after restart, the portal creates missing internal MySQL tables and adds missing columns when `DB_SYNC` is not `false`. The Sage connection creates the portal-owned `VENBANK` extension if absent and adds missing extension columns when `SAGE_SYNC_VENBANK_SCHEMA` is not `false`. For explicit settings use:
-
-```dotenv
-DB_SYNC=true
-SAGE_SYNC_VENBANK_SCHEMA=true
-```
-
-The new nullable VENBANK columns are `TPIN VARCHAR(20)`, `PURPOSE_CODE VARCHAR(8)` and `SECTOR_CODE VARCHAR(8)`. Existing rows and column definitions are preserved. There are no table drops, column drops, truncations, or automatic type conversions. Other Sage accounting tables are never synchronised from ORM definitions. Database users need CREATE TABLE / ALTER permissions for automatic additions. If schema changes are managed separately, use the SQL in `app/lib/venbankSchema.ts` against the Sage company database and keep the flag false.
-
-Build and restart the portal to deploy these changes. Bank agents do not need new environment variables for these vendor fields.
+Database failures remain distinct from empty search results. Server logs provide the underlying database error. `sql/check_venbank_access.sql` is an optional read-only diagnostic; no SQL Server migrations are needed for the portal fields.

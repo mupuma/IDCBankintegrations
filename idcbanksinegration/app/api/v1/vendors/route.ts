@@ -5,6 +5,8 @@ import { isAuthError, requirePermission } from '../../../lib/rbac';
 import { PERMISSIONS } from '../../../lib/permissions';
 import sageSequelize, { connectSageDatabase } from '../../../lib/sageDb';
 import { buildVendorBankDetails, loadVendorOptionalFields } from '../../../lib/sageVendorBankDetails';
+import { connectVendorBankDatabase } from '../../../lib/vendorBankStore';
+import { VendorBankDetail } from '../../../models/internal/VendorBankDetail';
 
 type MissingVendorRow = {
   vendorid: string;
@@ -31,6 +33,9 @@ export async function GET(request: NextRequest) {
 
   try {
     await connectSageDatabase();
+    await connectVendorBankDatabase();
+    const localBanks = await VendorBankDetail.findAll();
+    const localByVendor = new Map(localBanks.map(bank => [(bank.vendorid || '').trim(), bank]));
 
     const search = normalizeText(request.nextUrl.searchParams.get('search'));
     const searchFilter = search ? `%${search}%` : null;
@@ -72,6 +77,7 @@ export async function GET(request: NextRequest) {
     const vendors = rows
       .map((row) => {
         const vendorid = normalizeText(row.vendorid);
+        const local = localByVendor.get(vendorid);
         const bankDetails = buildVendorBankDetails({
           vendorId: vendorid,
           vendorName: row.vendname,
@@ -86,18 +92,18 @@ export async function GET(request: NextRequest) {
         });
 
         return {
-          bankDetailsId: null,
+          bankDetailsId: local ? `portal-${local.id}` : null,
           vendorid,
           vendname: normalizeText(row.vendname),
-          accven: bankDetails.accountNumber,
-          accname: bankDetails.accountName,
-          bankid: bankDetails.bankName,
-          sortcde: bankDetails.sortCode,
-          brnch: bankDetails.branchCode,
-          swiftcde: bankDetails.swiftCode,
-          tpin: bankDetails.tpin,
-          purposeCode: bankDetails.purposeCode,
-          sectorCode: bankDetails.sectorCode,
+          accven: local?.accven || bankDetails.accountNumber,
+          accname: local?.accname || bankDetails.accountName,
+          bankid: local?.bankid || bankDetails.bankName,
+          sortcde: local?.sortcde || bankDetails.sortCode,
+          brnch: local?.brnch || bankDetails.branchCode,
+          swiftcde: local?.swiftcde || bankDetails.swiftCode,
+          tpin: local?.tpin || bankDetails.tpin,
+          purposeCode: local?.purposeCode || bankDetails.purposeCode,
+          sectorCode: local?.sectorCode || bankDetails.sectorCode,
           email: bankDetails.email,
           venbankPhoneNumber: bankDetails.phoneNumber,
           physicalAddress: [
@@ -113,7 +119,7 @@ export async function GET(request: NextRequest) {
           paymentCount: Number(row.paymentCount ?? 0),
           lastPaymentDate: row.lastPaymentDate ? Number(row.lastPaymentDate) : null,
           missingBankFields: bankDetails.missingFields,
-          bankDetailsStatus: bankDetails.found ? 'complete' as const : 'missing' as const,
+          bankDetailsStatus: local?.accven && local?.accname ? 'complete' as const : 'missing' as const,
         };
       })
       .filter((vendor) => vendor.bankDetailsStatus !== 'complete');

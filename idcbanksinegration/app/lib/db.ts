@@ -66,6 +66,7 @@ import { ProcessedTransaction } from '../models/internal/Processed_transactions'
 import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
+import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
@@ -73,6 +74,7 @@ import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../mod
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  VendorBankDetail,
   PaymentRecoveryAction,
   ZicbH2hPayment,
   PaymentDispatchReservation,

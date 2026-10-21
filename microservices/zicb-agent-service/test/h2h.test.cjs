@@ -40,6 +40,49 @@ const token = () => json(200, { access_token: 'test-token', token_type: 'Bearer'
 const accepted = () => json(202, { error: null, status: 201, message: 'Pending processing' });
 const work = { queueId: 'q1', leaseToken: 'lease1', action: 'submit', profileId: 'test', channel: 'RTGS', batch: batch(), amountScale: 2 };
 
+test('authentication configuration failures explain the profile mismatch without submitting a payment', async () => {
+  let calls = 0;
+  for (const [profiles, pattern] of [
+    [{ uat: profile }, /profileId must exactly match a key/],
+    [{ test: { ...profile, clientSecret: '' } }, /missing clientId or clientSecret/],
+    [{ test: { ...profile, authUrl: 'bad-url' } }, /URL is missing or invalid/],
+  ]) {
+    const bank = new H2hClient(profiles, async () => { calls++; return accepted(); });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(result.notSentReason, 'authentication');
+    assert.match(result.error, pattern);
+    assert.equal(calls, 0);
+  }
+});
+
+test('token rejection reports HTTP status and safe guidance without leaking bank bodies or credentials', async () => {
+  for (const status of [400, 401, 403, 404, 503, 200]) {
+    let calls = 0;
+    const bank = new H2hClient({ test: profile }, async url => {
+      calls++; assert.ok(url.includes('/h2h/auth/grant-type/client-credentials'));
+      return json(status, { error: 'invalid_client', detail: profile.clientSecret, access_token: 'secret-token' });
+    });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(calls, 1);
+    assert.match(result.error, new RegExp(`HTTP ${status}`));
+    for (const secret of [profile.clientSecret, 'secret-token', 'invalid_client']) assert.equal(result.error.includes(secret), false);
+  }
+});
+
+test('token network errors expose DNS, TLS and timeout causes while keeping payment submission disabled', async () => {
+  for (const code of ['ENOTFOUND', 'ECONNREFUSED', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']) {
+    let calls = 0;
+    const bank = new H2hClient({ test: profile }, async () => {
+      calls++; throw Object.assign(new Error(`fetch failed ${profile.clientSecret}`), { cause: Object.assign(new Error('secret-token'), { code }) });
+    });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(calls, 1); assert.match(result.error, new RegExp(code));
+    assert.equal(result.error.includes(profile.clientSecret), false); assert.equal(result.error.includes('secret-token'), false);
+  }
+  const bank = new H2hClient({ test: profile }, async () => { throw Object.assign(new Error('sensitive'), { name: 'AbortError' }); });
+  assert.match((await bank.submit('test', 'RTGS', batch(), 2)).error, /timed out/);
+});
+
 test('all three channels produce the documented one-item batch, preserving leading zeros', () => {
   for (const type of ['RTGS', 'DDACCT', 'INT']) {
     const b = contract.buildBatch({ ...payment, transactionType: type, accountNumber: type === 'INT' ? '0010066244206' : payment.accountNumber }, options);

@@ -89,7 +89,8 @@ export async function loadVendorOptionalFields(vendorIds: string[]) {
   const byVendor = new Map<string, Map<string, string>>();
   if (!ids.length) return byVendor;
 
-  const rows = await sageSequelize.query<{ vendorId: string; optfield: string; value: string }>(
+  let rows: { vendorId: string; optfield: string; value: string }[];
+  try { rows = await sageSequelize.query<{ vendorId: string; optfield: string; value: string }>(
     `
       SELECT
         LTRIM(RTRIM(VENDORID)) AS vendorId,
@@ -102,7 +103,14 @@ export async function loadVendorOptionalFields(vendorIds: string[]) {
       replacements: { vendorIds: ids },
       type: QueryTypes.SELECT,
     },
-  );
+  ); } catch (error) {
+    const sqlError = error as { original?: { number?: number }; parent?: { number?: number }; number?: number };
+    if ((sqlError.original?.number ?? sqlError.parent?.number ?? sqlError.number) !== 208) throw error;
+    // Optional field storage is not available in every Sage company. Reading
+    // saved VENBANK details and APVEN.TAXNBR must continue without APVENO.
+    console.warn('Sage APVENO optional-field table is unavailable; using saved vendor details and vendor tax numbers');
+    return byVendor;
+  }
 
   for (const row of rows) {
     const vendorId = normalize(row.vendorId);

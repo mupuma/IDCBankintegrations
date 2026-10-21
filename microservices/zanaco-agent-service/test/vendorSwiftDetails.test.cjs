@@ -2,19 +2,22 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load } = require('./helpers/portal.cjs');
 const prefix = 'idcbanksinegration/app/';
+const bankRead = load(prefix + 'lib/vendorBankRead.ts');
 const json = { NextResponse: { json: (body, options) => ({ body, status: options?.status || 200 }) } };
 const auth = { requirePermission: async () => ({ id: 1, username: 'operator' }), isAuthError: () => false };
 
-function swiftFixture() {
+function swiftFixture({ optionalError } = {}) {
   const queries = [];
   const swift = load(prefix + 'lib/sageVendorBankDetails.ts', {
     './sageDb': { __esModule: true, default: { query: async (sql, options) => {
       queries.push({ sql, options });
-      if (sql.includes('FROM APVENO')) return [
+      if (sql.includes('FROM APVENO')) {
+        if (optionalError) throw optionalError;
+        return [
         { vendorId: 'V1', optfield: 'TPIN', value: '0012345678' },
         { vendorId: 'V1', optfield: 'PURPOSE', value: 'P01' },
         { vendorId: 'V1', optfield: 'SECTOR', value: 'S01' },
-      ];
+      ]; }
       return [{ vendorId: 'V1', taxNumber: 'TAX-FALLBACK' }, { vendorId: 'V2', taxNumber: '0098765432' }];
     } } },
   });
@@ -33,6 +36,29 @@ test('vendor TPIN uses saved details, then Sage optional TPIN, then Sage tax num
   assert.deepEqual(queries[0].options.replacements.vendorIds, ['V1', 'V2']);
   assert.equal(queries.length, 2);
   await swift.loadVendorSwiftDetails([]); assert.equal(queries.length, 2);
+});
+
+test('missing Sage optional-field storage does not hide saved vendor details or vendor tax numbers', async () => {
+  const { swift } = swiftFixture({ optionalError: { original: { number: 208 } } });
+  const details = await swift.loadVendorSwiftDetails(['V1', 'V2']);
+  assert.equal(details.get('V2').tpin, '0098765432');
+  assert.equal(swift.mergeVendorSwiftDetails({ tpin: '001234' }, details.get('V2')).tpin, '001234');
+  const failure = Object.assign(new Error('permission denied'), { parent: { number: 229 } });
+  const blocked = swiftFixture({ optionalError: failure });
+  await assert.rejects(blocked.swift.loadVendorSwiftDetails(['V1']), error => error === failure);
+});
+
+test('old vendor address text remains readable and schema/login failures produce actionable errors without credentials', () => {
+  const record = { tpin: '00123', physicalAddress: 'Plot 1, Main Street' };
+  assert.deepEqual(bankRead.normalizeVendorBankRecord(record).physicalAddress, { streetName: record.physicalAddress, town: '', plotNo: '' });
+  assert.equal(record.physicalAddress, 'Plot 1, Main Street');
+  assert.deepEqual(bankRead.normalizeVendorBankRecord({ physicalAddress: '{"town":"Lusaka"}' }).physicalAddress, { town: 'Lusaka' });
+  assert.match(bankRead.vendorBankReadError({ parent: { number: 207 } }), /source column/);
+  assert.match(bankRead.vendorBankReadError({ original: { number: 208 } }), /SAGE_DB_NAME/);
+  assert.match(bankRead.vendorBankReadError({ original: { number: 1088 } }), /SAGE_VENBANK_SCHEMA.*permissions/);
+  assert.match(bankRead.vendorBankReadError({ original: { number: 51001 } }), /schema setup is disabled/);
+  assert.match(bankRead.vendorBankReadError({ cause: { code: 'ELOGIN', message: 'password=private' } }), /login failed/);
+  assert.equal(bankRead.vendorBankReadError(new Error('password=private')).includes('private'), false);
 });
 
 test('Sage optional field mapping supports a custom TPIN field', () => {
@@ -55,11 +81,12 @@ test('payments pulled from Sage carry saved and fallback SWIFT details without m
   const route = load(prefix + 'api/v1/payments_by_date/route.ts', {
     'next/server': json, '@/app/lib/rbac': auth, '@/app/lib/permissions': { PERMISSIONS: {} },
     '@/app/lib/sageDb': { connectSageDatabase: async () => {} },
+    '@/app/lib/vendorBankStore': { connectVendorBankDatabase: async () => {} },
     '@/app/lib/sageVendorBankDetails': swift,
     '@/app/models/sage_entities/Appym': { Appym: { findAll: async () => [{ idvend: 'V1', amtpaym: 100, codecurn: 'USD', datebus: 20261021, paymcode: 'TT' }] } },
     '@/app/models/sage_entities/Aptcr': { Aptcr: { findAll: async () => [] } },
     '@/app/models/sage_entities/Apven': { Apven: { findAll: async () => [] } },
-    '@/app/models/sage_entities/Venbank': { Venbank: { findAll: async () => [bank], create: async () => { writes++; } } },
+    '@/app/models/internal/VendorBankDetail': { VendorBankDetail: { findAll: async () => [bank], create: async () => { writes++; } } },
   });
   const result = await route.POST({ json: async () => ({ startDate: 20261001, endDate: 20261021 }) });
   assert.equal(result.status, 200);
@@ -78,10 +105,13 @@ test('vendor edit endpoint saves TPIN and SWIFT codes, rejects malformed values 
     'next/server': json, '@/app/lib/rbac': auth, '@/app/lib/permissions': { PERMISSIONS: {} },
     '@/app/lib/auditLog': { logAuditEvent: async () => {} },
     '@/app/lib/sageDb': { connectSageDatabase: async () => {} },
+    '@/app/lib/vendorBankStore': { connectVendorBankDatabase: async () => {} },
     '@/app/lib/vendorSwiftValidation': validation,
-    '@/app/models/sage_entities/Venbank': { Venbank: { findByPk: async () => bank } },
+    '@/app/lib/vendorBankRead': bankRead,
+    '@/app/models/internal/VendorBankDetail': { VendorBankDetail: { findByPk: async () => bank } },
   });
-  const edit = body => route.PUT({ json: async () => body }, { params: Promise.resolve({ id: '1' }) });
+  const edit = body => route.PUT({ json: async () => body }, { params: Promise.resolve({ id: 'portal-1' }) });
+  assert.equal((await route.PUT({ json: async () => ({ tpin: '001' }) }, { params: Promise.resolve({ id: '1' }) })).status, 409);
   assert.equal((await edit({ tpin: 123 })).status, 400);
   assert.equal((await edit({ purposeCode: '123456789' })).status, 400);
   assert.equal(bank.tpin, '00123');
@@ -98,10 +128,11 @@ test('vendor creation stores SWIFT details and the list pre-fills Sage values fo
   const route = load(prefix + 'api/v1/bank_details/route.ts', {
     'next/server': json, '../../../lib/rbac': auth, '../../../lib/permissions': { PERMISSIONS: {} },
     '../../../lib/auditLog': { logAuditEvent: async () => {} },
-    '../../../lib/sageDb': { connectSageDatabase: async () => {} },
+    '../../../lib/vendorBankStore': { connectVendorBankDatabase: async () => {} },
     '../../../lib/sageVendorBankDetails': swift,
     '../../../lib/vendorSwiftValidation': validation,
-    '../../../models/sage_entities/Venbank': { Venbank: {
+    '../../../lib/vendorBankRead': bankRead,
+    '../../../models/internal/VendorBankDetail': { VendorBankDetail: {
       findAll: async () => [existing], count: async () => 1, findOne: async () => null,
       create: async data => { created = data; return { id: 1, toJSON: () => data }; },
     } },
@@ -111,6 +142,22 @@ test('vendor creation stores SWIFT details and the list pre-fills Sage values fo
   const result = await route.GET({ nextUrl: new URL('http://portal/api/v1/bank_details') });
   assert.equal(result.status, 200); assert.equal(result.body.data[0].tpin, '0012345678');
   assert.equal(result.body.data[0].purposeCode, 'P01');
+});
+
+test('vendor list reports database failures as a structured unavailable response, not an empty successful list', async () => {
+  const { swift } = swiftFixture();
+  const route = load(prefix + 'api/v1/bank_details/route.ts', {
+    'next/server': json, '../../../lib/rbac': auth, '../../../lib/permissions': { PERMISSIONS: {} },
+    '../../../lib/auditLog': { logAuditEvent: async () => {} },
+    '../../../lib/vendorBankStore': { connectVendorBankDatabase: async () => { throw { original: { number: 207 } }; } },
+    '../../../lib/sageVendorBankDetails': swift,
+    '../../../lib/vendorSwiftValidation': load(prefix + 'lib/vendorSwiftValidation.ts'),
+    '../../../lib/vendorBankRead': bankRead,
+    '../../../models/internal/VendorBankDetail': { VendorBankDetail: {} },
+  });
+  const result = await route.GET({ nextUrl: new URL('http://portal/api/v1/bank_details') });
+  assert.equal(result.status, 503); assert.equal(result.body.success, false);
+  assert.match(result.body.error, /source column/); assert.equal(result.body.data, undefined);
 });
 
 test('internal schema additions preserve existing columns and data and never use destructive sync', async () => {

@@ -13,7 +13,7 @@ interface PhysicalAddress {
 }
 
 interface Venbank {
-  id: number;
+  id: string;
   vendorid: string;
   accven: string;
   accname: string;
@@ -202,7 +202,7 @@ interface BankFormProps {
 }
 
 interface VendorOption {
-  bankDetailsId?: number | null;
+  bankDetailsId?: string | null;
   vendorid: string;
   vendname?: string;
   accven?: string;
@@ -472,6 +472,8 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
 export default function BankManagementPage() {
   const [banks, setBanks] = useState<Venbank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [loadWarning, setLoadWarning] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
@@ -526,6 +528,8 @@ export default function BankManagementPage() {
 
   const fetchBanks = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
+    setLoadWarning('');
     try {
       const params = new URLSearchParams({
         page: page.toString(), // 0-indexed
@@ -548,24 +552,25 @@ export default function BankManagementPage() {
         return;
       }
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Network response failure exception.');
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `Unable to load portal bank records (HTTP ${response.status}). Check the portal server log.`);
       }
       const data = await response.json();
       
       console.log('API Response:', data);
       
       if (data.success) {
+        setLoadWarning(data.warning || '');
         setBanks(Array.isArray(data.data) ? data.data : []);
         setTotalItems(data.pagination?.totalItems || 0);
       } else {
-        setBanks([]);
-        setTotalItems(0);
-        showNotification(data.error || 'Failed to load data', 'error');
+        throw new Error(data.error || 'Failed to load portal bank records.');
       }
     } catch (error) {
       console.error('Fetch error:', error);
-      showNotification('Failed to load bank records from Sage.', 'error');
+      const message = error instanceof Error ? error.message : 'Failed to load portal bank records.';
+      setLoadError(message);
+      showNotification(message, 'error');
       setBanks([]);
       setTotalItems(0);
     } finally {
@@ -602,7 +607,7 @@ export default function BankManagementPage() {
     fetchVendorOptions();
   }, [fetchVendorOptions]);
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to permanently remove this financial distribution record?')) {
       try {
         const response = await fetch(`/api/v1/bank_details/${id}`, {
@@ -752,6 +757,7 @@ export default function BankManagementPage() {
       </div>
 
       {/* Table */}
+      {loadWarning ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadWarning}</p> : null}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -775,7 +781,7 @@ export default function BankManagementPage() {
               ) : banks.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center text-sm font-semibold text-slate-400">
-                    No verified banking registry matching filtering constraints located.
+                    {loadError ? <span role="alert" className="text-rose-700">{loadError}</span> : 'No vendor bank records match the current filters.'}
                   </td>
                 </tr>
               ) : (
@@ -859,7 +865,7 @@ export default function BankManagementPage() {
             {banks.length > 0 ? (
               `Showing ${startItem} – ${endItem} of ${totalItems} structural records`
             ) : (
-              'No records found'
+              loadError ? 'Bank records unavailable' : 'No records found'
             )}
           </span>
           <div className="flex items-center gap-3">

@@ -5,10 +5,11 @@ import { PaymentsResponse, PaymentsRequest } from '@/app/models/dtos';
 import { Appym } from '@/app/models/sage_entities/Appym';
 import { Aptcr } from '@/app/models/sage_entities/Aptcr';
 import { Apven } from '@/app/models/sage_entities/Apven';
-import { Venbank } from '@/app/models/sage_entities/Venbank';
+import { VendorBankDetail as Venbank } from '@/app/models/internal/VendorBankDetail';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Op } from 'sequelize';
+import { connectVendorBankDatabase } from '@/app/lib/vendorBankStore';
 import { createHash } from 'node:crypto';
 import { loadVendorSwiftDetails, mergeVendorSwiftDetails } from '@/app/lib/sageVendorBankDetails';
 
@@ -217,6 +218,9 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
     if (!vendorId || existingVenbanks.has(vendorId)) continue;
 
     const vendorName = trimString(getRawField(vendor, ['vendname', 'VENDNAME'], ''));
+    // Respect records intentionally removed in the portal. A payment refresh
+    // must not resurrect a soft-deleted MySQL vendor bank record.
+    if (await Venbank.findOne({ where: { vendorid: vendorId }, paranoid: false })) continue;
     await Venbank.create({
       vendorid: vendorId,
       accven: '',
@@ -287,6 +291,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await connectSageDatabase();
+    await connectVendorBankDatabase();
     const body = await request.json();
     const payload = body as PaymentsRequest;
     const startDate = Number(payload.startDate || 0);

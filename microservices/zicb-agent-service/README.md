@@ -69,6 +69,24 @@ ZICB_H2H_PROFILES=<json-profile-map>
 `ZICB_H2H_PROFILES` must provide the ZICB client credentials and base URLs for
 each approved profile.
 
+The portal's `ZICB_H2H_SOURCE_PROFILES[<source>].profileId` must exactly match
+a key in the agent's `ZICB_H2H_PROFILES`. This is a local configuration name,
+not an additional credential supplied by ZICB. For example, a portal
+`profileId` of `institution-uat` requires an agent credentials entry named
+`institution-uat`; an entry named `uat` or `DEFAULT` will not match.
+
+`authUrl` is the bank-approved base URL. The agent appends
+`/h2h/auth/grant-type/client-credentials` and posts `client_id`,
+`client_secret` and `grant_type: client_credentials`. Do not append that
+endpoint yourself. Keep credentials and URLs from the same ZICB environment.
+
+An authentication failure before submission records `notSent` evidence.
+The outcome includes safe configuration guidance, HTTP status, or an
+allowlisted DNS/network/TLS error code; token bodies and credentials are
+never included. After fixing the cause and restarting the agent, use
+**Recovery / history → Retry connection** on the existing portal queue item.
+Older generic error records alone do not prove their underlying cause.
+
 ## Contract
 
 Share the API contract with ZICB from:

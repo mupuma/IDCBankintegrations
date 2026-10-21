@@ -11,8 +11,7 @@ import { Cbbtdt } from '../models/sage_entities/Cbbtdt';
 import { Cbbthd } from '../models/sage_entities/Cbbthd';
 import { Cbbtm } from '../models/sage_entities/Cbbtm';
 import { Cboptio } from '../models/sage_entities/Cboptio';
-import { Venbank } from '../models/sage_entities/Venbank';
-import { VENBANK_SCHEMA_SQL } from './venbankSchema';
+import { assertSageQueryAllowed } from './sageQueryPolicy';
 
 const host = process.env.SAGE_DB_HOST ?? 'localhost';
 const port = Number(process.env.SAGE_DB_PORT ?? 50593);
@@ -40,7 +39,6 @@ const sageSequelize = new Sequelize({
     Cbbthd,
     Cbbtm,
     Cboptio,
-    Venbank,
   ],
   logging: false,
   define: {
@@ -56,19 +54,15 @@ const sageSequelize = new Sequelize({
   },
 });
 
-let venbankSchemaChecked = false;
+const executeSageQuery = (sageSequelize.query as (...args: any[]) => Promise<any>).bind(sageSequelize);
+sageSequelize.query = ((sql: unknown, ...args: any[]) => {
+  // Schema changes are always blocked; keep the existing cashbook flow enabled.
+  assertSageQueryAllowed(sql, process.env.SAGE_ALLOW_CASHBOOK_WRITES !== 'false');
+  return executeSageQuery(sql, ...args);
+}) as typeof sageSequelize.query;
+
 let sageConnectionPromise: Promise<void> | null = null;
 let sageConnectionReady = false;
-
-async function ensureVenbankCustomColumns(): Promise<void> {
-  if (venbankSchemaChecked || process.env.SAGE_SYNC_VENBANK_SCHEMA === 'false') {
-    return;
-  }
-
-  await sageSequelize.query(VENBANK_SCHEMA_SQL);
-
-  venbankSchemaChecked = true;
-}
 
 export async function connectSageDatabase(): Promise<void> {
   if (sageConnectionReady) {
@@ -81,7 +75,6 @@ export async function connectSageDatabase(): Promise<void> {
 
   sageConnectionPromise = (async () => {
     await sageSequelize.authenticate();
-    await ensureVenbankCustomColumns();
     sageConnectionReady = true;
     console.log('Sage database connection established successfully');
   })();
