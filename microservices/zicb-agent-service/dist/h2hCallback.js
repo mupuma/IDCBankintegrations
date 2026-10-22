@@ -43,12 +43,9 @@ function callbackRoutes() {
         { path: '/api/v1/bank/other-bank-rtgs-ft/callback', channel: 'RTGS', auth: false },
         { path: '/api/v1/bank/other-bank-ddacc-ft/auth/token', channel: 'DDACC', auth: true },
         { path: '/api/v1/bank/other-bank-ddacc-ft/callback', channel: 'DDACC', auth: false },
+        { path: '/api/v1/bank/internal-ft/auth/token', channel: 'INTERNAL', auth: true },
+        { path: '/api/v1/bank/internal-ft/callback', channel: 'INTERNAL', auth: false },
     ];
-    for (const [key, auth] of [['ZICB_H2H_INTERNAL_AUTH_PATH', true], ['ZICB_H2H_INTERNAL_CALLBACK_PATH', false]]) {
-        const path = process.env[key];
-        if (path?.startsWith('/api/v1/bank/') && !routes.some(route => route.path === path))
-            routes.push({ path, channel: 'INTERNAL', auth });
-    }
     return routes;
 }
 async function handleBankCallback(route, headers, body, portal) {

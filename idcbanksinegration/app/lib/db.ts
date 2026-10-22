@@ -63,16 +63,20 @@ import { User } from '../models/internal/User';
 import { PaymentQueueRequest } from '../models/internal/PaymentQueueRequest';
 import { CashbookReceipt } from '../models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '../models/internal/Processed_transactions';
-import { IzbPayment } from '../models/internal/IzbPayment';
 import { CashbookRequest } from '../models/internal/CashbookRequest';
 import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
+import { VendorBankDetail } from '../models/internal/VendorBankDetail';
+import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
+import { widenPortalVendorStorage } from './portalVendorSchema';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  VendorBankDetail,
+  PaymentRecoveryAction,
   ZicbH2hPayment,
   PaymentDispatchReservation,
   ZicbH2hEvent,
@@ -80,7 +84,6 @@ const INTERNAL_MODELS = [
   PaymentQueueRequest,
   CashbookReceipt,
   ProcessedTransaction,
-  IzbPayment,
   CashbookRequest,
   AuditLog,
   SourceAccount,
@@ -137,10 +140,11 @@ async function ensureSchemaSynced(instance: Sequelize): Promise<void> {
     return;
   }
 
-  // Add-only sync: creates missing tables/columns without altering existing ones
+  // Add missing portal tables/columns, then apply the specific widening fix.
   await syncSchemaAddOnly(instance, INTERNAL_MODELS);
+  await widenPortalVendorStorage(instance);
   schemaSynced = true;
-  console.log('Database schema sync completed (missing tables/columns only, no data deletion)');
+  console.log('Portal MySQL schema checks completed without data deletion');
 }
 
 export async function connectDatabase(): Promise<void> {

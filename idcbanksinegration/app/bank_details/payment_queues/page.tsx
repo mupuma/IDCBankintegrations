@@ -5,8 +5,11 @@ import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
+import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
+import { usePortalUser } from '@/app/lib/usePortalUser';
+import { PERMISSIONS } from '@/app/lib/permissions';
+import { BANK_CODES } from '@/app/lib/enabledBanks';
 
-const BANK_CODES: BankCode[] = ['ZICB'];
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' ? value as Record<string, any> : {};
@@ -23,7 +26,8 @@ function getQueuePaymentSummary(item: BankQueueItem) {
 
   return {
     isBulk,
-    reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionReference ?? item.paymentId),
+    reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionId ?? payment.transactionReference ?? item.paymentId),
+    description: isBulk ? String(request.description ?? request.narration ?? '') : String(payment.remarks ?? payment.description ?? ''),
     vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : String(payment.vendorId ?? payment.accountName ?? 'N/A'),
     amount: Number.isFinite(amount) ? amount : 0,
     currency: isBulk ? String(request.currency ?? '') : String(payment.currency ?? payment.currencyCode ?? ''),
@@ -33,7 +37,19 @@ function getQueuePaymentSummary(item: BankQueueItem) {
   };
 }
 
+function getQueueResponseDetails(item: BankQueueItem) {
+  const response = asRecord(item.response);
+  return ['cashbookStatus', 'batchId', 'message', 'reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError']
+    .map((key) => {
+      const value = response[key];
+      return value ? { key, value: String(value) } : null;
+    })
+    .filter((row): row is { key: string; value: string } => row !== null);
+}
+
 export default function PaymentQueuesPage() {
+  const { hasPermission } = usePortalUser();
+  const [recoveryItem, setRecoveryItem] = useState<BankQueueItem | null>(null);
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -145,7 +161,7 @@ export default function PaymentQueuesPage() {
         </div>
 
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
-          {(['queued', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
+          {(['queued', 'pulled', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
             <div key={status} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
               <p className="text-[10px] uppercase tracking-[0.28em] text-slate-500">{status}</p>
               <p className="mt-3 text-3xl font-bold text-slate-900">{statusCounts[status] ?? 0}</p>
@@ -170,7 +186,7 @@ export default function PaymentQueuesPage() {
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200/60">
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank</th>
-                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference / Description</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Vendor</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Amount</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Txn Type</th>
@@ -178,18 +194,19 @@ export default function PaymentQueuesPage() {
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Attempts</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Updated</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Error</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Recovery</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {error ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-rose-700">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-rose-700">
                     {error}
                   </td>
                 </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-5 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-500">
                     {loading ? 'Loading queue items...' : 'No queue transactions found.'}
                   </td>
                 </tr>
@@ -201,7 +218,12 @@ export default function PaymentQueuesPage() {
                       {getQueuePaymentSummary(item).isBulk ? <div className="mt-1 text-xs font-normal text-slate-500">Bulk batch</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">
-                      {getQueuePaymentSummary(item).reference}
+                      <div className="font-mono font-semibold text-slate-800">{getQueuePaymentSummary(item).reference}</div>
+                      {getQueuePaymentSummary(item).description ? (
+                        <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-slate-500">
+                          {getQueuePaymentSummary(item).description}
+                        </div>
+                      ) : null}
                       {getQueuePaymentSummary(item).batchReference ? <div className="mt-1 text-xs text-slate-500">Batch: {getQueuePaymentSummary(item).batchReference}</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).vendor}</td>
@@ -210,10 +232,22 @@ export default function PaymentQueuesPage() {
                       {getQueuePaymentSummary(item).transactionType}
                       {getQueuePaymentSummary(item).service ? <div className="mt-1 text-xs text-slate-500">{getQueuePaymentSummary(item).service}</div> : null}
                     </td>
-                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">{item.status}{item.bankCode === 'ZICB' && item.response && typeof item.response === 'object' ? <div className="mt-1 text-xs font-normal">{['reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError'].map(key => { const value = (item.response as Record<string, unknown>)[key]; return value ? <div key={key}>{key}: {String(value)}</div> : null; })}</div> : null}</td>
+                    <td className="px-5 py-4 text-sm font-semibold text-slate-700">
+                      {item.status}
+                      {getQueueResponseDetails(item).length ? (
+                        <div className="mt-1 text-xs font-normal">
+                          {getQueueResponseDetails(item).map((detail) => (
+                            <div key={detail.key}>{detail.key}: {detail.value}</div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
+                    <td className="px-5 py-4 text-sm">
+                      {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
+                    </td>
                   </tr>
                 ))
               )}
@@ -228,6 +262,9 @@ export default function PaymentQueuesPage() {
           onPageSizeChange={(s) => { setPageSize(s); setPage(1); }}
         />
       </div>
+      {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
+        canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
+        onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
     </div>
   );
 }

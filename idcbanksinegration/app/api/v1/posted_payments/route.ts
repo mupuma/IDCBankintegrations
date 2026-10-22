@@ -19,13 +19,12 @@ import { connectDatabase, getSequelize } from '../../../lib/db';
 import { createHash } from 'node:crypto';
 import { PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
-import { resolveSourceBank } from '../../../lib/banks/zicb';
-import { IzbPayment } from '../../../models/internal/IzbPayment';
+import { resolveSourceBank } from '@/app/lib/sourceAccounts';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
-import { buildZanacoPayload, buildZicbPayload, validateZanacoPayload, validateZicbPayload } from '../../../lib/banks/payloadBuilders';
+import { buildZanacoPayload, validateZanacoPayload, validateZanacoBulkPayload } from '../../../lib/banks/payloadBuilders';
 import { getBankIntegration } from '@/app/lib/bankIntegrations';
-import { h2hEnabled } from '@/app/lib/zicb/config';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
+import { sourceProfile } from '@/app/lib/zicb/config';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
@@ -77,141 +76,68 @@ export async function POST(request: NextRequest) {
 
   let paymentToQueue = payment;
 
-  if (bankCode === 'ZICB' && !h2hEnabled()) {
-    return NextResponse.json(
-      { success: false, error: 'ZICB legacy dispatch has been removed. Enable ZICB_H2H_ENABLED=true.' },
-      { status: 503 },
-    );
-  }
-
-  // ZICB must go through the durable H2H ledger. Never fall back to legacy BNK9900 dispatch.
-  if (bankCode === 'ZICB' && h2hEnabled()) {
-    if (!sourceBankCode) return NextResponse.json({ error: 'A source account is required' }, { status: 400 });
+  if (bankCode === 'ZICB') {
+    if (!sourceBankCode) {
+      terminalError('posted_payments.zicb.validation_failed', {
+        paymentId: payment.paymentId,
+        bankCode,
+        error: 'A source account is required',
+      });
+      return NextResponse.json({ success: false, error: 'A source account is required' }, { status: 400 });
+    }
     try {
+      // Reject missing bank onboarding configuration before querying source databases.
+      sourceProfile(sourceBankCode);
       const source = await resolveSourceBank(sourceBankCode);
-      if (!source?.accountNumber || !source.transit) return NextResponse.json({ error: 'Source account details are incomplete' }, { status: 400 });
+      if (!source?.accountNumber || !source.transit) {
+        terminalError('posted_payments.zicb.validation_failed', {
+          paymentId: payment.paymentId,
+          bankCode,
+          sourceBank: sourceBankCode,
+          hasAccountNumber: Boolean(source?.accountNumber),
+          hasTransit: Boolean(source?.transit),
+          error: 'Source account details are incomplete',
+        });
+        return NextResponse.json({ success: false, error: 'Source account details are incomplete' }, { status: 400 });
+      }
+      terminalLog('posted_payments.zicb.enqueue_started', {
+        paymentId: payment.paymentId,
+        bankCode,
+        sourceBank: sourceBankCode,
+        transactionType: payment.transactionType,
+        currency: payment.currency || payment.currencyCode,
+      });
       const result = await enqueueH2h(payment, sourceBankCode);
+      terminalLog('posted_payments.zicb.enqueue_succeeded', {
+        paymentId: result.paymentId,
+        queueId: result.queueId,
+        sourceBank: sourceBankCode,
+        reference: result.reference,
+        prcn: result.prcn_number,
+      });
       await logAuditEvent({ userId: auth.id, username: auth.username, action: 'PAYMENT_POSTED', resourceType: 'payment',
         resourceId: result.paymentId, correlationId: result.queueId, summary: `${auth.username} queued a ZICB H2H payment`,
         details: { reference: result.reference, prcn: result.prcn_number }, request });
       return NextResponse.json({ success: true, ...result, dispatchStrategy: 'h2h-ledger' }, { status: 202 });
     } catch (error) {
+      terminalError('posted_payments.zicb.enqueue_failed', {
+        paymentId: payment.paymentId,
+        bankCode,
+        sourceBank: sourceBankCode,
+        transactionType: payment.transactionType,
+        error: error instanceof Error ? error.message : String(error),
+        errorName: error instanceof Error ? error.name : typeof error,
+        status: error instanceof LedgerError ? error.status : 400,
+      });
       return NextResponse.json({ success: false, error: error instanceof Error ? error.message : 'Unable to queue H2H payment' }, { status: error instanceof LedgerError ? error.status : 400 });
     }
   }
 
-  if (bankCode === 'ZICB') {
-    console.log(`🔴 ZICB validation for sourceBank: ${sourceBankCode}`);
-
-    // Check 1: sourceBank must exist
-    if (!sourceBankCode) {
-      console.error('❌ ZICB payment REJECTED: sourceBank missing');
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'sourceBank is REQUIRED for ZICB payments. Please provide a valid source bank code.'
-        },
-        { status: 400 },
-      );
-    }
-
-    try {
-      const source = await resolveSourceBank(sourceBankCode);
-      console.log(`Source bank resolved:`, source);
-
-      // Check 2: source must exist (not null)
-      if (!source) {
-        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" not found`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" not found in system.`,
-            sourceBankCode
-          },
-          { status: 404 },
-        );
-      }
-
-      // --- FIX: TRIM ALL VALUES ---
-      const srcAcc = source.accountNumber?.toString().trim() || '';
-      const srcBranch = source.transit?.toString().trim() || '';
-      const srcName = source.name?.toString().trim() || '';
-
-      console.log(`Trimmed values:`, { srcAcc, srcBranch, srcName });
-
-      // Check 3: srcAcc must not be empty after trimming
-      if (!srcAcc || srcAcc.length === 0) {
-        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" has empty account number`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid account number. Please update the source bank details.`,
-            sourceBankCode,
-            providedValues: {
-              accountNumber: source.accountNumber,
-              transit: source.transit,
-              name: source.name
-            }
-          },
-          { status: 400 },
-        );
-      }
-
-      // Check 4: srcBranch must not be empty after trimming
-      if (!srcBranch || srcBranch.length === 0) {
-        console.error(`❌ ZICB payment REJECTED: source bank "${sourceBankCode}" has empty branch/transit code`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: `Payment CANNOT be posted: Source bank "${sourceBankCode}" has no valid branch/transit code. Please update the source bank details.`,
-            sourceBankCode,
-            providedValues: {
-              accountNumber: source.accountNumber,
-              transit: source.transit,
-              name: source.name
-            }
-          },
-          { status: 400 },
-        );
-      }
-
-      // All checks passed - populate payment with TRIMMED values
-      console.log(`✅ Source bank validated. Populating payment with:`, {
-        srcAcc,
-        srcBranch,
-        srcName
-      });
-
-      // Set the trimmed values (OVERWRITE, don't just set if empty)
-      (payment as any).srcAcc = srcAcc;
-      (payment as any).srcBranch = srcBranch;
-      (payment as any).srcName = srcName || 'ZICB';
-
-      const zicbPayload = buildZicbPayload(payment, payment.transactionType, source);
-      const validationErrors = validateZicbPayload(zicbPayload);
-      if (validationErrors.length) {
-        return NextResponse.json(
-          { success: false, error: 'Invalid ZICB transfer', validationErrors },
-          { status: 400 },
-        );
-      }
-
-      console.log('✅ ZICB validation PASSED. Payment enriched with source bank details.');
-
-    } catch (err) {
-      console.error('💥 Error resolving source bank:', err);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Internal error while resolving source bank details. Payment cannot be posted.'
-        },
-        { status: 500 },
-      );
-    }
-  }
-
   if (bankCode === 'ZANACO') {
-    const selectedTransactionType = String(payment.transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
+    if (!String(payment.paymentId ?? '').trim()) {
+      return NextResponse.json({ success: false, error: 'A stable Sage paymentId is required for Zanaco payments.' }, { status: 400 });
+    }
+    const selectedTransactionType = String(payment.transactionType ?? '').trim().toUpperCase() as PaymentsResponse['transactionType'];
     if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(selectedTransactionType)) {
       return NextResponse.json(
         { success: false, error: 'transactionType must be one of INT, RTGS, DDACCT, DDAC, TT, SWIFT for Zanaco payments.' },
@@ -318,31 +244,13 @@ export async function POST(request: NextRequest) {
       return requeueFailedReservedPayment({
         request,
         auth,
-        payment,
+        payment: paymentToQueue,
         paymentId,
         bankCode,
         sourceBankCode,
       });
     }
     throw error;
-  }
-
-  // If the payment is intended for IZB, also insert into the intermediary izB pending table
-  try {
-    if (bankCode === 'IZB') {
-      const paymentDateStr = (payment as any)?.transactionDate || (payment as any)?.paymentDate || null;
-      const paymentDate = paymentDateStr ? new Date(paymentDateStr) : null;
-      await IzbPayment.create({
-        paymentId,
-        paymentDate,
-        sourceBank: sourceBankCode ?? 'IZB',
-        paymentPayload: JSON.stringify(payment),
-        status: 'queued',
-        attempts: 0,
-      });
-    }
-  } catch (err) {
-    console.error('Failed to insert IZB intermediary record', err);
   }
 
   const queueItem = enqueuePayment(bankCode, paymentToQueue, queueId, sourceBankCode);
@@ -425,6 +333,8 @@ async function requeueFailedReservedPayment(input: {
   sourceBankCode: string | null;
 }) {
   const { request, auth, payment, paymentId, bankCode, sourceBankCode } = input;
+  if (bankCode === 'ZANACO') return NextResponse.json({ success: false,
+    error: 'Use the recovery controls on Bank Queue Processing to resume or correct this instruction. Posting it again cannot authorise a second bank submission.', recoveryRequired: true, paymentId }, { status: 409 });
   const paymentKey = createHash('sha256').update(paymentId).digest('hex');
   const reservation = await PaymentDispatchReservation.findOne({ where: { paymentKey } });
   terminalLog('posted_payments.retry.lookup', { paymentId, bankCode, sourceBank: sourceBankCode, hasReservation: Boolean(reservation) });
@@ -545,6 +455,14 @@ async function postManyPayments(input: {
     );
   }
 
+  if (payments.length > 1000 || payments.some(row => !row || typeof row !== 'object' || Array.isArray(row))) {
+    return NextResponse.json({ success: false, error: 'Bulk payments must contain 2 to 1000 payment objects.' }, { status: 400 });
+  }
+  const paymentIds = payments.map(row => String(row.paymentId ?? '').trim());
+  if (paymentIds.some(id => !id) || new Set(paymentIds).size !== paymentIds.length) {
+    return NextResponse.json({ success: false, error: 'Every bulk payment must have a unique, non-empty Sage paymentId.' }, { status: 400 });
+  }
+
   if (bankCode !== 'ZANACO') {
     terminalError('posted_payments.bulk.validation_failed', { bankCode, error: 'bulk flow not configured for bank' });
     return NextResponse.json(
@@ -561,8 +479,11 @@ async function postManyPayments(input: {
     );
   }
 
-  const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').toUpperCase() as PaymentsResponse['transactionType'];
-  const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).toUpperCase() === effectiveType);
+  const effectiveType = String(transactionType ?? payments[0].transactionType ?? '').trim().toUpperCase() as PaymentsResponse['transactionType'];
+  if (!['INT', 'RTGS', 'DDACCT', 'DDAC', 'TT', 'SWIFT'].includes(effectiveType)) {
+    return NextResponse.json({ success: false, error: 'Unsupported Zanaco bulk transaction type.' }, { status: 400 });
+  }
+  const sameType = payments.every((row) => String(row.transactionType ?? effectiveType).trim().toUpperCase() === effectiveType);
   if (!sameType) {
     terminalError('posted_payments.bulk.validation_failed', { bankCode, transactionType: effectiveType, error: 'mixed transaction types' });
     return NextResponse.json(
@@ -625,6 +546,9 @@ async function postManyPayments(input: {
 
   const totalAmount = itemRequests.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
   const currency = String(itemRequests[0]?.ccy ?? 'ZMW');
+  if (itemRequests.some(item => item.ccy !== currency || item.valueDate !== itemRequests[0].valueDate)) {
+    return NextResponse.json({ success: false, error: 'Bulk payments must use one currency and one value date. Split the selection into separate batches.' }, { status: 400 });
+  }
   const bulkPayload = {
     service,
     request: {
@@ -642,6 +566,11 @@ async function postManyPayments(input: {
       sourceBank: sourceBankCode,
     },
   };
+
+  const bulkValidationErrors = validateZanacoBulkPayload(bulkPayload);
+  if (bulkValidationErrors.length) {
+    return NextResponse.json({ success: false, error: 'Invalid Zanaco bulk transfer', validationErrors: bulkValidationErrors }, { status: 400 });
+  }
 
   try {
     const db = await getSequelize();
@@ -805,7 +734,7 @@ export async function GET(request: NextRequest) {
   await connectDatabase();
 
   const portalPushBanks = BANK_CODES.filter(
-    (code) => getBankIntegration(code).dispatchStrategy === 'portal-push',
+    (code) => code !== 'IZB' && getBankIntegration(code).dispatchStrategy === 'portal-push',
   );
 
   if (portalPushBanks.length) {

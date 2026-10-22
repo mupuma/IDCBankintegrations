@@ -6,9 +6,9 @@
 // import { isAuthError, requirePermission } from '../../../lib/rbac';
 // import { PERMISSIONS } from '../../../lib/permissions';
 // import { logAuditEvent } from '../../../lib/auditLog';
-// import { Venbank } from '../../../models/sage_entities/Venbank';
+// import { VendorBankDetail as Venbank } from '../../../models/internal/VendorBankDetail';
 // import { Op } from 'sequelize';
-// import { connectSageDatabase } from '../../../lib/sageDb';
+// import { connectVendorBankDatabase } from '../../../lib/vendorBankStore';
 
 // function normalizeVenbank(bank: any) {
 //   const record = bank.toJSON ? bank.toJSON() : bank;
@@ -27,7 +27,7 @@
 //   const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_READ);
 //   if (isAuthError(auth)) return auth;
 
-//   await connectSageDatabase();
+//   await connectVendorBankDatabase();
   
 //   const searchParams = request.nextUrl.searchParams;
 //   const limit = parseInt(searchParams.get('limit') || '10');
@@ -73,7 +73,7 @@
 //   if (isAuthError(auth)) return auth;
   
 //   try {
-//     await connectSageDatabase();
+//     await connectVendorBankDatabase();
 //     const body = await request.json();
     
 //     // Validate required fields
@@ -117,28 +117,22 @@ import type { NextRequest } from 'next/server';
 import { isAuthError, requirePermission } from '../../../lib/rbac';
 import { PERMISSIONS } from '../../../lib/permissions';
 import { logAuditEvent } from '../../../lib/auditLog';
-import { Venbank } from '../../../models/sage_entities/Venbank';
+import { VendorBankDetail as Venbank } from '../../../models/internal/VendorBankDetail';
 import { Op, Sequelize } from 'sequelize';
-import { connectSageDatabase } from '../../../lib/sageDb';
+import { connectVendorBankDatabase } from '../../../lib/vendorBankStore';
+import { loadVendorSwiftDetails, mergeVendorSwiftDetails } from '../../../lib/sageVendorBankDetails';
+import { validateVendorSwiftDetails } from '../../../lib/vendorSwiftValidation';
+import { normalizeVendorBankRecord, vendorBankReadError } from '../../../lib/vendorBankRead';
 
 function normalizeVenbank(bank: any) {
-  const record = bank.toJSON ? bank.toJSON() : bank;
-  const physicalAddress = record.physicalAddress;
-
-  return {
-    ...record,
-    physicalAddress:
-      typeof physicalAddress === 'string' && physicalAddress
-        ? JSON.parse(physicalAddress)
-        : physicalAddress || null,
-  };
+  return normalizeVendorBankRecord(bank);
 }
 
 export async function GET(request: NextRequest) {
   const auth = await requirePermission(request, PERMISSIONS.BANK_DETAILS_READ);
   if (isAuthError(auth)) return auth;
-
-  await connectSageDatabase();
+  try {
+  const store = await connectVendorBankDatabase(request.nextUrl.searchParams.get('refreshSage') === 'true');
   
   const searchParams = request.nextUrl.searchParams;
   
@@ -199,13 +193,19 @@ export async function GET(request: NextRequest) {
       order: [['id', 'ASC']],
     });
     
-    const normalizedBanks = banks.map(normalizeVenbank);
+    const sageDetails = await loadVendorSwiftDetails(banks.map(bank => bank.vendorid || '')).catch(() => {
+      console.warn('Sage vendor enrichment unavailable; displaying saved portal bank details');
+      return new Map();
+    });
+    const normalizedBanks = banks.map(bank => ({ ...normalizeVenbank(bank), ...mergeVendorSwiftDetails({ ...bank.toJSON() }, sageDetails.get((bank.vendorid || '').trim())) }));
     hasNextPage = normalizedBanks.length > limit;
     const data = hasNextPage ? normalizedBanks.slice(0, -1) : normalizedBanks;
-    nextCursor = hasNextPage ? data[data.length - 1]?.id : null;
+    nextCursor = hasNextPage ? banks[limit - 1]?.id : null;
     
     return NextResponse.json({
       success: true,
+      warning: store?.warning,
+      sageVendorCount: store?.sageVendorCount,
       data: data,
       pagination: {
         limit: limit,
@@ -229,7 +229,11 @@ export async function GET(request: NextRequest) {
       order: [['id', 'DESC']],
     });
     
-    const normalizedBanks = banks.map(normalizeVenbank);
+    const sageDetails = await loadVendorSwiftDetails(banks.map(bank => bank.vendorid || '')).catch(() => {
+      console.warn('Sage vendor enrichment unavailable; displaying saved portal bank details');
+      return new Map();
+    });
+    const normalizedBanks = banks.map(bank => ({ ...normalizeVenbank(bank), ...mergeVendorSwiftDetails({ ...bank.toJSON() }, sageDetails.get((bank.vendorid || '').trim())) }));
     
     // Calculate pagination metadata
     const totalPages = Math.ceil(totalItems / limit);
@@ -237,6 +241,8 @@ export async function GET(request: NextRequest) {
     
     return NextResponse.json({
       success: true,
+      warning: store?.warning,
+      sageVendorCount: store?.sageVendorCount,
       data: normalizedBanks,
       pagination: {
         currentPage: page,
@@ -250,6 +256,10 @@ export async function GET(request: NextRequest) {
       },
     });
   }
+  } catch (error) {
+    console.error('Failed to load vendor bank details from Sage:', error);
+    return NextResponse.json({ success: false, error: vendorBankReadError(error) }, { status: 503 });
+  }
 }
 
 //create
@@ -258,8 +268,10 @@ export async function POST(request: NextRequest) {
   if (isAuthError(auth)) return auth;
   
   try {
-    await connectSageDatabase();
+    await connectVendorBankDatabase();
     const body = await request.json();
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
     
     // Validate required fields
     if (!body.vendorid || !body.accname) {
@@ -271,17 +283,17 @@ export async function POST(request: NextRequest) {
     
     // Check if vendor already has bank details
     const existing = await Venbank.findOne({
-      where: { vendorid: body.vendorid }
+      where: { vendorid: body.vendorid }, paranoid: false
     });
     
-    if (existing) {
+    if (existing && !existing.get('deletedAt')) {
       return NextResponse.json(
         { error: 'Vendor already has bank details' },
         { status: 400 }
       );
     }
     
-    const bank = await Venbank.create({
+    const values = {
       vendorid: body.vendorid,
       accven: body.accven || '',
       accname: body.accname,
@@ -289,11 +301,17 @@ export async function POST(request: NextRequest) {
       sortcde: body.sortcde || '',
       brnch: body.brnch || '',
       swiftcde: body.swiftcde || '',
+      tpin: body.tpin?.trim() || null,
+      purposeCode: body.purposeCode?.trim() || null,
+      sectorCode: body.sectorCode?.trim() || null,
       physicalAddress: body.physicalAddress || { streetName: '', town: '', plotNo: '' },
-      countryoforigin: body.countryOfOrigin || '',
+      countryOfOrigin: body.countryOfOrigin || '',
       email: body.email || '',
       phoneNumber: body.phoneNumber || '',
-    });
+    };
+    const bank = existing
+      ? await existing.restore().then(() => existing.update(values))
+      : await Venbank.create(values);
 
     await logAuditEvent({
       userId: auth.id,
@@ -330,7 +348,7 @@ export async function PUT(request: NextRequest) {
   if (isAuthError(auth)) return auth;
   
   try {
-    await connectSageDatabase();
+    await connectVendorBankDatabase();
     
     const url = new URL(request.url);
     const id = parseInt(url.pathname.split('/').pop() || '0', 10);
@@ -343,6 +361,8 @@ export async function PUT(request: NextRequest) {
     }
     
     const body = await request.json();
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
     
     // Validate required fields
     if (!body.vendorid || !body.accname) {
@@ -368,6 +388,9 @@ export async function PUT(request: NextRequest) {
       sortcde: body.sortcde || '',
       brnch: body.brnch || '',
       swiftcde: body.swiftcde || '',
+      ...(body.tpin !== undefined ? { tpin: body.tpin?.trim() || null } : {}),
+      ...(body.purposeCode !== undefined ? { purposeCode: body.purposeCode?.trim() || null } : {}),
+      ...(body.sectorCode !== undefined ? { sectorCode: body.sectorCode?.trim() || null } : {}),
       physicalAddress: body.physicalAddress || { streetName: '', town: '', plotNo: '' },
       countryOfOrigin: body.countryOfOrigin || '',
       email: body.email || '',
@@ -409,7 +432,7 @@ export async function PUT(request: NextRequest) {
 //   if (isAuthError(auth)) return auth;
   
 //   try {
-//     await connectSageDatabase();
+//     await connectVendorBankDatabase();
     
 //     const url = new URL(request.url);
 //     const id = parseInt(url.pathname.split('/').pop() || '0', 10);

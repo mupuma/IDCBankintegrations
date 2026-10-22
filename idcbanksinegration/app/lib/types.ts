@@ -1233,6 +1233,9 @@ export interface AptcrCreationAttributes extends Optional<AptcrAttributes,
     sortcde?: string;
     brnch?: string;
     swiftcde?: string;
+    tpin?: string;
+    purposeCode?: string;
+    sectorCode?: string;
     physicalAddress?: PhysicalAddress;
     countryOfOrigin?: string;
     countryoforigin?: string;

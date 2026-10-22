@@ -1,37 +1,94 @@
-# ZICB H2H Agent Service
+# ZICB Agent Service
 
-This service runs only the ZICB H2H v1 protocol. The legacy BullMQ/API sender has been removed and `/payments` is no longer a submission path.
+The ZICB agent service runs the PayBill H2H v1 integration only.
 
-Payments must be submitted through the portal, which stores them in the durable H2H ledger. The agent claims work from the portal and sends it through the configured H2H channels.
+Payments are submitted through the portal's ZICB H2H ledger. The agent:
+
+- claims H2H work from the portal
+- sends payment submissions to ZICB
+- reconciles submitted references when required
+- receives ZICB callbacks
+- forwards callbacks to the portal
+- triggers accounting recovery when a payment is confirmed paid
+
+There is no bank-facing `/payments` route in this service.
 
 ## Run
 
 ```bash
 cd microservices/zicb-agent-service
 npm install
+npm run build
+npm start
+```
+
+For development:
+
+```bash
 npm run dev
 ```
 
-Required environment:
+## Docker
 
-- `ZICB_H2H_ENABLED=true`
-- `ZICB_H2H_PROFILES`
-- `ZICB_H2H_AGENT_KEY`
-- `APP_API_URL`
-
-## Verification
-
-```bash
-npm test
-npm run build
-```
-
-## Notes
-
-- `npm run dev:api` and `npm run dev:worker` intentionally fail because the legacy sender is disabled.
-- `POST /payments` returns `410 Gone`; use the portal H2H ledger instead.
-- The Docker build context is the repository root because the service imports `shared/zicb-h2h`.
+The Docker build context is the repository root because the service uses
+`shared/zicb-h2h`:
 
 ```powershell
 docker build -f microservices/zicb-agent-service/Dockerfile -t zicb-agent .
 ```
+
+## Public Agent Endpoints
+
+These are the endpoints ZICB calls on the agent.
+
+```text
+GET  /health
+
+POST /api/v1/bank/internal-ft/auth/token
+POST /api/v1/bank/internal-ft/callback
+
+POST /api/v1/bank/other-bank-rtgs-ft/auth/token
+POST /api/v1/bank/other-bank-rtgs-ft/callback
+
+POST /api/v1/bank/other-bank-ddacc-ft/auth/token
+POST /api/v1/bank/other-bank-ddacc-ft/callback
+```
+
+## Required Environment
+
+```text
+PORT=4001
+APP_API_URL=https://<portal-host>
+ZICB_H2H_AGENT_KEY=<shared-agent-key>
+ZICB_H2H_WEBHOOK_USERNAME=<callback-username>
+ZICB_H2H_WEBHOOK_PASSWORD=<callback-password>
+ZICB_H2H_WEBHOOK_SIGNING_KEY=<at-least-32-characters>
+ZICB_H2H_PROFILES=<json-profile-map>
+```
+
+`ZICB_H2H_PROFILES` must provide the ZICB client credentials and base URLs for
+each approved profile.
+
+The portal's `ZICB_H2H_SOURCE_PROFILES[<source>].profileId` must exactly match
+a key in the agent's `ZICB_H2H_PROFILES`. This is a local configuration name,
+not an additional credential supplied by ZICB. For example, a portal
+`profileId` of `institution-uat` requires an agent credentials entry named
+`institution-uat`; an entry named `uat` or `DEFAULT` will not match.
+
+`authUrl` is the bank-approved base URL. The agent appends
+`/h2h/auth/grant-type/client-credentials` and posts `client_id`,
+`client_secret` and `grant_type: client_credentials`. Do not append that
+endpoint yourself. Keep credentials and URLs from the same ZICB environment.
+
+An authentication failure before submission records `notSent` evidence.
+The outcome includes safe configuration guidance, HTTP status, or an
+allowlisted DNS/network/TLS error code; token bodies and credentials are
+never included. After fixing the cause and restarting the agent, use
+**Recovery / history → Retry connection** on the existing portal queue item.
+Older generic error records alone do not prove their underlying cause.
+
+## Contract
+
+Share the API contract with ZICB from:
+
+[ZICB_H2H_API_DOCUMENTATION.md](./ZICB_H2H_API_DOCUMENTATION.md)

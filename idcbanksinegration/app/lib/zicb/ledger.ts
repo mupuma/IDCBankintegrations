@@ -13,6 +13,7 @@ export type LedgerDocument = {
   accountingId: string; cashbookAccount?: string; accountingAttempts: number;
   submissionAttempts: number; submittedAt?: string; bankRef?: string; rawStatus?: string;
   error?: string; accountingError?: string; lastAction?: 'submit' | 'reconcile' | 'accounting';
+  notSent?: boolean; notSentReason?: 'authentication' | 'validation'; confirmedRejected?: boolean; recoveryCheck?: boolean; recoveryOf?: string;
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -28,7 +29,8 @@ async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Tr
     status: row.state, attempts: doc.submissionAttempts, lastError: doc.error || null,
     responsePayload: JSON.stringify({ protocol: 'h2h-v1', reference: row.reference, prcn_number: row.prcn,
       channel: row.channel, bankRef: doc.bankRef, bankStatus: doc.rawStatus,
-      accountingStatus: doc.accounting, accountingError: doc.accountingError }),
+      accountingStatus: doc.accounting, accountingError: doc.accountingError,
+      recovery: { protocol: 'zicb-recovery-v1', notSent: Boolean(doc.notSent), retryable: doc.notSentReason === 'authentication', confirmedRejected: Boolean(doc.confirmedRejected) } }),
   } as any, { where: { queueId: row.queueId }, transaction });
 }
 
@@ -69,6 +71,57 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
   }
 }
 
+export async function recoverH2hInstruction(queueId: string, action: 'check_status' | 'retry_connection' | 'retry_accounting', transaction: Transaction) {
+  const row = await ZicbH2hPayment.findByPk(queueId, { transaction, lock: transaction.LOCK.UPDATE });
+  if (!row) throw new LedgerError('H2H instruction not found', 404);
+  const doc = documentOf(row);
+  if (row.leaseUntil && new Date(row.leaseUntil).getTime() > Date.now()) throw new LedgerError('The agent is still processing this instruction. Wait for its lease to finish.', 409);
+  if (action === 'retry_connection') {
+    if (row.state !== 'rejected' || !doc.notSent || doc.notSentReason !== 'authentication') throw new LedgerError('This instruction has no recorded proof that authentication failed before submission', 409);
+    row.state = 'queued';
+  } else if (action === 'retry_accounting') {
+    if (row.state !== 'paid' || doc.accounting === 'posted') throw new LedgerError('Accounting recovery requires a paid payment with incomplete accounting', 409);
+    const profile = sourceProfile(doc.sourceBank);
+    if (!profile.cashbookAccount) throw new LedgerError('Configure the source profile cashbook GL account before retrying accounting');
+    doc.cashbookAccount = profile.cashbookAccount;
+    doc.accounting = 'retry';
+  } else {
+    if (['paid', 'queued'].includes(row.state)) throw new LedgerError('This payment does not require a bank-status check', 409);
+    doc.recoveryCheck = true;
+    if (row.state === 'submitting') row.state = 'unknown';
+  }
+  row.leaseToken = null; row.leaseUntil = null; row.nextRun = new Date();
+  await event(row, `operator_${action}`, {}, transaction);
+  await persist(row, doc, transaction);
+}
+
+// Called only by the authorised recovery transaction after it has locked and
+// verified the predecessor and its shared dispatch reservation.
+export async function createH2hRecoveryAttempt(payment: any, sourceBank: string, recoveryOf: string, transaction: Transaction) {
+  const profile = sourceProfile(sourceBank);
+  const channel = channelFor(payment.transactionType);
+  if (!profile.channels?.includes(channel)) throw new LedgerError('This H2H channel is not enabled for the selected source account');
+  const currency = String(payment.currency || payment.currencyCode || '').toUpperCase();
+  if (currency !== profile.currency) throw new LedgerError('Payment currency does not match the source account profile');
+  const queueId = randomUUID(), reference = randomUUID();
+  const identity = `${payment.paymentId}:recovery:${queueId}`;
+  const prcn = `IDC${hash(identity).slice(0, 32)}`;
+  const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
+  const doc: LedgerDocument = {
+    payment: { ...payment, currency, h2hProtocol: 'h2h-v1', recoveryOf }, batch,
+    profileId: profile.profileId, sourceBank, amountScale: profile.amountScale,
+    accounting: 'pending', accountingId: `ZH${hash(identity).slice(0, 20)}`, cashbookAccount: profile.cashbookAccount,
+    accountingAttempts: 0, submissionAttempts: 0, recoveryOf,
+  };
+  const row = await ZicbH2hPayment.create({ queueId, paymentKey: hash(identity), reference, prcn,
+    channel, state: 'queued', document: JSON.stringify(doc), nextRun: new Date() }, { transaction });
+  await PaymentQueueRequest.create({ queueId, paymentId: payment.paymentId, bankCode: 'ZICB', sourceBank,
+    paymentPayload: JSON.stringify(doc.payment), status: 'queued', attempts: 0 }, { transaction });
+  await event(row, 'recovery_created', { recoveryOf, reference, prcn }, transaction);
+  await persist(row, doc, transaction);
+  return queueId;
+}
+
 export async function claimH2hWork() {
   await connectDatabase();
   const db = await getSequelize();
@@ -92,8 +145,9 @@ export async function claimH2hWork() {
     let action: 'submit' | 'reconcile' | 'accounting';
     if (row.state === 'queued') {
       action = 'submit'; row.state = 'submitting'; doc.submissionAttempts += 1;
+      doc.notSent = false; doc.notSentReason = undefined;
       doc.submittedAt = now.toISOString();
-    } else if (['accepted', 'unknown'].includes(row.state)) action = 'reconcile';
+    } else if (['accepted', 'unknown'].includes(row.state) || doc.recoveryCheck) { action = 'reconcile'; doc.recoveryCheck = false; }
     else if (row.state === 'paid' && ['pending', 'retry', 'processing'].includes(doc.accounting)) {
       action = 'accounting'; doc.accounting = 'processing'; doc.accountingAttempts += 1;
     } else { row.nextRun = null; await persist(row, doc, transaction); return null; }
@@ -122,6 +176,12 @@ export async function reportH2hWork(queueId: string, leaseToken: string, outcome
     if (!leaseToken || row.leaseToken !== leaseToken || doc.lastAction === 'accounting') throw new LedgerError('Work lease is no longer current', 409);
     if (doc.lastAction === 'submit' && ['paid', 'failed'].includes(outcome.state)) throw new LedgerError('Submission cannot establish settlement');
     if (outcome.state === 'paid' && !outcome.bankRef?.trim()) throw new LedgerError('Paid outcome requires a bank reference');
+    if (outcome.notSent && (doc.lastAction !== 'submit' || outcome.state !== 'rejected')) throw new LedgerError('Not-sent evidence is valid only for a rejected submission');
+    if (doc.lastAction === 'submit') {
+      doc.notSent = Boolean(outcome.notSent);
+      doc.notSentReason = outcome.notSent ? outcome.notSentReason : undefined;
+      doc.confirmedRejected = outcome.state === 'rejected' && !outcome.notSent;
+    } else if (outcome.state === 'failed') doc.confirmedRejected = true;
     row.state = mergeOutcome(row.state as State, outcome.state);
     if (doc.bankRef && outcome.bankRef && doc.bankRef !== outcome.bankRef) row.state = 'needs_review';
     if (outcome.bankRef) doc.bankRef = outcome.bankRef;
@@ -149,6 +209,8 @@ export async function receiveH2hCallback(channel: Channel, body: any) {
     if (!doc.submittedAt) throw new LedgerError('Payment has not been submitted', 409);
     row.state = mergeOutcome(row.state as State, body.status_code === 200 ? 'paid' : 'failed');
     if (doc.bankRef && body.bankRef && doc.bankRef !== body.bankRef) row.state = 'needs_review';
+    doc.notSent = false; doc.notSentReason = undefined;
+    if (body.status_code === 400 && row.state === 'failed') doc.confirmedRejected = true;
     if (body.bankRef) doc.bankRef = body.bankRef;
     doc.error = row.state === 'needs_review' ? 'Conflicting bank notifications; manual review required' : body.status_code === 400 ? String(body.message || 'Bank reported payment failure') : undefined;
     // Preserve an in-flight submit/reconcile lease: its late report is harmless

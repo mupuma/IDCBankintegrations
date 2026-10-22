@@ -1,13 +1,11 @@
 import { Op, type Transaction } from 'sequelize';
 import type { BankCode } from '@/app/models/dtos';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
-import { IzbPayment } from '@/app/models/internal/IzbPayment';
 
 const ACTIVE_QUEUE_STATUSES = ['queued', 'processing', 'success', 'submitting', 'accepted', 'unknown', 'paid', 'needs_review'];
-const ACTIVE_IZB_STATUSES = ['queued', 'processing', 'success', 'pulled'];
 
 export interface ExistingPaymentPost {
-  source: 'bank_queue' | 'izb_pending';
+  source: 'bank_queue';
   queueId?: string;
   status: string;
   bankCode: BankCode;
@@ -22,7 +20,7 @@ export function buildAlreadyPostedMessage(
   requestedBankCode?: BankCode,
 ): string {
   const postedBank = existingPost.bankCode;
-  const target = existingPost.source === 'izb_pending' ? 'IZB pending payments' : `${postedBank} queue`;
+  const target = `${postedBank} queue`;
 
   if (requestedBankCode && requestedBankCode !== postedBank) {
     return `Payment has already been posted to ${postedBank}. Each payment can only be sent to one bank.`;
@@ -58,23 +56,6 @@ export async function findExistingPaymentPost(
       queueId: queueRecord.queueId,
       status: queueRecord.status,
       bankCode: queueRecord.bankCode as BankCode,
-    };
-  }
-
-  const izbRecord = await IzbPayment.findOne({
-    transaction,
-    where: {
-      paymentId,
-      status: { [Op.in]: ACTIVE_IZB_STATUSES },
-    },
-    order: [['updated_at', 'DESC']],
-  });
-
-  if (izbRecord) {
-    return {
-      source: 'izb_pending',
-      status: izbRecord.status,
-      bankCode: 'IZB',
     };
   }
 

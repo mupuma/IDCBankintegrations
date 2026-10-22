@@ -13,7 +13,7 @@ interface PhysicalAddress {
 }
 
 interface Venbank {
-  id: number;
+  id: string;
   vendorid: string;
   accven: string;
   accname: string;
@@ -21,6 +21,9 @@ interface Venbank {
   sortcde: string;
   brnch: string;
   swiftcde: string;
+  tpin: string;
+  purposeCode: string;
+  sectorCode: string;
   countryOfOrigin: string;
   email: string;
   phoneNumber: string;
@@ -170,6 +173,9 @@ function BankViewModal({ open, onClose, data }: { open: boolean; onClose: () => 
         <DataField label="Sort Code" value={data.sortcde} isMono />
         <DataField label="Branch Location" value={data.brnch} />
         <DataField label="SWIFT Code" value={data.swiftcde} isMono />
+        <DataField label="Taxpayer identification number (TPIN)" value={data.tpin} isMono />
+        <DataField label="SWIFT payment purpose code" value={data.purposeCode} isMono />
+        <DataField label="SWIFT business sector code" value={data.sectorCode} isMono />
       </DisplayCard>
       <DisplayCard title="Physical Address Details" accentColor="violet">
         <DataField label="Plot No" value={data.physicalAddress?.plotNo || ''} />
@@ -196,7 +202,7 @@ interface BankFormProps {
 }
 
 interface VendorOption {
-  bankDetailsId?: number | null;
+  bankDetailsId?: string | null;
   vendorid: string;
   vendname?: string;
   accven?: string;
@@ -205,6 +211,9 @@ interface VendorOption {
   sortcde?: string;
   brnch?: string;
   swiftcde?: string;
+  tpin?: string;
+  purposeCode?: string;
+  sectorCode?: string;
   email?: string;
   venbankPhoneNumber?: string;
   physicalAddress?: string;
@@ -215,7 +224,7 @@ interface VendorOption {
   country?: string;
   paymentCount?: number;
   lastPaymentDate?: number | null;
-  bankDetailsStatus?: 'missing' | 'incomplete';
+  bankDetailsStatus?: 'missing' | 'incomplete' | 'complete';
 }
 
 function parseVendorAddress(value?: string) {
@@ -237,6 +246,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
     sortcde: '',
     brnch: '',
     swiftcde: '',
+    tpin: '',
+    purposeCode: '',
+    sectorCode: '',
     streetName: '',
     town: '',
     plotNo: '',
@@ -255,6 +267,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
         sortcde: initialData.sortcde || '',
         brnch: initialData.brnch || '',
         swiftcde: initialData.swiftcde || '',
+        tpin: initialData.tpin || '',
+        purposeCode: initialData.purposeCode || '',
+        sectorCode: initialData.sectorCode || '',
         streetName: initialData.physicalAddress?.streetName || '',
         town: initialData.physicalAddress?.town || '',
         plotNo: initialData.physicalAddress?.plotNo || '',
@@ -265,7 +280,7 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
     } else {
       setFormData({
         vendorid: '', accven: '', accname: '', bankid: '', sortcde: '',
-        brnch: '', swiftcde: '', streetName: '', town: '', plotNo: '',
+        brnch: '', swiftcde: '', tpin: '', purposeCode: '', sectorCode: '', streetName: '', town: '', plotNo: '',
         countryOfOrigin: '', email: '', phoneNumber: '',
       });
     }
@@ -285,6 +300,9 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
         sortcde: selected?.sortcde || prev.sortcde,
         brnch: selected?.brnch || prev.brnch,
         swiftcde: selected?.swiftcde || prev.swiftcde,
+        tpin: selected?.tpin || '',
+        purposeCode: selected?.purposeCode || '',
+        sectorCode: selected?.sectorCode || '',
         email: selected?.email || prev.email,
         phoneNumber: selected?.venbankPhoneNumber || selected?.phoneNumber || prev.phoneNumber,
         streetName: address?.streetName || prev.streetName,
@@ -367,13 +385,13 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
                 <option value="">Select vendor ID</option>
                 {vendorOptions.map((vendor) => (
                   <option key={vendor.vendorid} value={vendor.vendorid}>
-                    {vendor.vendorid}{vendor.vendname ? ` - ${vendor.vendname}` : ''}{vendor.bankDetailsStatus === 'incomplete' ? ' (complete existing)' : ''}
+                    {vendor.vendorid}{vendor.vendname ? ` - ${vendor.vendname}` : ''}{vendor.bankDetailsStatus === 'complete' ? ' (saved details)' : vendor.bankDetailsId ? ' (complete existing)' : ''}
                   </option>
                 ))}
               </select>
             )}
             {!isEditMode && vendorOptions.length === 0 && (
-              <p className="text-xs text-rose-600 mt-2">No available vendor IDs to assign. Either all vendor master entries already have bank details or the vendor list could not be loaded.</p>
+              <p className="text-xs text-rose-600 mt-2">No Sage vendors were loaded. Refresh the vendor list or check the Sage connection.</p>
             )}
           </div>
           <div>
@@ -402,6 +420,21 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
             <label className={labelStyle}>SWIFT Code</label>
             <input type="text" className={`${formInputStyle} font-mono`} placeholder="e.g. ABBYGB2L" value={formData.swiftcde} onChange={handleChange('swiftcde')} />
           </div>
+          <div className="md:col-span-2">
+            <label className={labelStyle}>Taxpayer identification number (TPIN)</label>
+            <input type="text" maxLength={20} className={`${formInputStyle} font-mono`} value={formData.tpin} onChange={handleChange('tpin')} />
+            <p className="mt-1 text-xs text-slate-500">Use the vendor's TPIN. Loaded from Sage when available, or enter it here. Required for Zanaco SWIFT payments.</p>
+          </div>
+          <div>
+            <label className={labelStyle}>SWIFT payment purpose code</label>
+            <input type="text" maxLength={8} className={formInputStyle} value={formData.purposeCode} onChange={handleChange('purposeCode')} />
+            <p className="mt-1 text-xs text-slate-500">Zanaco's code describing why this vendor is paid. Ask Zanaco for the applicable code; a free-text payment description is not a code.</p>
+          </div>
+          <div>
+            <label className={labelStyle}>SWIFT business sector code</label>
+            <input type="text" maxLength={8} className={formInputStyle} value={formData.sectorCode} onChange={handleChange('sectorCode')} />
+            <p className="mt-1 text-xs text-slate-500">Zanaco's code for the applicable business sector. Use the bank-provided code. Confirm both codes still apply before sending each SWIFT payment.</p>
+          </div>
         </DisplayCard>
         <DisplayCard title="Physical Address & Contact Details" accentColor="violet">
           <div>
@@ -426,7 +459,7 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
           </div>
           <div>
             <label className={labelStyle}>Phone Number</label>
-            <input type="text" className={formInputStyle} placeholder="e.g. +44 20 7946 0958" value={formData.phoneNumber} onChange={handleChange('phoneNumber')} />
+            <input type="text" maxLength={255} className={formInputStyle} placeholder="e.g. +44 20 7946 0958" value={formData.phoneNumber} onChange={handleChange('phoneNumber')} />
           </div>
         </DisplayCard>
       </form>
@@ -439,9 +472,12 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
 export default function BankManagementPage() {
   const [banks, setBanks] = useState<Venbank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [loadWarning, setLoadWarning] = useState('');
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [totalItems, setTotalItems] = useState(0);
+  const [sageVendorCount, setSageVendorCount] = useState<number | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
   const [vendorOptions, setVendorOptions] = useState<VendorOption[]>([]);
@@ -491,13 +527,16 @@ export default function BankManagementPage() {
     setPage(0);
   }, [debouncedSearchTerm, debouncedFilterVendor]);
 
-  const fetchBanks = useCallback(async () => {
+  const fetchBanks = useCallback(async (refreshSage = false) => {
     setLoading(true);
+    setLoadError('');
+    setLoadWarning('');
     try {
       const params = new URLSearchParams({
         page: page.toString(), // 0-indexed
         limit: rowsPerPage.toString(),
       });
+      if (refreshSage) params.set('refreshSage', 'true');
       
       if (debouncedSearchTerm.trim()) {
         params.append('search', debouncedSearchTerm.trim());
@@ -515,24 +554,26 @@ export default function BankManagementPage() {
         return;
       }
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Network response failure exception.');
+        const errorData = await response.json().catch(() => null);
+        throw new Error(errorData?.error || `Unable to load portal bank records (HTTP ${response.status}). Check the portal server log.`);
       }
       const data = await response.json();
       
       console.log('API Response:', data);
       
       if (data.success) {
+        setSageVendorCount(typeof data.sageVendorCount === 'number' ? data.sageVendorCount : null);
+        setLoadWarning(data.warning || '');
         setBanks(Array.isArray(data.data) ? data.data : []);
         setTotalItems(data.pagination?.totalItems || 0);
       } else {
-        setBanks([]);
-        setTotalItems(0);
-        showNotification(data.error || 'Failed to load data', 'error');
+        throw new Error(data.error || 'Failed to load portal bank records.');
       }
     } catch (error) {
       console.error('Fetch error:', error);
-      showNotification('Failed to load bank records from Sage.', 'error');
+      const message = error instanceof Error ? error.message : 'Failed to load portal bank records.';
+      setLoadError(message);
+      showNotification(message, 'error');
       setBanks([]);
       setTotalItems(0);
     } finally {
@@ -569,7 +610,7 @@ export default function BankManagementPage() {
     fetchVendorOptions();
   }, [fetchVendorOptions]);
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id: string) => {
     if (confirm('Are you sure you want to permanently remove this financial distribution record?')) {
       try {
         const response = await fetch(`/api/v1/bank_details/${id}`, {
@@ -706,9 +747,9 @@ export default function BankManagementPage() {
               Add Record
             </button>
             <button
-              onClick={fetchBanks}
+              onClick={() => { void fetchBanks(true); void fetchVendorOptions(); }}
               className="p-2.5 bg-slate-100 text-slate-600 border border-slate-200/50 rounded-xl hover:bg-slate-200/70 transition-all outline-none"
-              title="Refresh"
+              title="Refresh all vendors from Sage"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
@@ -719,6 +760,7 @@ export default function BankManagementPage() {
       </div>
 
       {/* Table */}
+      {loadWarning ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadWarning}</p> : null}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
@@ -742,7 +784,7 @@ export default function BankManagementPage() {
               ) : banks.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-16 text-center text-sm font-semibold text-slate-400">
-                    No verified banking registry matching filtering constraints located.
+                    {loadError ? <span role="alert" className="text-rose-700">{loadError}</span> : 'No vendor bank records match the current filters.'}
                   </td>
                 </tr>
               ) : (
@@ -824,11 +866,12 @@ export default function BankManagementPage() {
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
           <span className="text-xs font-semibold text-slate-500">
             {banks.length > 0 ? (
-              `Showing ${startItem} – ${endItem} of ${totalItems} structural records`
+              `Showing ${startItem} – ${endItem} of ${totalItems} vendors`
             ) : (
-              'No records found'
+              loadError ? 'Bank records unavailable' : 'No records found'
             )}
           </span>
+          {sageVendorCount !== null ? <span className="text-xs text-slate-500">Sage vendor master: {sageVendorCount}</span> : null}
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Per Page:</span>

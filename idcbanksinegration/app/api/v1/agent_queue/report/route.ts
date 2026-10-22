@@ -34,7 +34,7 @@ export async function POST(request: NextRequest) {
   }
 
   const updated = await reportBankQueueResult(queueId, {
-    status: status as 'queued' | 'processing' | 'success' | 'failed',
+    status: status as Parameters<typeof reportBankQueueResult>[1]['status'],
     response: body?.response,
     error: body?.error ? String(body.error) : undefined,
     agentId: body?.agentId ? String(body.agentId) : undefined,

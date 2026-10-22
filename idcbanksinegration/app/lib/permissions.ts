@@ -3,6 +3,7 @@ export const PERMISSIONS = {
   BANK_DETAILS_WRITE: 'bank_details:write',
   PAYMENTS_READ: 'payments:read',
   PAYMENTS_POST: 'payments:post',
+  PAYMENTS_RETRY: 'payments:retry',
   QUEUES_READ: 'queues:read',
   CASHBOOK_POST: 'cashbook:post',
   AUDIT_READ: 'audit:read',

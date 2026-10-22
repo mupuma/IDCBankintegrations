@@ -5,10 +5,13 @@ import { PaymentsResponse, PaymentsRequest } from '@/app/models/dtos';
 import { Appym } from '@/app/models/sage_entities/Appym';
 import { Aptcr } from '@/app/models/sage_entities/Aptcr';
 import { Apven } from '@/app/models/sage_entities/Apven';
-import { Venbank } from '@/app/models/sage_entities/Venbank';
+import { VendorBankDetail as Venbank } from '@/app/models/internal/VendorBankDetail';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { Op } from 'sequelize';
+import { connectVendorBankDatabase } from '@/app/lib/vendorBankStore';
+import { createHash } from 'node:crypto';
+import { loadVendorSwiftDetails, mergeVendorSwiftDetails } from '@/app/lib/sageVendorBankDetails';
 
 type SageRawRecord = Record<string, unknown>;
 type NormalizedPayment = PaymentsResponse & {
@@ -27,6 +30,9 @@ type VendorBankDetails = {
   branchCode: string;
   sortCode: string;
   swiftCode: string;
+  tpin: string;
+  purposeCode: string;
+  sectorCode: string;
   countryOfOrigin: string;
   email: string;
   phoneNumber: string;
@@ -43,6 +49,9 @@ const VENBANK_ATTRIBUTES = [
   'sortcde',
   'brnch',
   'swiftcde',
+  'tpin',
+  'purposeCode',
+  'sectorCode',
   'physicalAddress',
   'countryOfOrigin',
   'email',
@@ -69,6 +78,22 @@ function mapTransactionType(paymcode: string | undefined): PaymentsResponse['tra
   return 'DDACCT';
 }
 
+function buildSageTransactionId(appym: SageRawRecord) {
+  const seed = [
+    getRawField(appym, ['idbank', 'IDBANK'], ''),
+    getRawField(appym, ['idvend', 'IDVEND'], ''),
+    getRawField(appym, ['idrmit', 'IDRMIT'], ''),
+    getRawField(appym, ['longserial', 'LONGSERIAL'], ''),
+    getRawField(appym, ['datermit', 'DATERMIT'], ''),
+    getRawField(appym, ['datebus', 'DATEBUS'], ''),
+    getRawField(appym, ['cntbtch', 'CNTBTCH'], ''),
+    getRawField(appym, ['cntitem', 'CNTITEM'], ''),
+    getRawField(appym, ['amtpaym', 'AMTPAYM'], ''),
+  ].map(trimString).join('|');
+
+  return `IDC${createHash('sha256').update(seed).digest('hex').slice(0, 9).toUpperCase()}`;
+}
+
 function getRawField<T>(record: SageRawRecord | null | undefined, keys: string[], fallback: T): T {
   if (!record) return fallback;
 
@@ -83,23 +108,6 @@ function getRawField<T>(record: SageRawRecord | null | undefined, keys: string[]
 
 function trimString(value: unknown) {
   return String(value ?? '').trim();
-}
-
-function truncateForColumn(value: unknown, maxLength: number) {
-  return trimString(value).slice(0, maxLength);
-}
-
-function seedPhoneNumber(value: unknown) {
-  const raw = trimString(value);
-  if (!raw) return '';
-
-  const [firstNumber] = raw
-    .split(/[\/,;|]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  const normalized = (firstNumber || raw).replace(/[^\d+]/g, '');
-  return truncateForColumn(normalized, 20);
 }
 
 function parsePhysicalAddress(value: unknown): PaymentsResponse['physicalAddress'] {
@@ -127,9 +135,9 @@ function parsePhysicalAddress(value: unknown): PaymentsResponse['physicalAddress
 
 function buildAddressFromApven(vendor: SageRawRecord | undefined): PaymentsResponse['physicalAddress'] {
   return {
-    streetName: truncateForColumn(getRawField(vendor, ['textstre1', 'TEXTSTRE1'], ''), 255),
-    town: truncateForColumn(getRawField(vendor, ['namecity', 'NAMECITY'], ''), 255),
-    plotNo: truncateForColumn(getRawField(vendor, ['textstre2', 'TEXTSTRE2'], ''), 255),
+    streetName: trimString(getRawField(vendor, ['textstre1', 'TEXTSTRE1'], '')),
+    town: trimString(getRawField(vendor, ['namecity', 'NAMECITY'], '')),
+    plotNo: trimString(getRawField(vendor, ['textstre2', 'TEXTSTRE2'], '')),
   };
 }
 
@@ -141,6 +149,7 @@ function normalizeVenbank(bank: SageRawRecord | undefined): VendorBankDetails {
     branchCode: trimString(getRawField(bank, ['brnch', 'BRNCH'], '')),
     sortCode: trimString(getRawField(bank, ['sortcde', 'SORTCDE'], '')),
     swiftCode: trimString(getRawField(bank, ['swiftcde', 'SWIFTCDE'], '')),
+    ...mergeVendorSwiftDetails(bank || {}),
     countryOfOrigin: trimString(getRawField(bank, ['countryOfOrigin', 'COUNTRY_OF_ORIGIN'], '')),
     email: trimString(getRawField(bank, ['email', 'EMAIL'], '')),
     phoneNumber: trimString(getRawField(bank, ['phoneNumber', 'PHONE_NUMBER'], '')),
@@ -208,9 +217,12 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
     const vendorId = trimString(getRawField(vendor, ['vendorid', 'VENDORID'], ''));
     if (!vendorId || existingVenbanks.has(vendorId)) continue;
 
-    const vendorName = truncateForColumn(getRawField(vendor, ['vendname', 'VENDNAME'], ''), 255);
+    const vendorName = trimString(getRawField(vendor, ['vendname', 'VENDNAME'], ''));
+    // Respect records intentionally removed in the portal. A payment refresh
+    // must not resurrect a soft-deleted MySQL vendor bank record.
+    if (await Venbank.findOne({ where: { vendorid: vendorId }, paranoid: false })) continue;
     await Venbank.create({
-      vendorid: truncateForColumn(vendorId, 12),
+      vendorid: vendorId,
       accven: '',
       accname: vendorName,
       bankid: '',
@@ -218,9 +230,9 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
       brnch: '',
       swiftcde: '',
       physicalAddress: buildAddressFromApven(vendor),
-      countryOfOrigin: truncateForColumn(getRawField(vendor, ['codectry', 'CODECTRY'], ''), 100),
-      email: truncateForColumn(getRawField(vendor, ['email1', 'EMAIL1'], ''), 255),
-      phoneNumber: seedPhoneNumber(getRawField(vendor, ['textphon1', 'TEXTPHON1'], '')),
+      countryOfOrigin: trimString(getRawField(vendor, ['codectry', 'CODECTRY'], '')),
+      email: trimString(getRawField(vendor, ['email1', 'EMAIL1'], '')),
+      phoneNumber: trimString(getRawField(vendor, ['textphon1', 'TEXTPHON1'], '')),
     });
     seeded += 1;
   }
@@ -229,32 +241,44 @@ async function seedMissingVenbanksFromApven(vendorIds: string[], existingVenbank
 }
 
 function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, remarks: string): NormalizedPayment {
-  const idbank = String(getRawField(appym, ['idbank', 'IDBANK'], '')).trim();
   const vendorId = String(getRawField(appym, ['idvend', 'IDVEND'], '')).trim();
-  const idrmit = String(getRawField(appym, ['idrmit', 'IDRMIT'], '')).trim();
-  const longserial = String(getRawField(appym, ['longserial', 'LONGSERIAL'], '')).trim();
+  const transactionId = buildSageTransactionId(appym);
+  const amount = Number(getRawField(appym, ['amtpaym', 'AMTPAYM'], 0));
+  const currency = String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim().toUpperCase();
+  const exchangeRateToZmw = Number(getRawField(appym, ['rateexchhc', 'RATEEXCHHC'], 0));
+  const amountZmw = currency === 'ZMW'
+    ? amount
+    : Number.isFinite(exchangeRateToZmw) && exchangeRateToZmw > 0
+      ? Number((amount * exchangeRateToZmw).toFixed(2))
+      : undefined;
 
   return {
+    paymentId: transactionId,
+    transactionId,
     accountNumber: bankDetails.accountNumber,
-    amount: Number(getRawField(appym, ['amtpaym', 'AMTPAYM'], 0)),
-    currency: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
-    currencyCode: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
+    amount,
+    amountZmw,
+    exchangeRateToZmw: Number.isFinite(exchangeRateToZmw) && exchangeRateToZmw > 0 ? exchangeRateToZmw : undefined,
+    currency,
+    currencyCode: currency,
     remarks,
     vendorId,
     accountName: bankDetails.accountName,
     branchCode: bankDetails.branchCode,
     sortCode: bankDetails.sortCode,
     swiftCode: bankDetails.swiftCode,
+    tpin: bankDetails.tpin,
+    purposeCode: bankDetails.purposeCode,
+    sectorCode: bankDetails.sectorCode,
     bankName: bankDetails.bankName,
     email: bankDetails.email,
     phoneNumber: bankDetails.phoneNumber,
     physicalAddress: bankDetails.physicalAddress,
     countryOfOrigin: bankDetails.countryOfOrigin,
-    currencyCde: String(getRawField(appym, ['codecurn', 'CODECURN'], '')).trim(),
+    currencyCde: currency,
     transactionDate: parseNumericDate(getRawField(appym, ['datebus', 'DATEBUS'], getRawField(appym, ['datermit', 'DATERMIT'], 0))),
     transactionType: mapTransactionType(String(getRawField(appym, ['paymcode', 'PAYMCODE'], ''))),
-    transactionReference: String(remarks || idrmit || idbank || longserial).trim(),
-    paymentId: `${idbank || 'UNK'}|${vendorId || 'UNK'}|${idrmit || 'UNK'}|${longserial || 'UNK'}|${String(getRawField(appym, ['datermit', 'DATERMIT'], '')).trim() || 'UNK'}`,
+    transactionReference: transactionId,
     bankDetailsFound: bankDetails.found,
     missingBankFields: bankDetails.missingFields,
     bankDetailsStatus: bankDetails.found ? 'complete' : 'incomplete',
@@ -267,6 +291,7 @@ export async function POST(request: NextRequest) {
 
   try {
     await connectSageDatabase();
+    await connectVendorBankDatabase();
     const body = await request.json();
     const payload = body as PaymentsRequest;
     const startDate = Number(payload.startDate || 0);
@@ -284,6 +309,7 @@ export async function POST(request: NextRequest) {
         'longserial',
         'datermit',
         'amtpaym',
+        'rateexchhc',
         'paymcode',
         'codecurn',
         'datebus',
@@ -314,6 +340,7 @@ export async function POST(request: NextRequest) {
     if (seededVendorCount > 0) {
       venbankByVendor = await loadVenbanksByVendor(vendorIds);
     }
+    const sageSwiftDetails = await loadVendorSwiftDetails(vendorIds);
 
     const aptcrPairs = new Set<string>();
     const aptcrSearch: Array<{ cntbtch: number; cntentr: number }> = [];
@@ -348,6 +375,7 @@ export async function POST(request: NextRequest) {
     const enriched = payments.map((appym) => {
       const vendorId = String(getRawField(appym, ['idvend', 'IDVEND'], '')).trim();
       const bankDetails = normalizeVenbank(venbankByVendor.get(vendorId));
+      Object.assign(bankDetails, mergeVendorSwiftDetails(venbankByVendor.get(vendorId) || {}, sageSwiftDetails.get(vendorId)));
       const cntbtch = getRawField(appym, ['cntbtch', 'CNTBTCH'], '');
       const cntitem = getRawField(appym, ['cntitem', 'CNTITEM'], '');
       const remarks = aptcrMap.get(`${cntbtch}|${cntitem}`) || '';

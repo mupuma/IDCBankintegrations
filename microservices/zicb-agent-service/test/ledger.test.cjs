@@ -56,6 +56,46 @@ test('concurrent submissions reserve one payment and commit one canonical queue 
   assert.equal(f.payments.size, 1); assert.equal(f.queue.size, 1); assert.equal(f.reservations.size, 1);
   assert.equal(JSON.parse([...f.queue.values()][0].paymentPayload).h2hProtocol, 'h2h-v1');
 });
+
+test('operator connection retry requires not-sent authentication proof and preserves the instruction reference', async () => {
+  const f = fixture();
+  await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const work = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(work.queueId, work.leaseToken, { state: 'rejected', notSent: true, notSentReason: 'authentication' });
+  await f.ledger.recoverH2hInstruction(work.queueId, 'retry_connection', { LOCK: { UPDATE: 'UPDATE' } });
+  const next = await f.ledger.claimH2hWork();
+  assert.equal(next.action, 'submit');
+  assert.equal(next.batch.reference, work.batch.reference);
+  assert.equal(f.payments.size, 1);
+});
+
+test('operator status recovery of unknown payments only claims reconciliation', async () => {
+  const f = fixture();
+  await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const work = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(work.queueId, work.leaseToken, { state: 'unknown' });
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
+  await assert.rejects(f.ledger.recoverH2hInstruction(work.queueId, 'retry_connection', transaction), /no recorded proof/);
+  await f.ledger.recoverH2hInstruction(work.queueId, 'check_status', transaction);
+  const next = await f.ledger.claimH2hWork();
+  assert.equal(next.action, 'reconcile'); assert.equal(next.batch.reference, work.batch.reference);
+});
+
+test('active H2H leases cannot be overridden by portal controls', async () => {
+  const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const work = await f.ledger.claimH2hWork();
+  await assert.rejects(f.ledger.recoverH2hInstruction(work.queueId, 'check_status', { LOCK: { UPDATE: 'UPDATE' } }), /still processing/);
+});
+
+test('corrected H2H attempts get new bank and accounting identities while preserving the original', async () => {
+  const f = fixture(); const original = await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const before = JSON.stringify(f.payments.get(original.queueId));
+  const next = await f.ledger.createH2hRecoveryAttempt({ ...f.payment, accountName: 'Corrected' }, 'SOURCE', original.queueId, { LOCK: { UPDATE: 'UPDATE' } });
+  assert.equal(f.payments.size, 2); assert.equal(f.queue.size, 2);
+  assert.equal(JSON.stringify(f.payments.get(original.queueId)), before);
+  const row = f.payments.get(next), doc = JSON.parse(row.document);
+  assert.notEqual(row.reference, original.reference); assert.notEqual(row.prcn, original.prcn_number);
+  assert.equal(doc.payment.paymentId, f.payment.paymentId); assert.equal(doc.payment.amount, f.payment.amount);
+  assert.equal(doc.recoveryOf, original.queueId);
+});
 test('expired submission lease becomes unknown and never claims another send', async () => {
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE');
   const first = await f.ledger.claimH2hWork(); assert.equal(first.action, 'submit');
@@ -101,4 +141,23 @@ test('accounting failure preserves paid state and retries accounting with canoni
   await f.ledger.withAccountingLease(first.queueId, first.leaseToken, async () => { throw new Error('Sage offline'); });
   const row = f.payments.get(send.queueId); assert.equal(row.state, 'paid'); assert.equal(JSON.parse(row.document).accounting, 'retry');
   row.nextRun = new Date(0); assert.equal((await f.ledger.claimH2hWork()).action, 'accounting');
+});
+
+test('operator recovery of a paid item retries accounting only and refuses a second bank send', async () => {
+  const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const send = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(send.queueId, send.leaseToken, { state: 'accepted' });
+  await f.ledger.receiveH2hCallback('RTGS', { reference: send.batch.reference, prcn_number: send.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK-PAID' });
+  const accounting = await f.ledger.claimH2hWork();
+  await f.ledger.withAccountingLease(accounting.queueId, accounting.leaseToken, async () => ({ posted: false, review: true, error: 'Cashbook configuration needs review' }));
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
+  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'retry_connection', transaction));
+  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'check_status', transaction));
+  await f.ledger.recoverH2hInstruction(send.queueId, 'retry_accounting', transaction);
+  const next = await f.ledger.claimH2hWork();
+  assert.equal(next.action, 'accounting');
+  assert.equal(next.batch.reference, send.batch.reference);
+  await f.ledger.withAccountingLease(next.queueId, next.leaseToken, async () => ({ posted: true }));
+  assert.equal(f.payments.get(send.queueId).state, 'paid');
+  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'retry_accounting', transaction));
 });

@@ -3,20 +3,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { isAuthError, requirePermission } from '@/app/lib/rbac';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import { logAuditEvent } from '@/app/lib/auditLog';
-import { connectSageDatabase } from '@/app/lib/sageDb';
-import { Venbank } from '@/app/models/sage_entities/Venbank';
+import { connectVendorBankDatabase } from '@/app/lib/vendorBankStore';
+import { VendorBankDetail as Venbank } from '@/app/models/internal/VendorBankDetail';
+import { validateVendorSwiftDetails } from '@/app/lib/vendorSwiftValidation';
+import { normalizeVendorBankRecord } from '@/app/lib/vendorBankRead';
 
 function normalizeVenbank(bank: any) {
-  const record = bank.toJSON ? bank.toJSON() : bank;
-  const physicalAddress = record.physicalAddress;
-
-  return {
-    ...record,
-    physicalAddress:
-      typeof physicalAddress === 'string' && physicalAddress
-        ? JSON.parse(physicalAddress)
-        : physicalAddress || null,
-  };
+  return normalizeVendorBankRecord(bank);
 }
 
 export async function PUT(
@@ -27,18 +20,26 @@ export async function PUT(
   if (isAuthError(auth)) return auth;
   
   try {
-    await connectSageDatabase();
+    await connectVendorBankDatabase();
     const { id } = await params;
-    const bank = await Venbank.findByPk(id);
+    if (!/^portal-[1-9]\d*$/.test(id)) return NextResponse.json({ error: 'Refresh Vendor Bank Details before editing. This request uses a legacy Sage record ID.' }, { status: 409 });
+    const bank = await Venbank.findByPk(id.slice(7));
     if (!bank) {
       return NextResponse.json({ error: 'Bank record not found' }, { status: 404 });
     }
     
     const body = await request.json();
-    await bank.update(body);
+    if (body?.vendorid !== undefined && body.vendorid !== bank.vendorid) return NextResponse.json({ error: 'The vendor on this record has changed. Refresh Vendor Bank Details.' }, { status: 409 });
+    const errors = validateVendorSwiftDetails(body);
+    if (errors.length) return NextResponse.json({ error: errors.join('; ') }, { status: 400 });
+    for (const field of ['tpin', 'purposeCode', 'sectorCode']) {
+      if (body[field] !== undefined) body[field] = body[field]?.trim() || null;
+    }
+    const fields = ['vendorid', 'accven', 'accname', 'bankid', 'sortcde', 'brnch', 'swiftcde', 'tpin', 'purposeCode', 'sectorCode', 'physicalAddress', 'countryOfOrigin', 'email', 'phoneNumber'];
+    await bank.update(Object.fromEntries(Object.entries(body).filter(([key]) => fields.includes(key))));
     
     // Fetch updated record
-    const updatedBank = await Venbank.findByPk(id);
+    const updatedBank = await Venbank.findByPk(id.slice(7));
 
     await logAuditEvent({
       userId: auth.id,
@@ -69,9 +70,10 @@ export async function DELETE(
   if (isAuthError(auth)) return auth;
   
   try {
-    await connectSageDatabase();
+    await connectVendorBankDatabase();
     const { id } = await params;
-    const bank = await Venbank.findByPk(id);
+    if (!/^portal-[1-9]\d*$/.test(id)) return NextResponse.json({ error: 'Refresh Vendor Bank Details before deleting. This request uses a legacy Sage record ID.' }, { status: 409 });
+    const bank = await Venbank.findByPk(id.slice(7));
     if (!bank) {
       return NextResponse.json({ error: 'Bank record not found' }, { status: 404 });
     }

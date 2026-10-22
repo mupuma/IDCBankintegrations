@@ -1,6 +1,6 @@
 export type Channel = 'INTERNAL' | 'RTGS' | 'DDACC';
 export type State = 'queued' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'failed' | 'rejected' | 'needs_review';
-export type Outcome = { state: State; error?: string; bankRef?: string; rawStatus?: string; details?: unknown };
+export type Outcome = { state: State; error?: string; bankRef?: string; rawStatus?: string; details?: unknown; notSent?: boolean; notSentReason?: 'authentication' | 'validation' };
 export type Batch = { reference: string; count: number; region_code: string; total_amount: number; transactions: Array<Record<string, any>> };
 export const CHANNELS: Channel[];
 export const PATHS: Record<Channel, string>;

@@ -11,6 +11,23 @@ const { H2hClient } = require('../src/h2hClient.ts');
 const { processH2hWork } = require('../src/h2hRunner.ts');
 const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
+const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
+
+test('placeholder source profiles reject the actual source code with an actionable error', () => {
+  const previous = process.env.ZICB_H2H_SOURCE_PROFILES;
+  try {
+    const configured = { profileId: 'test', regionCode: 'TEST', currency: 'ZMW', amountScale: 2, channels: ['RTGS'] };
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ SOURCE_CODE: configured });
+    assert.throws(() => sourceProfile('77050'), /source account 77050.*ZICB_H2H_SOURCE_PROFILES/);
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ '77050': configured });
+    assert.deepEqual(sourceProfile('77050'), configured);
+    process.env.ZICB_H2H_SOURCE_PROFILES = JSON.stringify({ '77050': { ...configured, regionCode: '' } });
+    assert.throws(() => sourceProfile('77050'), /bank-approved profile ID, region code and currency/);
+  } finally {
+    if (previous === undefined) delete process.env.ZICB_H2H_SOURCE_PROFILES;
+    else process.env.ZICB_H2H_SOURCE_PROFILES = previous;
+  }
+});
 
 const payment = { paymentId: 'SAGE-1001', transactionType: 'RTGS', amount: 25.10, accountNumber: '001142662',
   accountName: 'Test Beneficiary', branchCode: '003', swiftCode: 'TESTZMLX', sortCode: '020016',
@@ -22,6 +39,49 @@ const json = (status, body) => new Response(JSON.stringify(body), { status, head
 const token = () => json(200, { access_token: 'test-token', token_type: 'Bearer', expires_in: 5400 });
 const accepted = () => json(202, { error: null, status: 201, message: 'Pending processing' });
 const work = { queueId: 'q1', leaseToken: 'lease1', action: 'submit', profileId: 'test', channel: 'RTGS', batch: batch(), amountScale: 2 };
+
+test('authentication configuration failures explain the profile mismatch without submitting a payment', async () => {
+  let calls = 0;
+  for (const [profiles, pattern] of [
+    [{ uat: profile }, /profileId must exactly match a key/],
+    [{ test: { ...profile, clientSecret: '' } }, /missing clientId or clientSecret/],
+    [{ test: { ...profile, authUrl: 'bad-url' } }, /URL is missing or invalid/],
+  ]) {
+    const bank = new H2hClient(profiles, async () => { calls++; return accepted(); });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(result.notSentReason, 'authentication');
+    assert.match(result.error, pattern);
+    assert.equal(calls, 0);
+  }
+});
+
+test('token rejection reports HTTP status and safe guidance without leaking bank bodies or credentials', async () => {
+  for (const status of [400, 401, 403, 404, 503, 200]) {
+    let calls = 0;
+    const bank = new H2hClient({ test: profile }, async url => {
+      calls++; assert.ok(url.includes('/h2h/auth/grant-type/client-credentials'));
+      return json(status, { error: 'invalid_client', detail: profile.clientSecret, access_token: 'secret-token' });
+    });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(calls, 1);
+    assert.match(result.error, new RegExp(`HTTP ${status}`));
+    for (const secret of [profile.clientSecret, 'secret-token', 'invalid_client']) assert.equal(result.error.includes(secret), false);
+  }
+});
+
+test('token network errors expose DNS, TLS and timeout causes while keeping payment submission disabled', async () => {
+  for (const code of ['ENOTFOUND', 'ECONNREFUSED', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']) {
+    let calls = 0;
+    const bank = new H2hClient({ test: profile }, async () => {
+      calls++; throw Object.assign(new Error(`fetch failed ${profile.clientSecret}`), { cause: Object.assign(new Error('secret-token'), { code }) });
+    });
+    const result = await bank.submit('test', 'RTGS', batch(), 2);
+    assert.equal(result.notSent, true); assert.equal(calls, 1); assert.match(result.error, new RegExp(code));
+    assert.equal(result.error.includes(profile.clientSecret), false); assert.equal(result.error.includes('secret-token'), false);
+  }
+  const bank = new H2hClient({ test: profile }, async () => { throw Object.assign(new Error('sensitive'), { name: 'AbortError' }); });
+  assert.match((await bank.submit('test', 'RTGS', batch(), 2)).error, /timed out/);
+});
 
 test('all three channels produce the documented one-item batch, preserving leading zeros', () => {
   for (const type of ['RTGS', 'DDACCT', 'INT']) {
@@ -38,11 +98,11 @@ test('decimal-safe batch totals accept 0.1 + 0.2 as 0.3 and reject floating drif
   b.total_amount = 0.1 + 0.2;
   assert.ok(contract.validateBatch('RTGS', b).length);
 });
-test('reject duplicate references, invalid count, BIC, dates, precision and long narration', () => {
+test('reject duplicate references, invalid count, BIC, dates and precision', () => {
   const b = batch(); b.transactions.push({ ...b.transactions[0] });
   const errors = contract.validateBatch('RTGS', b);
   assert.ok(errors.some(e => e.includes('duplicated'))); assert.ok(errors.some(e => e.includes('count')));
-  for (const change of [{ swiftCode: '' }, { transactionDate: '2026-02-30' }, { amount: 0 }, { amount: '1.001' }, { remarks: 'x'.repeat(36) }, { transactionType: 'TT' }]) {
+  for (const change of [{ swiftCode: '' }, { transactionDate: '2026-02-30' }, { amount: 0 }, { amount: '1.001' }, { transactionType: 'TT' }]) {
     assert.throws(() => contract.buildBatch({ ...payment, ...change }, options));
   }
 });

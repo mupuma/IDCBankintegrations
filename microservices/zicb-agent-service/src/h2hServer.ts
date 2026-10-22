@@ -11,7 +11,6 @@ export function startH2hService() {
   const app = express();
   app.use(express.json());
   app.get('/health', (_req, res) => res.json({ status: 'ok', service: 'zicb-h2h-agent', protocol: 'h2h-v1' }));
-  app.post('/payments', (_req, res) => res.status(410).json({ error: 'Submit H2H payments through the portal ledger' }));
   for (const route of callbackRoutes()) {
     app.post(route.path, async (req, res) => {
       const result = await handleBankCallback(route, req.headers, req.body, portal);
