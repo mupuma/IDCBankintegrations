@@ -33,15 +33,32 @@ test('Sage connection authenticates without schema SQL even when the old sync fl
     await db.default.query('UPDATE CBBCTL SET CNTBTCH = 2');
     await db.default.query('COMMIT TRANSACTION');
     assert.equal(calls.length, 5);
+    await db.default.query(policy.SAGE_CASHBOOK_LOCK_SQL);
+    assert.equal(calls.length, 6);
     process.env.SAGE_ALLOW_CASHBOOK_WRITES = 'false';
     assert.throws(() => db.default.query('INSERT INTO CBBTHD (BTCHENTRY) VALUES (1)'), /read-only/);
-    assert.equal(calls.length, 5);
+    assert.throws(() => db.default.query(policy.SAGE_CASHBOOK_LOCK_SQL), /read-only/);
+    assert.equal(calls.length, 6);
   } finally {
     if (previous === undefined) delete process.env.SAGE_SYNC_VENBANK_SCHEMA;
     else process.env.SAGE_SYNC_VENBANK_SCHEMA = previous;
     if (previousCashbook === undefined) delete process.env.SAGE_ALLOW_CASHBOOK_WRITES;
     else process.env.SAGE_ALLOW_CASHBOOK_WRITES = previousCashbook;
   }
+});
+
+test('cashbook locking exception permits only the exact coordination query', () => {
+  const sql = policy.SAGE_CASHBOOK_LOCK_SQL;
+  assert.doesNotThrow(() => policy.assertSageQueryAllowed(sql));
+  assert.doesNotThrow(() => policy.assertSageQueryAllowed({ query: sql }));
+  assert.throws(() => policy.assertSageQueryAllowed(sql, false), /read-only/);
+  for (const unsafe of [
+    sql + ' ALTER TABLE VENBANK ADD X INT;',
+    sql + ' EXEC sp_executesql @query;',
+    sql.replace('IDC_CASHBOOK_BATCH', 'OTHER_RESOURCE'),
+    sql.replace("'Transaction'", "'Session'"),
+    'EXEC sp_getapplock @Resource = @userInput;',
+  ]) assert.throws(() => policy.assertSageQueryAllowed(unsafe), /changes are disabled/);
 });
 
 test('Sage query policy blocks schema changes, dynamic execution and writes, including SELECT INTO', () => {

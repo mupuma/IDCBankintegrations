@@ -1,5 +1,6 @@
 import { Op, Transaction } from 'sequelize';
 import sageSequelize, { connectSageDatabase } from '@/app/lib/sageDb';
+import { SAGE_CASHBOOK_LOCK_SQL } from '@/app/lib/sageQueryPolicy';
 import { connectDatabase } from '@/app/lib/db';
 import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
 import { ProcessedTransaction } from '@/app/models/internal/Processed_transactions';
@@ -969,7 +970,7 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
     // Serializes batch allocation across portal processes. The lock is released
     // automatically on commit/rollback, including after a lost connection.
     const [rows] = await sageSequelize.query(
-      "DECLARE @lockResult int; EXEC @lockResult = sp_getapplock @Resource = 'IDC_CASHBOOK_BATCH', @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = 60000; SELECT @lockResult AS lockResult;",
+      SAGE_CASHBOOK_LOCK_SQL,
       { transaction },
     );
     const lockResult = Array.isArray(rows) && rows.length ? Number((rows[0] as any).lockResult) : NaN;
