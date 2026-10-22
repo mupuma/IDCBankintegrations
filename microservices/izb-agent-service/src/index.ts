@@ -19,7 +19,25 @@ const AGENT_API_KEY = process.env.AGENT_API_KEY || null; // key banks must use w
 const port = Number(process.env.PORT || 4101);
 
 app.use(cors());
+// Register before JSON parsing so malformed requests are visible too.
+app.use((req, res, next) => {
+  const startedAt = Date.now();
+  const endpoint = ['/api/v1/postCBTxn', '/api/v1/payments/by_date', '/health'].includes(req.path) ? req.path : 'unmatched';
+  console.log(JSON.stringify({ app: 'izb-agent', event: 'http.request', at: new Date().toISOString(), method: req.method, endpoint }));
+  res.on('finish', () => {
+    console.log(JSON.stringify({ app: 'izb-agent', event: 'http.response', at: new Date().toISOString(), method: req.method, endpoint, status: res.statusCode, durationMs: Date.now() - startedAt }));
+  });
+  next();
+});
 app.use(express.json());
+app.use((err: any, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err?.type === 'entity.parse.failed' || err?.type === 'entity.too.large') {
+    const status = err.type === 'entity.too.large' ? 413 : 400;
+    console.warn(JSON.stringify({ app: 'izb-agent', event: 'http.body.rejected', at: new Date().toISOString(), status, reason: err.type }));
+    return res.status(status).json({ error: status === 413 ? 'Request body too large' : 'Invalid JSON payload' });
+  }
+  next(err);
+});
 
 function getClientIp(req: express.Request) {
   const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0]?.trim();
@@ -204,14 +222,25 @@ app.post('/api/v1/postCBTxn', proxyPostCashbook);
 
 
 async function proxyPostCashbook(req: express.Request, res: express.Response) {
+  // Only log the generated IDC reference, never bank details or credentials.
+  const reference = req.body?.transactionId;
+  const transactionId = typeof reference === 'string' && /^IDC[A-Z0-9]{9}$/.test(reference) ? reference : undefined;
+  const log = (event: string, details: Record<string, unknown> = {}) => {
+    console.log(JSON.stringify({ app: 'izb-agent', event: `cashbook.${event}`, at: new Date().toISOString(), transactionId, ...details }));
+  };
   try {
     const providedKey = String(req.headers['x-api-key'] || '');
     if (!AGENT_API_KEY || providedKey !== AGENT_API_KEY) {
+      log('rejected', { status: 401, reason: 'invalid_agent_api_key' });
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    if (!APP_API_URL) return res.status(500).json({ error: 'Portal APP_API_URL not configured' });
+    if (!APP_API_URL) {
+      log('rejected', { status: 500, reason: 'portal_url_not_configured' });
+      return res.status(500).json({ error: 'Portal APP_API_URL not configured' });
+    }
 
+    log('forwarding');
     const resp = await fetch(`${APP_API_URL}/api/v1/postCBTxn`, {
       method: 'POST',
       headers: {
@@ -224,6 +253,7 @@ async function proxyPostCashbook(req: express.Request, res: express.Response) {
     const text = await resp.text();
     let data: unknown = text;
     try { data = text ? JSON.parse(text) : undefined; } catch {}
+    log('portal.response', { status: resp.status, reason: resp.status === 400 ? 'portal_rejected_payload' : resp.ok ? 'accepted' : 'portal_rejected_request' });
 
     if (typeof data === 'object' && data !== null) {
       return res.status(resp.status).json(data);
@@ -231,7 +261,7 @@ async function proxyPostCashbook(req: express.Request, res: express.Response) {
 
     return res.status(resp.status).send(text);
   } catch (err: any) {
-    console.error('Cashbook proxy error', err);
+    log('failed', { status: 500, reason: 'portal_request_failed' });
     return res.status(500).json({ error: String(err) });
   }
 }
