@@ -1,13 +1,15 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
+import IzbCashbookRecoveryDialog from '@/app/components/IzbCashbookRecoveryDialog';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
+import { QUEUE_SEARCH_FIELDS, type QueueSearchField } from '@/app/lib/queueSearch';
 
 const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 
@@ -28,7 +30,7 @@ function getQueuePaymentSummary(item: BankQueueItem) {
     isBulk,
     reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionId ?? payment.transactionReference ?? item.paymentId),
     description: isBulk ? String(request.description ?? request.narration ?? '') : String(payment.remarks ?? payment.description ?? ''),
-    vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : String(payment.vendorId ?? payment.accountName ?? 'N/A'),
+    vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : [payment.vendorId, payment.accountName].filter(Boolean).join(' · ') || 'N/A',
     amount: Number.isFinite(amount) ? amount : 0,
     currency: isBulk ? String(request.currency ?? '') : String(payment.currency ?? payment.currencyCode ?? ''),
     transactionType: isBulk ? String(meta.transactionType ?? payment.service).replace('ZANACO_BULK_', '') : String(payment.transactionType ?? 'N/A'),
@@ -50,6 +52,7 @@ function getQueueResponseDetails(item: BankQueueItem) {
 export default function PaymentQueuesPage() {
   const { hasPermission } = usePortalUser();
   const [recoveryItem, setRecoveryItem] = useState<BankQueueItem | null>(null);
+  const [cashbookItem, setCashbookItem] = useState<BankQueueItem | null>(null);
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -57,6 +60,10 @@ export default function PaymentQueuesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [total, setTotal] = useState<number | null>(null);
+  const [searchField, setSearchField] = useState<QueueSearchField>('all');
+  const [searchText, setSearchText] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState<{ field: QueueSearchField; text: string }>({ field: 'all', text: '' });
+  const requestVersion = useRef(0);
 
   const filteredItems = useMemo(
     () => (selectedBankTab === 'ALL' ? items : items.filter((item) => item.bankCode === selectedBankTab)),
@@ -69,6 +76,7 @@ export default function PaymentQueuesPage() {
   };
 
   const loadQueueItems = useCallback(async (): Promise<BankQueueItem[]> => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
 
@@ -77,10 +85,15 @@ export default function PaymentQueuesPage() {
       if (selectedBankTab !== 'ALL') params.set('bankCode', selectedBankTab);
       params.set('page', String(page));
       params.set('pageSize', String(pageSize));
+      if (appliedSearch.text) {
+        params.set('searchField', appliedSearch.field);
+        params.set('search', appliedSearch.text);
+      }
 
       const url = `/api/v1/posted_payments?${params.toString()}`;
       const response = await fetch(url);
       const data = await response.json();
+      if (version !== requestVersion.current) return [];
 
       if (!response.ok || !data?.success) {
         throw new Error(data?.error || 'Could not load queue items');
@@ -91,17 +104,18 @@ export default function PaymentQueuesPage() {
       setTotal(typeof data.total === 'number' ? data.total : null);
       return nextItems;
     } catch (err: any) {
-      setError(err?.message || 'Unable to load queue items');
+      if (version === requestVersion.current) setError(err?.message || 'Unable to load queue items');
       return [];
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [selectedBankTab, page, pageSize]);
+  }, [selectedBankTab, page, pageSize, appliedSearch]);
 
   const { refresh: refreshQueueItems } = useAdaptiveQueuePolling(loadQueueItems, [
     selectedBankTab,
     page,
     pageSize,
+    appliedSearch,
   ]);
 
   const statusCounts = useMemo(() => {
@@ -160,6 +174,20 @@ export default function PaymentQueuesPage() {
           </div>
         </div>
 
+        <form onSubmit={event => { event.preventDefault(); setPage(1); setAppliedSearch({ field: searchField, text: searchText.trim() }); }} className="mt-6 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-end">
+          <label className="text-sm font-semibold text-slate-700">Search by
+            <select value={searchField} onChange={event => setSearchField(event.target.value as QueueSearchField)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:w-56">
+              {QUEUE_SEARCH_FIELDS.map(field => <option key={field.value} value={field.value}>{field.label}</option>)}
+            </select>
+          </label>
+          <label className="flex-1 text-sm font-semibold text-slate-700">Search payments
+            <input type="search" value={searchText} onChange={event => setSearchText(event.target.value)} maxLength={200} placeholder={searchField === 'transactionType' ? 'RTGS, DDACC, INT, SWIFT...' : searchField === 'vendor' ? 'Vendor ID or name...' : searchField === 'reference' ? 'Payment or bank reference...' : 'Enter search value...'} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal" />
+          </label>
+          <button type="submit" className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Search</button>
+          <button type="button" onClick={() => { setSearchField('all'); setSearchText(''); setPage(1); setAppliedSearch({ field: 'all', text: '' }); }} className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">Clear</button>
+        </form>
+        {appliedSearch.text ? <p role="status" className="mt-3 text-sm text-slate-600">{total ?? 0} matching payments for {QUEUE_SEARCH_FIELDS.find(field => field.value === appliedSearch.field)?.label.toLowerCase()}: “{appliedSearch.text}”</p> : null}
+
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
           {(['queued', 'pulled', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
             <div key={status} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -207,7 +235,7 @@ export default function PaymentQueuesPage() {
               ) : filteredItems.length === 0 ? (
                 <tr>
                   <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-500">
-                    {loading ? 'Loading queue items...' : 'No queue transactions found.'}
+                    {loading ? 'Loading queue items...' : appliedSearch.text ? 'No payments match this search.' : 'No queue transactions found.'}
                   </td>
                 </tr>
               ) : (
@@ -246,6 +274,7 @@ export default function PaymentQueuesPage() {
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
                     <td className="px-5 py-4 text-sm">
+                      {item.bankCode === 'IZB' ? <button type="button" onClick={() => setCashbookItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Cashbook / retry</button> : null}
                       {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
                     </td>
                   </tr>
@@ -265,6 +294,9 @@ export default function PaymentQueuesPage() {
       {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
         canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
         onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
+      {cashbookItem ? <IzbCashbookRecoveryDialog key={cashbookItem.id} item={cashbookItem}
+        canRetry={hasPermission(PERMISSIONS.CASHBOOK_POST)}
+        onClose={() => setCashbookItem(null)} onChange={() => void refreshQueueItems()} /> : null}
     </div>
   );
 }

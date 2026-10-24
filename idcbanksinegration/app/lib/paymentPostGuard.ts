@@ -45,6 +45,8 @@ export async function findExistingPaymentPost(
         { status: { [Op.in]: ACTIVE_QUEUE_STATUSES } },
         // ZICB failure is not permission to create a new transfer identity.
         { bankCode: 'ZICB' },
+        // A failed cashbook notification is not proof of a failed IZB transfer.
+        { bankCode: 'IZB' },
       ],
     },
     order: [['updated_at', 'DESC']],

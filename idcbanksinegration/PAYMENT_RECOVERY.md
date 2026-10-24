@@ -1,4 +1,31 @@
-# Zanaco and ZICB payment recovery
+# IZB, Zanaco and ZICB payment recovery
+
+## Immediate IZB cashbook retry
+
+Open **Bank Queue Processing**, choose the IZB payment, and select
+**Cashbook / retry**. After fixing the reported issue, enter a reason and use
+**Retry cashbook now**. The portal immediately reprocesses the saved failed
+bank notification; it does not wait for IZB to send it again. No additional
+agent configuration or SQL Server schema change is required.
+
+Viewing requires `queues:read`; retrying requires `cashbook:post` (administrator
+and operator roles). Requests and outcomes are recorded in Audit Logs.
+Only a single matching, valid saved notification in `failed` state is eligible.
+Completed, pending, processing, missing, ambiguous or malformed notifications
+cannot be retried through this control. For missing notifications, ask IZB to
+resend the original cashbook notification, preserving the transaction ID.
+
+Retries use the stored amount, references and accounting fields without edits.
+Concurrent retries atomically claim the failed receipt. All cashbook writes
+check the original Sage reference inside the existing transaction-scoped lock,
+so an already-written posting is reconciled rather than inserted again.
+Failed IZB queue entries cannot be requeued through ordinary payment posting:
+a cashbook error does not prove that the bank transfer failed.
+
+The existing cashbook implementation uses the current date and accounting
+period; it does not backdate a historical payment. If a portal process stops
+while a receipt is pending/processing, reconcile that receipt before changing
+its state; this control does not override an in-progress posting.
 
 ## Deployment
 

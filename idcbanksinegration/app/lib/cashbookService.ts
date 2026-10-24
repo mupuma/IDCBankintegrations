@@ -744,7 +744,6 @@ async function markPaymentQueueFromCashbook(
         },
       },
       order: [['updatedAt', 'DESC']],
-      limit: 200,
     });
 
     const matched = candidates.filter((record) => queuePayloadMatchesReceipt(record, identifiers));
@@ -833,7 +832,7 @@ const ACTIVE_LOCAL_RECEIPT_STATUSES = new Set(['pending', 'processing', 'success
 async function persistLocalCashbookReceipt(
   receipt: ReceiptRequest,
   existingReceipt: CashbookReceipt | null,
-): Promise<CashbookReceipt> {
+): Promise<CashbookReceipt | null> {
   const payload = {
     bankCode: receipt.bankCode,
     description: safeString(receipt.description, 255),
@@ -847,7 +846,13 @@ async function persistLocalCashbookReceipt(
   };
 
   if (existingReceipt) {
-    await existingReceipt.update(payload);
+    // Claim a failed notification atomically, including when a bank callback
+    // races an operator retry or another portal process.
+    if (existingReceipt.status !== 'failed') return null;
+    const [claimed] = await CashbookReceipt.update(payload, {
+      where: { id: existingReceipt.id, status: 'failed', bankCode: receipt.bankCode },
+    });
+    if (!claimed) return null;
     return existingReceipt;
   }
 
@@ -862,18 +867,15 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   await connectDatabase();
 
   const existingProcessed = await ProcessedTransaction.findByPk(receipt.transactionId);
-  if (existingProcessed?.statusCode === 200) {
-    await markPaymentQueueFromCashbook(
-      receipt,
-      'success',
-      existingProcessed.statusMessage || 'Cashbook transaction already processed',
-    );
-    return { success: false, alreadyProcessed: true };
-  }
-
   const existingReceipt = await CashbookReceipt.findOne({
     where: { transactionId: receipt.transactionId },
   });
+  if (existingProcessed?.statusCode === 200) {
+    const message = existingProcessed.statusMessage || 'Cashbook transaction already processed';
+    if (existingReceipt) await finalizeLocalCashbookSuccess(existingReceipt, receipt, message);
+    else await markPaymentQueueFromCashbook(receipt, 'success', message);
+    return { success: false, alreadyProcessed: true };
+  }
 
   if (existingReceipt && ACTIVE_LOCAL_RECEIPT_STATUSES.has(existingReceipt.status)) {
     if (existingReceipt.status === 'success') {
@@ -887,6 +889,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   }
 
   const localReceipt = await persistLocalCashbookReceipt(receipt, existingReceipt);
+  if (!localReceipt) return { success: false, alreadyProcessed: true, receiptId: existingReceipt?.id };
 
   let sagePosted = false;
   let batchId = '';
@@ -896,18 +899,14 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
 
     if (await existingCashbookReference(sageCashbookReference(receipt))) {
       const message = 'Already Reported';
-      await localReceipt.update({ status: 'failed', statusMessage: message, processedDate: new Date() });
-      try {
-        await updateProcessedTransaction(receipt, 409, message);
-      } catch (error) {
-        console.error('Failed to record duplicate cashbook transaction', error);
-      }
-      await markPaymentQueueFromCashbook(receipt, 'success', message);
+      await finalizeLocalCashbookSuccess(localReceipt, receipt, message);
       return { success: false, alreadyProcessed: true, receiptId: localReceipt.id };
     }
 
     await localReceipt.update({ status: 'processing' });
 
+    // Check the original reference under the same lock as the Sage writes.
+    // A concurrent notification or a lost commit response cannot add it twice.
     const written = await writeCashbookAtomically(receipt);
     batchId = written.batchId;
     sagePosted = true;
@@ -965,7 +964,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   }
 }
 
-async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = false) {
+async function writeCashbookAtomically(receipt: ReceiptRequest) {
   return sageSequelize.transaction(async transaction => {
     // Serializes batch allocation across portal processes. The lock is released
     // automatically on commit/rollback, including after a lost connection.
@@ -976,7 +975,7 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
     const lockResult = Array.isArray(rows) && rows.length ? Number((rows[0] as any).lockResult) : NaN;
     if (!Number.isFinite(lockResult) || lockResult < 0) throw new Error('Unable to acquire Sage cashbook posting lock');
     const reference = sageCashbookReference(receipt);
-    const existing = deduplicate ? await Cbbthd.findOne({ where: { reference }, transaction }) : null;
+    const existing = await Cbbthd.findOne({ where: { reference }, transaction });
     if (existing) return { batchId: String(existing.get('batchid')), alreadyPosted: true };
     const batchId = await getNextBatchId(transaction);
     await insertCbbctl(receipt, batchId, transaction);
@@ -991,7 +990,7 @@ export async function postConfirmedH2hCashbook(receipt: ReceiptRequest) {
   // inside the same Sage transaction as all writes, so a lost commit response
   // can be recovered without creating another cashbook entry.
   await connectSageDatabase();
-  const result = await writeCashbookAtomically(receipt, true);
+  const result = await writeCashbookAtomically(receipt);
   await connectDatabase();
   await updateProcessedTransaction(receipt, 200, `Cashbook transaction inserted into Sage batch ${result.batchId}`);
   return result;

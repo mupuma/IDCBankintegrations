@@ -18,7 +18,7 @@ function load(relative, mocks = {}) {
 }
 const builders = load('idcbanksinegration/app/lib/banks/payloadBuilders.ts');
 
-function routeFixture({ source = { accountNumber: '1234567890123', transit: '001', name: 'IDC' }, retry = false } = {}) {
+function routeFixture({ source = { accountNumber: '1234567890123', transit: '001', name: 'IDC' }, retry = false, savedRecords = [], memoryItems = [] } = {}) {
   const records = [], updates = [];
   const queueRecord = { queueId: 'old-queue', bankCode: 'ZANACO', status: 'failed' };
   let reservations = 0;
@@ -28,7 +28,8 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
     '../../../lib/rbac': { requirePermission: async () => ({ id: 1, username: 'tester' }), isAuthError: () => false },
     '../../../lib/permissions': { PERMISSIONS: { PAYMENTS_POST: 'post' } },
     '../../../lib/auditLog': { logAuditEvent: async () => {} },
-    '../../../lib/bankQueue': { enqueuePayment: (bankCode, payment, id) => ({ id, bankCode, payment, status: 'queued', attempts: 0 }) },
+    '../../../lib/bankQueue': { enqueuePayment: (bankCode, payment, id) => ({ id, bankCode, payment, status: 'queued', attempts: 0 }),
+      getAllQueueItems: () => memoryItems, getQueueItemsByBank: bank => memoryItems.filter(item => item.bankCode === bank) },
     '../../../lib/db': { connectDatabase: async () => {}, getSequelize: async () => ({ transaction: fn => fn({}) }) },
     '@/app/models/internal/ZicbH2hPayment': { PaymentDispatchReservation: {
       create: async () => {
@@ -39,6 +40,7 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
     '../../../models/internal/PaymentQueueRequest': { PaymentQueueRequest: {
       create: async record => records.push(record),
       findOne: async () => queueRecord,
+      findAll: async ({ where = {} } = {}) => savedRecords.filter(row => Object.entries(where).every(([key, value]) => row[key] === value)),
       update: async record => { updates.push(record); return [1]; },
     } },
     '@/app/lib/sourceAccounts': { resolveSourceBank: async () => source },
@@ -48,8 +50,10 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
     '@/app/lib/zicb/ledger': { LedgerError: class extends Error {} },
     '@/app/lib/zicb/config': {},
     '@/app/lib/terminalLog': { terminalLog: () => {}, terminalError: () => {} },
+    '@/app/lib/queueSearch': load('idcbanksinegration/app/lib/queueSearch.ts'),
   });
-  return { records, updates, post: body => route.POST({ json: async () => body }) };
+  return { records, updates, post: body => route.POST({ json: async () => body }),
+    get: query => route.GET({ nextUrl: new URL(`http://portal/api/v1/posted_payments?${query}`), cookies: { get: () => ({ value: 'session' }) }, headers: { get: () => null } }) };
 }
 
 module.exports = { load, builders, routeFixture };

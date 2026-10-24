@@ -18,7 +18,7 @@ const BANK_TRANSACTION_TYPES: Record<BankCode, PaymentsResponse['transactionType
 const BANKS_WITH_BULK_UPLOAD = new Set<BankCode>(['ZANACO']);
 const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
 const BANK_PROCESSED_STATUSES = new Set(['success', 'paid']);
-const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || bank === 'ZICB';
+const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || ['ZICB', 'IZB'].includes(bank);
 const IZB_DDACC_LIMIT = 500000;
 const IZB_RULE_HELP = [
   'INT: internal transfer to an Indo Zambia Bank beneficiary account.',
