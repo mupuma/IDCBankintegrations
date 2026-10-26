@@ -25,6 +25,8 @@ const ACTION_LABELS: Record<string, string> = {
   BANK_DETAILS_UPDATED: 'Bank details updated',
   BANK_DETAILS_DELETED: 'Bank details deleted',
   CASHBOOK_POSTED: 'Cashbook posted',
+  BANK_INTEGRATION_CREATED: 'Bank integration registered',
+  BANK_INTEGRATION_UPDATED: 'Bank integration updated',
   CASHBOOK_RETRY_REQUESTED: 'Cashbook retry requested',
   USER_CREATED: 'User created',
   USER_UPDATED: 'User updated',

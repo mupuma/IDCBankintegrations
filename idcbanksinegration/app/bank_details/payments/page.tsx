@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { paymentErrors } from '../../../../shared/zicb-h2h';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
+import { useBankIntegrations } from '@/app/lib/useBankIntegrations';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPaymentSelection } from '@/app/lib/banks/payloadBuilders';
 
-const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT', 'TT'];
 const BANK_TRANSACTION_TYPES: Record<BankCode, PaymentsResponse['transactionType'][]> = {
   IZB: ['INT', 'DDACCT', 'RTGS'],
@@ -463,6 +463,9 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
 }
 
 export default function PaymentQueueDashboard() {
+  const { banks, error: bankRegistryError, loading: bankRegistryLoading } = useBankIntegrations();
+  const BANK_CODES = useMemo(() => banks.filter(bank => bank.enabled).map(bank => bank.bankCode), [banks]);
+  const bankLabel = (code: BankCode) => `${banks.find(bank => bank.bankCode === code)?.displayName || code} (${code})`;
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 7);
@@ -1066,6 +1069,7 @@ export default function PaymentQueueDashboard() {
 
   return (
     <div className="min-h-screen">
+      {bankRegistryLoading ? <p className="mb-4 text-sm text-slate-600">Loading bank integrations...</p> : bankRegistryError ? <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-4 text-rose-800">{bankRegistryError}</p> : !BANK_CODES.length ? <p className="mb-4 rounded-xl bg-amber-50 p-4 text-amber-900">No banks are enabled for new payments. Ask an administrator to configure Bank Integrations.</p> : null}
       <div className="rounded-3xl border border-slate-200 bg-white p-8 shadow-sm">
         <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
           <div>
@@ -1128,7 +1132,7 @@ export default function PaymentQueueDashboard() {
             >
               <option value="">Select bank</option>
               {BANK_CODES.map((code) => (
-                <option key={code} value={code}>{code}</option>
+                <option key={code} value={code}>{bankLabel(code)}</option>
               ))}
             </select>
           </label>
@@ -1327,7 +1331,7 @@ export default function PaymentQueueDashboard() {
                         >
                           <option value="">Select queue</option>
                           {BANK_CODES.map((code) => (
-                            <option key={code} value={code}>{code}</option>
+                            <option key={code} value={code}>{bankLabel(code)}</option>
                           ))}
                         </select>
                         <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mt-4 mb-2">Txn type override</label>

@@ -1,4 +1,5 @@
 export const PERMISSIONS = {
+  BANK_INTEGRATIONS_MANAGE: 'bank_integrations:manage',
   BANK_DETAILS_READ: 'bank_details:read',
   BANK_DETAILS_WRITE: 'bank_details:write',
   PAYMENTS_READ: 'payments:read',

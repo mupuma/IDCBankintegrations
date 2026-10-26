@@ -57,6 +57,12 @@ const coreNavItems: NavItem[] = [
 
 const adminNavItems: NavItem[] = [
   {
+    name: 'Bank Integrations',
+    href: '/bank_details/bank_integrations',
+    permission: PERMISSIONS.BANK_INTEGRATIONS_MANAGE,
+    icon: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h18M5 10v8m5-8v8m4-8v8m5-8v8M3 21h18M3 6l9-4 9 4v4H3V6z" /></svg>,
+  },
+  {
     name: 'Audit Logs',
     href: '/bank_details/audit_logs',
     permission: PERMISSIONS.AUDIT_READ,

@@ -27,6 +27,7 @@ import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
 import { sourceProfile } from '@/app/lib/zicb/config';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 import { isQueueSearchField, matchesQueueSearch } from '@/app/lib/queueSearch';
+import { assertBankAcceptsPayments, BankRegistryError } from '@/app/lib/bankRegistry';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -55,6 +56,12 @@ export async function POST(request: NextRequest) {
       { success: false, error: `bankCode must be one of ${BANK_CODES.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  try { await assertBankAcceptsPayments(bankCode); }
+  catch (error) {
+    if (!(error instanceof BankRegistryError)) console.error('Bank registry unavailable before payment submission');
+    return NextResponse.json({ success: false, error: error instanceof BankRegistryError ? error.message : 'Bank configuration is unavailable. No payment was queued.' }, { status: error instanceof BankRegistryError ? error.status : 503 });
   }
 
   if (payments) {

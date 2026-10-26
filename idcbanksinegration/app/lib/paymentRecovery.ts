@@ -10,6 +10,7 @@ import { buildZanacoPayload, validateZanacoPayload } from './banks/payloadBuilde
 import { recoveryActions, correctedPayment, type RecoveryAction, type RecoveryEvidence } from './paymentRecoveryPolicy';
 import { sourceProfile } from './zicb/config';
 import { buildBatch, channelFor } from '../../../shared/zicb-h2h';
+import { assertBankAcceptsPayments } from './bankRegistry';
 
 export class RecoveryError extends Error { constructor(message: string, public status = 409) { super(message); } }
 const parse = (value?: string | null) => value ? JSON.parse(value) : {};
@@ -50,6 +51,7 @@ export async function requestPaymentRecovery(input: {
   await connectDatabase();
   const initial = await PaymentQueueRequest.findOne({ where: { queueId: input.queueId } });
   if (!initial) throw new RecoveryError('Payment not found', 404);
+  if (input.action === 'new_attempt') await assertBankAcceptsPayments(initial.bankCode);
   const source = input.action === 'new_attempt' ? await resolveSourceBank(initial.sourceBank) : null;
   const request = JSON.stringify({ action: input.action, reason: input.reason.trim(), corrections: input.corrections ?? {}, confirmed: input.confirmed === true });
   const db = await getSequelize();

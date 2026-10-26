@@ -7,6 +7,7 @@ import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, en
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
+import { assertBankAcceptsPayments, BankRegistryError } from '@/app/lib/bankRegistry';
 
 export async function POST(request: NextRequest) {
   const sessionToken = request.cookies.get('session')?.value;
@@ -25,6 +26,11 @@ export async function POST(request: NextRequest) {
       { success: false, error: `bankCode must be one of ${BANK_CODES.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  try { await assertBankAcceptsPayments(bankCode); }
+  catch (error) {
+    return NextResponse.json({ success: false, error: error instanceof BankRegistryError ? error.message : 'Bank configuration is unavailable. No payment was queued.' }, { status: error instanceof BankRegistryError ? error.status : 503 });
   }
 
   if (!payment || typeof payment !== 'object') {

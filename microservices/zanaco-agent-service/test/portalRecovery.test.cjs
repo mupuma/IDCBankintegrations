@@ -6,7 +6,7 @@ const policy = load('idcbanksinegration/app/lib/paymentRecoveryPolicy.ts');
 const id = '11111111-1111-4111-8111-111111111111';
 const otherId = '22222222-2222-4222-8222-222222222222';
 
-function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRejected: true }, role = 'ADMIN' } = {}) {
+function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRejected: true }, role = 'ADMIN', bankEnabled = true } = {}) {
   const payment = { paymentId: 'SAGE1', amount: 10, currency: 'ZMW', transactionType: 'RTGS',
     transactionDate: '2099-01-01', transactionReference: 'REF1', accountNumber: '9876543210123', accountName: 'Alice',
     swiftCode: 'INZAZMLUXXX', sortCode: '040002', physicalAddress: { plotNo: '10', streetName: 'Cairo Road', town: 'Lusaka' }, remarks: 'Supplier payment' };
@@ -62,6 +62,7 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     './sourceAccounts': { resolveSourceBank: async () => source },
     './banks/payloadBuilders': builders,
     './paymentRecoveryPolicy': policy,
+    './bankRegistry': { assertBankAcceptsPayments: async () => { if (!bankEnabled) throw new Error('Bank not enabled'); } },
     './zicb/config': { sourceProfile: () => ({ profileId: 'test', regionCode: '101', currency: 'ZMW', amountScale: 2, channels: ['RTGS'] }) },
   });
   const forbidden = { denied: true, status: 403 };
@@ -78,6 +79,17 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     corrections: { accountName: 'Corrected Name' }, username: 'tester' };
   return { core, queues, actions, reservation, payment, h2h, input, post: body => route.POST({ json: async () => body }) };
 }
+
+test('disabled banks block corrected new submissions but allow status recovery on existing instructions', async () => {
+  for (const bank of ['ZANACO', 'ZICB']) {
+    const f = fixture({ bank, bankEnabled: false });
+    await assert.rejects(f.core.requestPaymentRecovery(f.input), /not enabled/);
+    assert.equal(f.queues.size, 1);
+    const pending = fixture({ bank, status: 'unknown', bankEnabled: false });
+    await pending.core.requestPaymentRecovery({ ...pending.input, action: 'check_status' });
+    assert.equal(pending.queues.size, 1);
+  }
+});
 
 test('new attempts preserve the original, amount/currency and audit trail for both banks', async () => {
   for (const bank of ['ZANACO', 'ZICB']) {

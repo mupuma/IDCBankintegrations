@@ -9,6 +9,8 @@ import {
 } from 'sequelize-typescript';
 
 export type AuditAction =
+  | 'BANK_INTEGRATION_CREATED'
+  | 'BANK_INTEGRATION_UPDATED'
   | 'LOGIN'
   | 'LOGIN_FAILED'
   | 'LOGOUT'
