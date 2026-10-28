@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
+import AgentOnboarding from './AgentOnboarding';
 
 type Registration = { bankCode: string; displayName: string; enabled: boolean; status: string; adapter: string; revision: number; transactionTypes: string[] };
 
@@ -50,7 +51,7 @@ export default function BankIntegrationsPage() {
       <button type="button" disabled={busy} onClick={() => { void load().catch(value => setError(value.message)); }} className="mt-4 rounded-xl border px-4 py-2 disabled:opacity-40">Refresh registrations</button>
     </div>
     <div className="space-y-4">
-      {items.map(row => <form key={row.bankCode} onSubmit={event => { event.preventDefault(); void save(row); }} className="grid gap-4 rounded-3xl border bg-white p-6 md:grid-cols-[1fr_2fr_auto]">
+      {items.map(row => <div key={row.bankCode} className="rounded-3xl border bg-white p-6"><form onSubmit={event => { event.preventDefault(); void save(row); }} className="grid gap-4 md:grid-cols-[1fr_2fr_auto]">
         <div><h2 className="font-bold">{row.bankCode}</h2><p className="text-sm text-slate-500">{row.status === 'ready' ? 'Existing bank adapter' : 'Awaiting agent onboarding'}</p></div>
         <label className="text-sm font-semibold">Display name
           <input required maxLength={120} value={row.displayName} disabled={busy} onChange={event => setItems(previous => previous.map(item => item.bankCode === row.bankCode ? { ...item, displayName: event.target.value } : item))} className="mt-1 block w-full rounded-xl border p-3 font-normal" />
@@ -60,7 +61,7 @@ export default function BankIntegrationsPage() {
           <button disabled={busy} className="rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white disabled:opacity-40">Save</button>
         </div>
         <p className="text-sm text-slate-600 md:col-span-3">{row.transactionTypes.length ? `Payment types: ${row.transactionTypes.map(type => type === 'TT' ? 'SWIFT' : type === 'DDACCT' ? 'DDACC' : type).join(', ')}` : 'This bank cannot accept payments until a compatible agent has been connected and validated.'}</p>
-      </form>)}
+      </form>{row.adapter === 'agent-v1' && <div className="mt-4"><AgentOnboarding bankCode={row.bankCode} /></div>}</div>)}
     </div>
     <form onSubmit={event => { event.preventDefault(); void save(); }} className="space-y-4 rounded-3xl border bg-white p-6">
       <h2 className="text-xl font-bold">Register another bank</h2>

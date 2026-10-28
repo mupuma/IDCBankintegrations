@@ -69,6 +69,7 @@ import { SourceAccount } from '../models/internal/SourceAccount';
 import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { BankIntegration } from '../models/internal/BankIntegration';
+import { BankAgentProfile } from '../models/internal/BankAgentProfile';
 import { syncSchemaAddOnly } from './schemaSync';
 import { widenPortalVendorStorage } from './portalVendorSchema';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
@@ -76,6 +77,7 @@ import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../mod
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  BankAgentProfile,
   BankIntegration,
   VendorBankDetail,
   PaymentRecoveryAction,
