@@ -75,6 +75,7 @@ test('concurrent submissions reserve one payment and commit one canonical queue 
   const results = await Promise.allSettled([f.ledger.enqueueH2h(f.payment, 'SOURCE'), f.ledger.enqueueH2h(f.payment, 'SOURCE')]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(f.payments.size, 1); assert.equal(f.queue.size, 1); assert.equal(f.reservations.size, 1);
+  assert.match([...f.payments.values()][0].prcn, /^IDC[A-F0-9]{20}$/);
   assert.equal(JSON.parse([...f.queue.values()][0].paymentPayload).h2hProtocol, 'h2h-v1');
 });
 
@@ -114,6 +115,7 @@ test('corrected H2H attempts get new bank and accounting identities while preser
   assert.equal(JSON.stringify(f.payments.get(original.queueId)), before);
   const row = f.payments.get(next), doc = JSON.parse(row.document);
   assert.notEqual(row.reference, original.reference); assert.notEqual(row.prcn, original.prcn_number);
+  assert.match(row.prcn, /^IDC[A-F0-9]{20}$/);
   assert.equal(doc.payment.paymentId, f.payment.paymentId); assert.equal(doc.payment.amount, f.payment.amount);
   assert.equal(doc.recoveryOf, original.queueId);
 });
