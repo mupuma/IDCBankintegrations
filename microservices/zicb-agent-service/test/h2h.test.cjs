@@ -38,7 +38,7 @@ test('bank logs expose rejection and TLS causes without credentials or full resp
   } finally { console.info = originalInfo; }
 });
 
-test('native token request bypasses certificate verification only for authentication', async () => {
+test('all native ZICB bank requests bypass certificate verification without changing global TLS', async () => {
   const https = require('node:https');
   const { EventEmitter } = require('node:events');
   const originalRequest = https.request;
@@ -63,6 +63,19 @@ test('native token request bypasses certificate verification only for authentica
     assert.equal(calls[0].options.method, 'POST');
     assert.equal(calls[0].url, `${profile.authUrl}/h2h/auth/grant-type/client-credentials`);
     assert.deepEqual(JSON.parse(calls[0].body), { client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' });
+    for (const channel of ['INTERNAL', 'RTGS', 'DDACC']) {
+      const url = channel === 'INTERNAL' ? profile.internalUrl : channel === 'RTGS' ? profile.rtgsUrl : profile.ddaccUrl;
+      for (const operation of ['send-money', 'transaction-status']) {
+        await bank.authenticated('test', `${url}/${operation}`, 'POST', { reference: 'tls-test-reference' });
+        assert.equal(calls.at(-1).options.rejectUnauthorized, false);
+        assert.equal(calls.at(-1).options.headers.Authorization, 'Bearer test-token');
+      }
+    }
+    await bank.verifyToken('test');
+    await bank.lookup('test', 'INTERNAL', 'name-lookup', { account_number: '1234567890123' });
+    await bank.lookup('test', 'RTGS', 'show/currencies');
+    assert.equal(calls.length, 10);
+    assert.ok(calls.every(call => call.options.rejectUnauthorized === false));
     assert.equal(process.env.NODE_TLS_REJECT_UNAUTHORIZED, undefined);
   } finally { https.request = originalRequest; }
 });
