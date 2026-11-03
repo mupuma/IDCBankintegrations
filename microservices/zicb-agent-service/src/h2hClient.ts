@@ -75,11 +75,17 @@ export class H2hClient {
     const controller = new AbortController();
     const started = Date.now();
     const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
-    const received = (result: HttpResult, requestId?: string | null) => {
+    const received = (result: HttpResult, rawBody: string, requestId?: string | null) => {
       this.log('bank_response', { ...metadata, httpStatus: result.status, durationMs: Date.now() - started,
         requestId, bankError: result.body?.error, bankStatus: result.body?.status,
         bankMessage: result.body?.message ?? result.body?.error_description,
         responseFormat: result.body === null ? 'empty_or_non_json' : 'json' });
+      if (process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
+        // Explicit diagnostic mode: preserve the exact decoded bank response text.
+        // Do not pass through summary redaction/truncation or log token endpoints.
+        console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent',
+          event: 'bank_response_raw', ...metadata, httpStatus: result.status, requestId, rawBody }));
+      }
       return result;
     };
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -99,8 +105,9 @@ export class H2hClient {
             response.on('error', reject);
             response.on('end', () => {
               let body: unknown = null;
-              try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* Match fetch response parsing. */ }
-              resolve(received({ status: response.statusCode ?? 0, body }, String(response.headers?.['x-request-id'] ?? '')));
+              const rawBody = Buffer.concat(chunks).toString('utf8');
+              try { body = JSON.parse(rawBody); } catch { /* Match fetch response parsing. */ }
+              resolve(received({ status: response.statusCode ?? 0, body }, rawBody, String(response.headers?.['x-request-id'] ?? '')));
             });
           });
           request.on('error', reject);
@@ -111,7 +118,7 @@ export class H2hClient {
       const text = await response.text(); // Timeout covers the response body too.
       let body: unknown;
       try { body = text ? JSON.parse(text) : null; } catch { body = null; }
-      return received({ status: response.status, body }, response.headers.get('x-request-id'));
+      return received({ status: response.status, body }, text, response.headers.get('x-request-id'));
     } catch (error) {
       const failure = error as { code?: string; name?: string; cause?: { code?: string } };
       this.log('bank_request_failed', { ...metadata, durationMs: Date.now() - started,

@@ -13,6 +13,34 @@ const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
 
+test('raw response diagnostics preserve exact JSON and non-JSON text, are opt-in and exclude authentication', async () => {
+  const previous = process.env.ZICB_H2H_LOG_RAW_RESPONSES;
+  const originalInfo = console.info;
+  const logs = [];
+  console.info = line => logs.push(JSON.parse(line));
+  let raw = ' { "transactions": [], "account_number": "0012345678901" }\n';
+  const bank = new H2hClient({ test: profile }, async url => new Response(url.includes('/auth/')
+    ? JSON.stringify({ access_token: 'private-token', token_type: 'Bearer', expires_in: 3600 }) : raw));
+  try {
+    delete process.env.ZICB_H2H_LOG_RAW_RESPONSES;
+    await bank.lookup('test', 'RTGS', 'show/currencies');
+    assert.equal(logs.some(log => log.event === 'bank_response_raw'), false);
+    process.env.ZICB_H2H_LOG_RAW_RESPONSES = 'true';
+    await bank.verifyToken('test');
+    assert.equal(logs.some(log => log.event === 'bank_response_raw'), false);
+    await bank.lookup('test', 'RTGS', 'show/currencies');
+    assert.equal(logs.at(-1).rawBody, raw);
+    raw = '<html>Bank error\n' + 'x'.repeat(1000) + '</html>';
+    await bank.lookup('test', 'RTGS', 'show/currencies');
+    assert.equal(logs.at(-1).rawBody, raw);
+    assert.equal(JSON.stringify(logs).includes('private-token'), false);
+  } finally {
+    console.info = originalInfo;
+    if (previous === undefined) delete process.env.ZICB_H2H_LOG_RAW_RESPONSES;
+    else process.env.ZICB_H2H_LOG_RAW_RESPONSES = previous;
+  }
+});
+
 test('bank logs expose rejection and TLS causes without credentials or full response bodies', async () => {
   const originalInfo = console.info;
   const logs = [];
