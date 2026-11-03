@@ -13,6 +13,35 @@ const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
 
+test('native token request bypasses certificate verification only for authentication', async () => {
+  const https = require('node:https');
+  const { EventEmitter } = require('node:events');
+  const originalRequest = https.request;
+  const calls = [];
+  https.request = (url, options, callback) => {
+    const request = new EventEmitter();
+    request.end = body => {
+      calls.push({ url, options, body });
+      const response = new EventEmitter();
+      response.statusCode = 200;
+      callback(response);
+      response.emit('data', Buffer.from(JSON.stringify({ access_token: 'test-token', token_type: 'Bearer', expires_in: 3600 })));
+      response.emit('end');
+    };
+    return request;
+  };
+  try {
+    const bank = new H2hClient({ test: profile });
+    assert.equal(await bank.token('test'), 'test-token');
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].options.rejectUnauthorized, false);
+    assert.equal(calls[0].options.method, 'POST');
+    assert.equal(calls[0].url, `${profile.authUrl}/h2h/auth/grant-type/client-credentials`);
+    assert.deepEqual(JSON.parse(calls[0].body), { client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' });
+    assert.equal(process.env.NODE_TLS_REJECT_UNAUTHORIZED, undefined);
+  } finally { https.request = originalRequest; }
+});
+
 test('placeholder source profiles reject the actual source code with an actionable error', () => {
   const previous = process.env.ZICB_H2H_SOURCE_PROFILES;
   try {
