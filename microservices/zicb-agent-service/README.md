@@ -13,7 +13,7 @@ Payments are submitted through the portal's ZICB H2H ledger. The agent:
 
 There is no bank-facing `/payments` route in this service.
 
-New IDC instructions use a 23-character `prcn_number`: `IDC` followed by 20 uppercase hexadecimal characters derived from the payment identity (a new recovery attempt uses its own identity). This is a local format choice: the repository H2H contract specifies a maximum of 35 characters and exact preservation, without a required prefix or case. Persisted references, including earlier 35-character values, remain unchanged during reposting, status checks and callbacks.
+New IDC instructions use `IDC-YYYY-NNNNN`, for example `IDC-2026-00001` (14 characters). The year follows Africa/Johannesburg time. A transactionally locked database counter starts at 00001 each year and is shared across channels and new recovery attempts. At 99999, new instructions are refused rather than wrapping. This is an IDC format choice within the contract's 35-character limit. Persisted references remain unchanged during reposting, status checks and callbacks. With `DB_SYNC=false`, apply `idcbanksinegration/sql/add_zicb_prcn_sequence.sql` before deployment; otherwise the registered model creates the table through normal database sync. Do not reset the counter after use.
 
 ## Bank HTTP diagnostics
 

@@ -165,7 +165,7 @@ POST /h2h/internal-ft/send-money
   "total_amount": 2500,
   "transactions": [
     {
-      "prcn_number": "IDC9F8A7B6C5D4E3F2A1B0C9D8E",
+      "prcn_number": "IDC-2026-00001",
       "amount": 2500,
       "transaction_remarks": "Supplier payment",
       "is_retry": 0,
@@ -206,7 +206,7 @@ POST /h2h/other-bank-rtgs-ft/v1/send-money
   "total_amount": 750000,
   "transactions": [
     {
-      "prcn_number": "IDC1A2B3C4D5E6F7G8H9I0J1K2L",
+      "prcn_number": "IDC-2026-00002",
       "amount": 750000,
       "transaction_remarks": "Supplier payment",
       "is_retry": 0,
@@ -255,7 +255,7 @@ POST /h2h/other-bank-ddacc-ft/v1/send-money
   "total_amount": 2000,
   "transactions": [
     {
-      "prcn_number": "IDC2B3C4D5E6F7G8H9I0J1K2L3M",
+      "prcn_number": "IDC-2026-00003",
       "amount": 2000,
       "transaction_remarks": "Supplier payment",
       "is_retry": 0,
@@ -308,7 +308,7 @@ IDC treats the submission as accepted when:
   "message": "One or more fields failed validation",
   "info": [
     {
-      "prcn_number": "IDC1A2B3C4D5E6F7G8H9I0J1K2L",
+      "prcn_number": "IDC-2026-00002",
       "message": "Invalid receiver account number"
     }
   ]
@@ -352,7 +352,7 @@ IDC may query ZICB for the status of a submitted batch.
   "ext_batch_ref_no": "9e3520ee-7aa3-4d95-bd71-e6e7a1f7d002",
   "transactions": [
     {
-      "prcn_number": "IDC1A2B3C4D5E6F7G8H9I0J1K2L",
+      "prcn_number": "IDC-2026-00002",
       "amount": 750000,
       "currency": "ZMW",
       "receiver_account_number": "1234567890",
@@ -471,7 +471,7 @@ POST /api/v1/bank/internal-ft/callback
 ```json
 {
   "reference": "9e3520ee-7aa3-4d95-bd71-e6e7a1f7d002",
-  "prcn_number": "IDC1A2B3C4D5E6F7G8H9I0J1K2L",
+  "prcn_number": "IDC-2026-00002",
   "status_code": 200,
   "bankRef": "ZICB-BANK-REF-001",
   "message": "DISBURSED"
@@ -483,7 +483,7 @@ POST /api/v1/bank/internal-ft/callback
 ```json
 {
   "reference": "9e3520ee-7aa3-4d95-bd71-e6e7a1f7d002",
-  "prcn_number": "IDC1A2B3C4D5E6F7G8H9I0J1K2L",
+  "prcn_number": "IDC-2026-00002",
   "status_code": 400,
   "message": "FAILED"
 }
