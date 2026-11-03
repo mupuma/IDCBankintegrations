@@ -17,9 +17,6 @@ export type LedgerDocument = {
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-// Local format choice within the documented 35-character maximum: 23 uppercase
-// alphanumeric characters, retaining 80 hash bits. Only used for new instructions.
-const prcnFor = (identity: string) => `IDC${hash(identity).slice(0, 20).toUpperCase()}`;
 export class LedgerError extends Error { constructor(message: string, public status = 400) { super(message); } }
 
 async function event(row: ZicbH2hPayment, kind: string, payload: unknown, transaction: Transaction, eventId = randomUUID() as string) {
@@ -46,7 +43,7 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
   const paymentId = String(payment.paymentId ?? '').trim();
   if (!paymentId) throw new LedgerError('A stable Sage paymentId is required');
   const queueId = randomUUID(), reference = randomUUID();
-  const prcn = prcnFor(paymentId);
+  const prcn = `IDC${hash(paymentId).slice(0, 32)}`;
   const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
   await connectDatabase();
   const db = await getSequelize();
@@ -113,7 +110,7 @@ export async function createH2hRecoveryAttempt(payment: any, sourceBank: string,
   if (currency !== profile.currency) throw new LedgerError('Payment currency does not match the source account profile');
   const queueId = randomUUID(), reference = randomUUID();
   const identity = `${payment.paymentId}:recovery:${queueId}`;
-  const prcn = prcnFor(identity);
+  const prcn = `IDC${hash(identity).slice(0, 32)}`;
   const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
   const doc: LedgerDocument = {
     payment: { ...payment, currency, h2hProtocol: 'h2h-v1', recoveryOf }, batch,

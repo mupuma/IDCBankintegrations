@@ -13,8 +13,6 @@ Payments are submitted through the portal's ZICB H2H ledger. The agent:
 
 There is no bank-facing `/payments` route in this service.
 
-New IDC instructions use a 23-character `prcn_number`: `IDC` followed by 20 uppercase hexadecimal characters derived from the payment identity (a new recovery attempt uses its own identity). This is a local format choice: the repository H2H contract specifies a maximum of 35 characters and exact preservation, without a required prefix or case. Persisted references, including earlier 35-character values, remain unchanged during reposting, status checks and callbacks.
-
 ## Bank HTTP diagnostics
 
 Readable `ZICB HTTP` request and response blocks are enabled by default. Each exchange has a shared ID and payment reference. Requests show the URL, headers and exact JSON payload; responses show the HTTP status, headers and exact decoded response body, including HTML or plain text errors. An empty body is explicitly marked. Authentication bodies, bearer headers and cookies are excluded or redacted. Payment payloads and response bodies contain beneficiary data; restrict access to the service journal. Set `ZICB_H2H_LOG_HTTP=false` to disable these blocks. The separate `ZICB_H2H_LOG_RAW_RESPONSES=true` flag retains the optional JSON raw-body event.
