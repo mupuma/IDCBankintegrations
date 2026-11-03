@@ -13,6 +13,12 @@ Payments are submitted through the portal's ZICB H2H ledger. The agent:
 
 There is no bank-facing `/payments` route in this service.
 
+## Bank HTTP diagnostics
+
+Readable `ZICB HTTP` request and response blocks are enabled by default. Each exchange has a shared ID and payment reference. Requests show the URL, headers and exact JSON payload; responses show the HTTP status, headers and exact decoded response body, including HTML or plain text errors. An empty body is explicitly marked. Authentication bodies, bearer headers and cookies are excluded or redacted. Payment payloads and response bodies contain beneficiary data; restrict access to the service journal. Set `ZICB_H2H_LOG_HTTP=false` to disable these blocks. The separate `ZICB_H2H_LOG_RAW_RESPONSES=true` flag retains the optional JSON raw-body event.
+
+After deploying and restarting the agent, use `journalctl -u zicb-agent-service.service -f -o cat --no-pager`. Use the portal's original status check to capture a fresh status response without another payment submission. Historical summary logs cannot reconstruct response bodies that were not captured.
+
 ## Run
 
 ```bash

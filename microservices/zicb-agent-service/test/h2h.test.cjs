@@ -12,6 +12,46 @@ const { processH2hWork } = require('../src/h2hRunner.ts');
 const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
+// Keep routine test output structured; enable readable diagnostics in its own test.
+process.env.ZICB_H2H_LOG_HTTP = 'false';
+
+test('readable HTTP logs include the exact request and response text and headers without auth secrets', async () => {
+  const originalInfo = console.info;
+  const previous = process.env.ZICB_H2H_LOG_HTTP;
+  const logs = [];
+  console.info = line => logs.push(line);
+  delete process.env.ZICB_H2H_LOG_HTTP; // Production default is enabled.
+  const responseBody = ' { "transactions": [{"amount":2500,"account_number":"00123456789"}] }\n';
+  const payload = { reference: 'original-reference', amount: 2500, account_number: '00123456789' };
+  let nonJson = false;
+  const bank = new H2hClient({ test: profile }, async url => url.includes('/auth/')
+    ? new Response(JSON.stringify({ access_token: 'do-not-log-token', token_type: 'Bearer', expires_in: 3600 }))
+    : new Response(nonJson ? '<html>upstream failure</html>\n' : responseBody,
+      { status: nonJson ? 500 : 200, headers: { 'x-request-id': 'bank-trace-id', 'set-cookie': 'private-cookie' } }));
+  try {
+    await bank.authenticated('test', `${profile.rtgsUrl}/send-money`, 'POST', payload);
+    const request = logs.find(line => line.includes(' REQUEST\n'));
+    const response = logs.find(line => line.includes(' RESPONSE ('));
+    assert.ok(request.includes(JSON.stringify(payload)));
+    assert.ok(request.includes(`POST ${profile.rtgsUrl}/send-money`));
+    assert.ok(response.includes('\n' + responseBody + '\n'));
+    assert.ok(response.includes('HTTP 200'));
+    assert.ok(response.includes('x-request-id: bank-trace-id'));
+    assert.ok(response.includes('set-cookie: [REDACTED]'));
+    nonJson = true;
+    await bank.authenticated('test', `${profile.rtgsUrl}/send-money`, 'POST', payload);
+    assert.ok(logs.some(line => line.includes('HTTP 500') && line.includes('<html>upstream failure</html>\n')));
+    for (const secret of ['do-not-log-token', profile.clientSecret, 'private-cookie']) assert.equal(logs.join('\n').includes(secret), false);
+    process.env.ZICB_H2H_LOG_HTTP = 'false';
+    const count = logs.filter(line => line.includes(' REQUEST\n')).length;
+    await bank.authenticated('test', `${profile.rtgsUrl}/send-money`, 'POST', payload);
+    assert.equal(logs.filter(line => line.includes(' REQUEST\n')).length, count);
+  } finally {
+    console.info = originalInfo;
+    if (previous === undefined) delete process.env.ZICB_H2H_LOG_HTTP;
+    else process.env.ZICB_H2H_LOG_HTTP = previous;
+  }
+});
 
 test('raw response diagnostics preserve exact JSON and non-JSON text, are opt-in and exclude authentication', async () => {
   const previous = process.env.ZICB_H2H_LOG_RAW_RESPONSES;
