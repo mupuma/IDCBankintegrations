@@ -13,6 +13,31 @@ const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
 
+test('bank logs expose rejection and TLS causes without credentials or full response bodies', async () => {
+  const originalInfo = console.info;
+  const logs = [];
+  console.info = line => logs.push(JSON.parse(line));
+  try {
+    const bank = new H2hClient({ test: profile }, async url => new Response(JSON.stringify(
+      url.endsWith('client-credentials')
+        ? { access_token: 'private-access-token', token_type: 'Bearer', expires_in: 3600 }
+        : { error: 'source_account_error', message: `Config missing ${profile.clientSecret} private-access-token 1234567890`, account_number: '9876543210' }
+    ), { status: url.endsWith('client-credentials') ? 200 : 403, headers: { 'x-request-id': 'bank-request-1' } }));
+    await bank.lookup('test', 'RTGS', 'show/currencies');
+    const rejected = logs.find(log => log.httpStatus === 403);
+    assert.equal(rejected.bankError, 'source_account_error');
+    assert.equal(rejected.requestId, 'bank-request-1');
+    assert.match(rejected.bankMessage, /Config missing/);
+    const serialized = JSON.stringify(logs);
+    for (const secret of [profile.clientSecret, 'private-access-token', '1234567890', '9876543210']) assert.equal(serialized.includes(secret), false);
+    const broken = new H2hClient({ test: profile }, async () => { throw Object.assign(new Error('secret error'), { cause: { code: 'ERR_TLS_CERT_ALTNAME_INVALID' } }); });
+    await assert.rejects(() => broken.token('test'));
+    assert.equal(logs.at(-1).event, 'bank_request_failed');
+    assert.equal(logs.at(-1).errorCode, 'ERR_TLS_CERT_ALTNAME_INVALID');
+    assert.equal(JSON.stringify(logs).includes('secret error'), false);
+  } finally { console.info = originalInfo; }
+});
+
 test('native token request bypasses certificate verification only for authentication', async () => {
   const https = require('node:https');
   const { EventEmitter } = require('node:events');

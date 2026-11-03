@@ -71,8 +71,37 @@ class H2hClient {
             throw new H2hAuthenticationError('H2H base URLs must use HTTPS without embedded credentials, query strings or fragments');
         return `${base.replace(/\/$/, '')}${path}`;
     }
-    async http(url, init, bypassCertificateVerification = false) {
+    log(event, fields) {
+        // Allowlist response fields; never serialize request headers or full bank bodies.
+        const redact = (value) => {
+            if (typeof value !== 'string')
+                return typeof value === 'number' ? value : undefined;
+            for (const profile of Object.values(this.profiles)) {
+                for (const secret of [profile.clientId, profile.clientSecret]) {
+                    if (secret)
+                        value = value.split(secret).join('[REDACTED]');
+                }
+            }
+            for (const cached of this.tokens.values())
+                value = value.split(cached.token).join('[REDACTED]');
+            return value.replace(/Bearer\s+\S+/gi, 'Bearer [REDACTED]')
+                .replace(/[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+/g, '[REDACTED]')
+                .replace(/\d{7,}/g, '[REDACTED]').slice(0, 500);
+        };
+        const safe = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, redact(value)]));
+        console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent', event, ...safe }));
+    }
+    async http(url, init, bypassCertificateVerification = false, context = {}) {
         const controller = new AbortController();
+        const started = Date.now();
+        const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
+        const received = (result, requestId) => {
+            this.log('bank_response', { ...metadata, httpStatus: result.status, durationMs: Date.now() - started,
+                requestId, bankError: result.body?.error, bankStatus: result.body?.status,
+                bankMessage: result.body?.message ?? result.body?.error_description,
+                responseFormat: result.body === null ? 'empty_or_non_json' : 'json' });
+            return result;
+        };
         const timer = setTimeout(() => controller.abort(), this.timeoutMs);
         try {
             if (bypassCertificateVerification && this.transport === fetch) {
@@ -94,7 +123,7 @@ class H2hClient {
                                 body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
                             }
                             catch { /* Match fetch response parsing. */ }
-                            resolve({ status: response.statusCode ?? 0, body });
+                            resolve(received({ status: response.statusCode ?? 0, body }, String(response.headers?.['x-request-id'] ?? '')));
                         });
                     });
                     request.on('error', reject);
@@ -110,7 +139,14 @@ class H2hClient {
             catch {
                 body = null;
             }
-            return { status: response.status, body };
+            return received({ status: response.status, body }, response.headers.get('x-request-id'));
+        }
+        catch (error) {
+            const failure = error;
+            this.log('bank_request_failed', { ...metadata, durationMs: Date.now() - started,
+                errorCode: failure?.cause?.code ?? failure?.code ?? failure?.name ?? 'UNKNOWN',
+                failureType: controller.signal.aborted ? 'timeout' : 'connection_or_response_error' });
+            throw error;
         }
         finally {
             clearTimeout(timer);
@@ -131,7 +167,7 @@ class H2hClient {
                 result = await this.http(authUrl, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' }),
-                }, true);
+                }, true, { profileId: id });
             }
             catch (error) {
                 throw new H2hAuthenticationError(authenticationConnectionError(error));
@@ -160,7 +196,8 @@ class H2hClient {
     }
     async authenticated(id, url, method, body) {
         let token = await this.token(id);
-        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+        const payload = body;
+        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, false, { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
         let result = await send();
         if (result.status === 401 && result.body?.error === 'invalid_token') {
             // Only a definite authentication rejection can replay this request.
