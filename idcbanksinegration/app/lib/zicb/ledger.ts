@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Op, Transaction } from 'sequelize';
 import { connectDatabase, getSequelize } from '../db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
-import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment';
+import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation, ZicbPrcnSequence } from '@/app/models/internal/ZicbH2hPayment';
 import { buildBatch, channelFor, mergeOutcome, callbackErrors, type Batch, type Channel, type State, type Outcome } from '../../../../shared/zicb-h2h';
 import { sourceProfile, reconcileDelay } from './config';
 import { findExistingPaymentPost } from '../paymentPostGuard';
@@ -17,9 +17,16 @@ export type LedgerDocument = {
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
-// Local format choice within the documented 35-character maximum: 23 uppercase
-// alphanumeric characters, retaining 80 hash bits. Only used for new instructions.
-const prcnFor = (identity: string) => `IDC${hash(identity).slice(0, 20).toUpperCase()}`;
+async function nextPrcn(transaction: Transaction): Promise<string> {
+  const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Johannesburg' }).format(new Date()));
+  await ZicbPrcnSequence.findOrCreate({ where: { year }, defaults: { year, lastValue: 0 }, transaction });
+  const counter = await ZicbPrcnSequence.findByPk(year, { transaction, lock: transaction.LOCK.UPDATE });
+  if (!counter) throw new LedgerError('PRCN sequence is unavailable');
+  if (counter.lastValue >= 99999) throw new LedgerError('Annual PRCN sequence exhausted; no payment was queued');
+  counter.lastValue += 1;
+  await counter.save({ transaction });
+  return `IDC-${year}-${String(counter.lastValue).padStart(5, '0')}`;
+}
 export class LedgerError extends Error { constructor(message: string, public status = 400) { super(message); } }
 
 async function event(row: ZicbH2hPayment, kind: string, payload: unknown, transaction: Transaction, eventId = randomUUID() as string) {
@@ -46,14 +53,14 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
   const paymentId = String(payment.paymentId ?? '').trim();
   if (!paymentId) throw new LedgerError('A stable Sage paymentId is required');
   const queueId = randomUUID(), reference = randomUUID();
-  const prcn = prcnFor(paymentId);
-  const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
   await connectDatabase();
   const db = await getSequelize();
   try {
     return await db.transaction(async transaction => {
       await PaymentDispatchReservation.create({ paymentKey: hash(paymentId), queueId, bankCode: 'ZICB' }, { transaction });
       if (await findExistingPaymentPost(paymentId, transaction)) throw new LedgerError('This payment already has a bank instruction; reconcile it before submitting again', 409);
+      const prcn = await nextPrcn(transaction);
+      const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
       const doc: LedgerDocument = {
         payment: { ...payment, paymentId, currency, h2hProtocol: 'h2h-v1' }, batch, profileId: profile.profileId,
         sourceBank, amountScale: profile.amountScale, accounting: 'pending',
@@ -113,7 +120,7 @@ export async function createH2hRecoveryAttempt(payment: any, sourceBank: string,
   if (currency !== profile.currency) throw new LedgerError('Payment currency does not match the source account profile');
   const queueId = randomUUID(), reference = randomUUID();
   const identity = `${payment.paymentId}:recovery:${queueId}`;
-  const prcn = prcnFor(identity);
+  const prcn = await nextPrcn(transaction);
   const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
   const doc: LedgerDocument = {
     payment: { ...payment, currency, h2hProtocol: 'h2h-v1', recoveryOf }, batch,
