@@ -71,12 +71,17 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
   }
 }
 
-export async function recoverH2hInstruction(queueId: string, action: 'check_status' | 'retry_connection' | 'retry_accounting', transaction: Transaction) {
+export async function recoverH2hInstruction(queueId: string, action: 'check_status' | 'retry_connection' | 'retry_accounting' | 'repost_not_sent', transaction: Transaction) {
   const row = await ZicbH2hPayment.findByPk(queueId, { transaction, lock: transaction.LOCK.UPDATE });
   if (!row) throw new LedgerError('H2H instruction not found', 404);
   const doc = documentOf(row);
   if (row.leaseUntil && new Date(row.leaseUntil).getTime() > Date.now()) throw new LedgerError('The agent is still processing this instruction. Wait for its lease to finish.', 409);
-  if (action === 'retry_connection') {
+  if (action === 'repost_not_sent') {
+    if (row.state !== 'unknown' || doc.bankRef || doc.confirmedRejected || doc.accounting !== 'pending') throw new LedgerError('Only unresolved instructions without settlement evidence can be reposted', 409);
+    row.state = 'queued';
+    doc.recoveryCheck = false;
+    doc.error = undefined;
+  } else if (action === 'retry_connection') {
     if (row.state !== 'rejected' || !doc.notSent || doc.notSentReason !== 'authentication') throw new LedgerError('This instruction has no recorded proof that authentication failed before submission', 409);
     row.state = 'queued';
   } else if (action === 'retry_accounting') {

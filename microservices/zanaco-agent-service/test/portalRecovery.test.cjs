@@ -54,6 +54,7 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     },
   };
   const core = load('idcbanksinegration/app/lib/paymentRecovery.ts', {
+    'sequelize': { Op: { or: Symbol('or'), lte: Symbol('lte') } },
     './db': { connectDatabase: async () => {}, getSequelize: async () => db },
     '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: queueModel },
     '@/app/models/internal/PaymentRecoveryAction': { PaymentRecoveryAction: actionModel },
@@ -78,6 +79,22 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     corrections: { accountName: 'Corrected Name' }, username: 'tester' };
   return { core, queues, actions, reservation, payment, h2h, input, post: body => route.POST({ json: async () => body }) };
 }
+
+test('ZICB never-sent repost requires administrator permission and explicit confirmation, and is audited idempotently', async () => {
+  const input = { action: 'repost_not_sent', corrections: {}, confirmed: true };
+  const restricted = fixture({ bank: 'ZICB', status: 'unknown', evidence: {}, role: 'OPERATOR' });
+  assert.equal((await restricted.post({ ...restricted.input, ...input })).status, 403);
+  const f = fixture({ bank: 'ZICB', status: 'unknown', evidence: {} });
+  await assert.rejects(() => f.core.requestPaymentRecovery({ ...f.input, ...input, confirmed: false }), /Confirm/);
+  const result = await f.core.requestPaymentRecovery({ ...f.input, ...input });
+  assert.equal(result.isNewAction, true);
+  assert.equal(f.queues.size, 1);
+  assert.equal(f.actions.get(id).action, 'repost_not_sent');
+  assert.equal(f.actions.get(id).reason, f.input.reason);
+  assert.equal((await f.core.requestPaymentRecovery({ ...f.input, ...input })).isNewAction, false);
+  f.reservation.queueId = 'successor';
+  await assert.rejects(() => f.core.requestPaymentRecovery({ ...f.input, ...input, actionId: otherId }), /successor/);
+});
 
 test('new attempts preserve the original, amount/currency and audit trail for both banks', async () => {
   for (const bank of ['ZANACO', 'ZICB']) {

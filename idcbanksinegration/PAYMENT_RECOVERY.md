@@ -42,6 +42,7 @@ Open **Bank Queue Processing**, then **Recovery / history** on the payment. Avai
 | --- | --- |
 | Authentication failed before submission, with recorded not-sent evidence | Retry connection on the same instruction after correcting connectivity or credentials. |
 | Unknown, accepted, timed out, or interrupted after the submission boundary | Check status using the original bank reference. No new transfer is sent. |
+| ZICB unknown payment independently confirmed never sent | An administrator with `payments:retry` may choose **Repost payment confirmed never sent**, enter evidence in the reason, and explicitly confirm. The original queue, batch reference, item reference and payment details are reused, with an audit entry. A live agent lease, successor instruction or settlement evidence blocks reposting. A not-found response alone is not confirmation. |
 | Bank result saved but portal reporting failed | Replay the saved report without contacting the payment submission endpoint. |
 | Confirmed bank rejection or recorded local validation rejection | An administrator can correct beneficiary/regulatory details and confirm a new attempt. The original record is retained; the successor gets a fresh bank reference. |
 | ZICB payment paid, Sage accounting incomplete | Retry accounting only, preserving the paid bank outcome. Fix the source profile cashbook configuration first if necessary. |
