@@ -71,7 +71,7 @@ export class H2hClient {
     const safe = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, redact(value)]));
     console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent', event, ...safe }));
   }
-  private async http(url: string, init: RequestInit, bypassCertificateVerification = false, context: Record<string, string> = {}): Promise<HttpResult> {
+  private async http(url: string, init: RequestInit, context: Record<string, string> = {}): Promise<HttpResult> {
     const controller = new AbortController();
     const started = Date.now();
     const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
@@ -84,9 +84,9 @@ export class H2hClient {
     };
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      if (bypassCertificateVerification && this.transport === fetch) {
-        // ZICB-approved NAT authentication endpoint: equivalent to curl -k.
-        // Keep this exception local to authentication; never disable TLS globally.
+      if (this.transport === fetch) {
+        // Approved NAT endpoints: equivalent to curl -k for all ZICB bank calls.
+        // Scoped to this bank client; other application connections keep TLS verification.
         return await new Promise<HttpResult>((resolve, reject) => {
           const request = httpsRequest(url, {
             method: init.method,
@@ -132,7 +132,7 @@ export class H2hClient {
       try { result = await this.http(authUrl, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' }),
-      }, true, { profileId: id }); } catch (error) { throw new H2hAuthenticationError(authenticationConnectionError(error)); }
+      }, { profileId: id }); } catch (error) { throw new H2hAuthenticationError(authenticationConnectionError(error)); }
       if (result.status !== 200) {
         const hint = result.status === 401 ? 'check ZICB clientId and clientSecret'
           : result.status === 403 ? 'ask ZICB to check client permissions and source IP allowlisting'
@@ -152,7 +152,7 @@ export class H2hClient {
   private async authenticated(id: string, url: string, method: string, body?: unknown): Promise<HttpResult> {
     let token = await this.token(id);
     const payload = body as { reference?: string; ext_batch_ref_no?: string } | undefined;
-    const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, false,
+    const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) },
       { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
     let result = await send();
     if (result.status === 401 && result.body?.error === 'invalid_token') {

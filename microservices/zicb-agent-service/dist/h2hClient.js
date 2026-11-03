@@ -91,7 +91,7 @@ class H2hClient {
         const safe = Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, redact(value)]));
         console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent', event, ...safe }));
     }
-    async http(url, init, bypassCertificateVerification = false, context = {}) {
+    async http(url, init, context = {}) {
         const controller = new AbortController();
         const started = Date.now();
         const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
@@ -104,9 +104,9 @@ class H2hClient {
         };
         const timer = setTimeout(() => controller.abort(), this.timeoutMs);
         try {
-            if (bypassCertificateVerification && this.transport === fetch) {
-                // ZICB-approved NAT authentication endpoint: equivalent to curl -k.
-                // Keep this exception local to authentication; never disable TLS globally.
+            if (this.transport === fetch) {
+                // Approved NAT endpoints: equivalent to curl -k for all ZICB bank calls.
+                // Scoped to this bank client; other application connections keep TLS verification.
                 return await new Promise((resolve, reject) => {
                     const request = (0, node_https_1.request)(url, {
                         method: init.method,
@@ -167,7 +167,7 @@ class H2hClient {
                 result = await this.http(authUrl, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' }),
-                }, true, { profileId: id });
+                }, { profileId: id });
             }
             catch (error) {
                 throw new H2hAuthenticationError(authenticationConnectionError(error));
@@ -197,7 +197,7 @@ class H2hClient {
     async authenticated(id, url, method, body) {
         let token = await this.token(id);
         const payload = body;
-        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, false, { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
+        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
         let result = await send();
         if (result.status === 401 && result.body?.error === 'invalid_token') {
             // Only a definite authentication rejection can replay this request.
