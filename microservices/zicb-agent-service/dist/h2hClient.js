@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.H2hClient = void 0;
 const zicb_h2h_1 = require("../../../shared/zicb-h2h");
+const node_https_1 = require("node:https");
 class H2hAuthenticationError extends Error {
 }
 function authenticationConnectionError(error) {
@@ -70,10 +71,36 @@ class H2hClient {
             throw new H2hAuthenticationError('H2H base URLs must use HTTPS without embedded credentials, query strings or fragments');
         return `${base.replace(/\/$/, '')}${path}`;
     }
-    async http(url, init) {
+    async http(url, init, bypassCertificateVerification = false) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), this.timeoutMs);
         try {
+            if (bypassCertificateVerification && this.transport === fetch) {
+                // ZICB-approved NAT authentication endpoint: equivalent to curl -k.
+                // Keep this exception local to authentication; never disable TLS globally.
+                return await new Promise((resolve, reject) => {
+                    const request = (0, node_https_1.request)(url, {
+                        method: init.method,
+                        headers: init.headers,
+                        rejectUnauthorized: false,
+                        signal: controller.signal,
+                    }, response => {
+                        const chunks = [];
+                        response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+                        response.on('error', reject);
+                        response.on('end', () => {
+                            let body = null;
+                            try {
+                                body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+                            }
+                            catch { /* Match fetch response parsing. */ }
+                            resolve({ status: response.statusCode ?? 0, body });
+                        });
+                    });
+                    request.on('error', reject);
+                    request.end(init.body);
+                });
+            }
             const response = await this.transport(url, { ...init, signal: controller.signal, redirect: 'error' });
             const text = await response.text(); // Timeout covers the response body too.
             let body;
@@ -104,7 +131,7 @@ class H2hClient {
                 result = await this.http(authUrl, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' }),
-                });
+                }, true);
             }
             catch (error) {
                 throw new H2hAuthenticationError(authenticationConnectionError(error));

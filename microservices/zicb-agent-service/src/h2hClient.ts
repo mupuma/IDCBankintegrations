@@ -1,4 +1,5 @@
 import { PATHS, validateBatch, submissionOutcome, statusOutcome, type Channel, type Batch, type Outcome } from '../../../shared/zicb-h2h';
+import { request as httpsRequest } from 'node:https';
 
 export type Profile = { clientId: string; clientSecret: string; authUrl: string; internalUrl: string; rtgsUrl: string; ddaccUrl: string };
 type HttpResult = { status: number; body: any };
@@ -53,10 +54,33 @@ export class H2hClient {
     if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new H2hAuthenticationError('H2H base URLs must use HTTPS without embedded credentials, query strings or fragments');
     return `${base.replace(/\/$/, '')}${path}`;
   }
-  private async http(url: string, init: RequestInit): Promise<HttpResult> {
+  private async http(url: string, init: RequestInit, bypassCertificateVerification = false): Promise<HttpResult> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
+      if (bypassCertificateVerification && this.transport === fetch) {
+        // ZICB-approved NAT authentication endpoint: equivalent to curl -k.
+        // Keep this exception local to authentication; never disable TLS globally.
+        return await new Promise<HttpResult>((resolve, reject) => {
+          const request = httpsRequest(url, {
+            method: init.method,
+            headers: init.headers as Record<string, string>,
+            rejectUnauthorized: false,
+            signal: controller.signal,
+          }, response => {
+            const chunks: Buffer[] = [];
+            response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+            response.on('error', reject);
+            response.on('end', () => {
+              let body: unknown = null;
+              try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { /* Match fetch response parsing. */ }
+              resolve({ status: response.statusCode ?? 0, body });
+            });
+          });
+          request.on('error', reject);
+          request.end(init.body as string | undefined);
+        });
+      }
       const response = await this.transport(url, { ...init, signal: controller.signal, redirect: 'error' });
       const text = await response.text(); // Timeout covers the response body too.
       let body: unknown;
@@ -76,7 +100,7 @@ export class H2hClient {
       try { result = await this.http(authUrl, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ client_id: profile.clientId, client_secret: profile.clientSecret, grant_type: 'client_credentials' }),
-      }); } catch (error) { throw new H2hAuthenticationError(authenticationConnectionError(error)); }
+      }, true); } catch (error) { throw new H2hAuthenticationError(authenticationConnectionError(error)); }
       if (result.status !== 200) {
         const hint = result.status === 401 ? 'check ZICB clientId and clientSecret'
           : result.status === 403 ? 'ask ZICB to check client permissions and source IP allowlisting'
