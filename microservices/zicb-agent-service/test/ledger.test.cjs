@@ -35,7 +35,6 @@ function fixture() {
     PaymentDispatchReservation: { create: async data => { if (reservations.has(data.paymentKey)) throw unique(); reservations.set(data.paymentKey, data); } },
   };
   const mocks = {
-    'sequelize': { Op: { lte: Symbol('lte'), or: Symbol('or') }, Transaction: { ISOLATION_LEVELS: { READ_COMMITTED: 'READ COMMITTED' } } },
     '../db': { connectDatabase: async () => {}, getSequelize: async () => db },
     '@/app/models/internal/ZicbH2hPayment': models,
     '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: { create: async data => queue.set(data.queueId, data), update: async (data, options) => Object.assign(queue.get(options.where.queueId), data) } },
@@ -50,26 +49,6 @@ function fixture() {
   const payment = { paymentId: 'SAGE-1', transactionType: 'RTGS', amount: 27.51, currency: 'ZMW', accountNumber: '0011223', accountName: 'Test', swiftCode: 'TESTZMLX', sortCode: '010001', transactionDate: '2026-09-07', remarks: 'Payment' };
   return { ledger: module.exports, payments, events, reservations, queue, payment };
 }
-test('confirmed never-sent recovery requeues the original reference and refuses active or paid instructions', async () => {
-  const f = fixture();
-  await f.ledger.enqueueH2h(f.payment, 'SOURCE');
-  const work = await f.ledger.claimH2hWork();
-  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
-  const row = f.payments.get(work.queueId);
-  row.state = 'unknown';
-  await assert.rejects(() => f.ledger.recoverH2hInstruction(work.queueId, 'repost_not_sent', transaction), /still processing/);
-  row.leaseUntil = null;
-  await f.ledger.recoverH2hInstruction(work.queueId, 'repost_not_sent', transaction);
-  assert.equal(row.state, 'queued');
-  const next = await f.ledger.claimH2hWork();
-  assert.equal(next.action, 'submit');
-  assert.deepEqual(next.batch, work.batch);
-  assert.equal(next.queueId, work.queueId);
-  assert.ok([...f.events.values()].some(event => event.kind === 'operator_repost_not_sent'));
-  row.state = 'paid'; row.leaseUntil = null;
-  await assert.rejects(() => f.ledger.recoverH2hInstruction(work.queueId, 'repost_not_sent', transaction), /Only unresolved/);
-});
-
 test('concurrent submissions reserve one payment and commit one canonical queue record', async () => {
   const f = fixture();
   const results = await Promise.allSettled([f.ledger.enqueueH2h(f.payment, 'SOURCE'), f.ledger.enqueueH2h(f.payment, 'SOURCE')]);

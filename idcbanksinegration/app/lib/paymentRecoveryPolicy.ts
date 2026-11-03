@@ -1,4 +1,4 @@
-export type RecoveryAction = 'retry_connection' | 'check_status' | 'retry_reporting' | 'retry_accounting' | 'new_attempt' | 'repost_not_sent';
+export type RecoveryAction = 'retry_connection' | 'check_status' | 'retry_reporting' | 'retry_accounting' | 'new_attempt';
 export type RecoveryEvidence = {
   protocol?: string; notSent?: boolean; retryable?: boolean; confirmedRejected?: boolean;
 };
@@ -10,7 +10,6 @@ export function recoveryActions(bank: string, status: string, evidence: Recovery
     return actions;
   }
   if (['success', 'paid', 'queued'].includes(status)) return actions;
-  if (bank === 'ZICB' && status === 'unknown' && !evidence.confirmedRejected) actions.push('repost_not_sent');
   if (bank === 'ZANACO' && ['processing', 'unknown', 'accepted', 'failed', 'rejected', 'needs_review'].includes(status)) actions.push('retry_reporting');
   if (!evidence.notSent && ['processing', 'submitting', 'unknown', 'accepted', 'needs_review', 'failed', 'rejected'].includes(status)) actions.push('check_status');
   if (evidence.notSent && evidence.retryable && ['failed', 'rejected', 'processing'].includes(status)) actions.push('retry_connection');

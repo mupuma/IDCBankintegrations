@@ -14,7 +14,7 @@ import { buildBatch, channelFor } from '../../../shared/zicb-h2h';
 export class RecoveryError extends Error { constructor(message: string, public status = 409) { super(message); } }
 const parse = (value?: string | null) => value ? JSON.parse(value) : {};
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
-const ACTIONS: RecoveryAction[] = ['retry_connection', 'check_status', 'retry_reporting', 'retry_accounting', 'new_attempt', 'repost_not_sent'];
+const ACTIONS: RecoveryAction[] = ['retry_connection', 'check_status', 'retry_reporting', 'retry_accounting', 'new_attempt'];
 
 function evidenceOf(row: PaymentQueueRequest, h2h?: ZicbH2hPayment | null) {
   if (row.bankCode === 'ZICB' && h2h) {
@@ -46,7 +46,7 @@ export async function requestPaymentRecovery(input: {
 }) {
   if (!ACTIONS.includes(input.action) || !/^[a-f0-9-]{36}$/i.test(input.actionId)) throw new RecoveryError('Invalid recovery action or request ID', 400);
   if (input.reason.trim().length < 10 || input.reason.length > 1000) throw new RecoveryError('Enter a recovery reason between 10 and 1000 characters', 400);
-  if (['new_attempt', 'repost_not_sent'].includes(input.action) && input.confirmed !== true) throw new RecoveryError('Confirm the new submission after reviewing the previous bank outcome', 400);
+  if (input.action === 'new_attempt' && input.confirmed !== true) throw new RecoveryError('Confirm the new submission after reviewing the previous bank outcome', 400);
   await connectDatabase();
   const initial = await PaymentQueueRequest.findOne({ where: { queueId: input.queueId } });
   if (!initial) throw new RecoveryError('Payment not found', 404);
@@ -71,8 +71,7 @@ export async function requestPaymentRecovery(input: {
     if (!recoveryActions(row.bankCode, row.status, evidenceOf(row, h2h), response.accountingStatus).includes(input.action)) {
       throw new RecoveryError('This action is not permitted by the recorded bank outcome. Unknown or legacy outcomes cannot authorise a new payment.');
     }
-    if (reservation && reservation.queueId !== row.queueId && ['new_attempt', 'retry_connection', 'repost_not_sent'].includes(input.action)) throw new RecoveryError('This instruction already has a successor. Open the latest queue entry.');
-    if (input.action === 'repost_not_sent' && (!reservation || !h2h)) throw new RecoveryError('The original H2H instruction and dispatch reservation are required');
+    if (reservation && reservation.queueId !== row.queueId && ['new_attempt', 'retry_connection'].includes(input.action)) throw new RecoveryError('This instruction already has a successor. Open the latest queue entry.');
     let result: Record<string, unknown> = {};
     const pendingAgent = row.bankCode === 'ZANACO' && input.action !== 'new_attempt';
     if (input.action === 'new_attempt') {
@@ -101,7 +100,7 @@ export async function requestPaymentRecovery(input: {
       await reservation.update({ queueId }, { transaction });
       result = { queueId, message: 'A new instruction was created; the original instruction and its history are preserved.' };
     } else if (row.bankCode === 'ZICB') {
-      await recoverH2hInstruction(row.queueId, input.action as 'retry_connection' | 'check_status' | 'retry_accounting' | 'repost_not_sent', transaction);
+      await recoverH2hInstruction(row.queueId, input.action as 'retry_connection' | 'check_status' | 'retry_accounting', transaction);
       result = { message: 'Recovery scheduled on the original instruction.' };
     }
     const action = await PaymentRecoveryAction.create({ actionId: input.actionId, queueId: row.queueId,
