@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.H2hClient = void 0;
 const zicb_h2h_1 = require("../../../shared/zicb-h2h");
 const node_https_1 = require("node:https");
+const node_crypto_1 = require("node:crypto");
 class H2hAuthenticationError extends Error {
 }
 function authenticationConnectionError(error) {
@@ -95,11 +96,31 @@ class H2hClient {
         const controller = new AbortController();
         const started = Date.now();
         const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
-        const received = (result, rawBody, requestId) => {
+        const httpDiagnostics = process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+        const exchangeId = (0, node_crypto_1.randomUUID)();
+        const headerLines = (headers) => Array.from(headers.entries()).map(([name, value]) => `${name}: ${/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? '[REDACTED]' : value}`);
+        const label = `[ZICB HTTP ${exchangeId}] profile=${context.profileId || '-'} reference=${context.reference || '-'}`;
+        if (httpDiagnostics) {
+            console.info([
+                `${label} REQUEST`, `${init.method || 'GET'} ${url}`,
+                ...headerLines(new Headers(init.headers)), '',
+                typeof init.body === 'string' ? init.body : '[no request body]',
+                `${label} END REQUEST`,
+            ].join('\n'));
+        }
+        const received = (result, rawBody, requestId, responseHeaders = [], statusLine = `HTTP ${result.status}`) => {
             this.log('bank_response', { ...metadata, httpStatus: result.status, durationMs: Date.now() - started,
                 requestId, bankError: result.body?.error, bankStatus: result.body?.status,
                 bankMessage: result.body?.message ?? result.body?.error_description,
                 responseFormat: result.body === null ? 'empty_or_non_json' : 'json' });
+            if (httpDiagnostics) {
+                console.info([
+                    `${label} RESPONSE (${Date.now() - started} ms)`, statusLine,
+                    ...responseHeaders, '', rawBody,
+                    ...(rawBody.length === 0 ? ['[bank returned an empty response body]'] : []),
+                    `${label} END RESPONSE`,
+                ].join('\n'));
+            }
             if (process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
                 // Explicit diagnostic mode: preserve the exact decoded bank response text.
                 // Do not pass through summary redaction/truncation or log token endpoints.
@@ -130,7 +151,12 @@ class H2hClient {
                                 body = JSON.parse(rawBody);
                             }
                             catch { /* Match fetch response parsing. */ }
-                            resolve(received({ status: response.statusCode ?? 0, body }, rawBody, String(response.headers?.['x-request-id'] ?? '')));
+                            const headers = [];
+                            for (let index = 0; index < (response.rawHeaders?.length ?? 0); index += 2) {
+                                const name = response.rawHeaders[index];
+                                headers.push(`${name}: ${/^(set-cookie|authorization|proxy-authorization|cookie)$/i.test(name) ? '[REDACTED]' : response.rawHeaders[index + 1]}`);
+                            }
+                            resolve(received({ status: response.statusCode ?? 0, body }, rawBody, String(response.headers?.['x-request-id'] ?? ''), headers, `HTTP/${response.httpVersion} ${response.statusCode} ${response.statusMessage || ''}`.trim()));
                         });
                     });
                     request.on('error', reject);
@@ -146,13 +172,15 @@ class H2hClient {
             catch {
                 body = null;
             }
-            return received({ status: response.status, body }, text, response.headers.get('x-request-id'));
+            return received({ status: response.status, body }, text, response.headers.get('x-request-id'), headerLines(response.headers), `HTTP ${response.status} ${response.statusText}`.trim());
         }
         catch (error) {
             const failure = error;
             this.log('bank_request_failed', { ...metadata, durationMs: Date.now() - started,
                 errorCode: failure?.cause?.code ?? failure?.code ?? failure?.name ?? 'UNKNOWN',
                 failureType: controller.signal.aborted ? 'timeout' : 'connection_or_response_error' });
+            if (httpDiagnostics)
+                console.info(`${label} NO COMPLETE RESPONSE: ${controller.signal.aborted ? 'timeout' : failure?.cause?.code ?? failure?.code ?? failure?.name ?? 'UNKNOWN'} (${Date.now() - started} ms)`);
             throw error;
         }
         finally {
