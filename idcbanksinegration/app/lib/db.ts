@@ -70,7 +70,7 @@ import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
 import { widenPortalVendorStorage } from './portalVendorSchema';
-import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation, ZicbPrcnSequence } from '../models/internal/ZicbH2hPayment';
+import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
 
@@ -79,7 +79,6 @@ const INTERNAL_MODELS = [
   PaymentRecoveryAction,
   ZicbH2hPayment,
   PaymentDispatchReservation,
-  ZicbPrcnSequence,
   ZicbH2hEvent,
   User,
   PaymentQueueRequest,

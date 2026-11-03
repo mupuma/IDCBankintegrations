@@ -1,11 +1,5 @@
 import { Model, Table, Column, DataType, PrimaryKey } from 'sequelize-typescript';
 
-@Table({ tableName: 'zicb_prcn_sequences', timestamps: false })
-export class ZicbPrcnSequence extends Model {
-  @PrimaryKey @Column(DataType.INTEGER) declare year: number;
-  @Column({ type: DataType.INTEGER, allowNull: false }) declare lastValue: number;
-}
-
 // One item per batch during migration. References and the canonical payment are
 // immutable; the mutable document is changed only under a database row lock.
 @Table({ tableName: 'zicb_h2h_payments', timestamps: true, underscored: true, indexes: [{ fields: ['next_run', 'lease_until'] }] })

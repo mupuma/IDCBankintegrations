@@ -8,26 +8,22 @@ const ts = require('typescript');
 // Exercise the real ledger orchestration with a transactional in-memory adapter.
 // These tests do not claim to validate MySQL/SQL Server locking behavior.
 function fixture() {
-  const payments = new Map(), events = new Map(), reservations = new Map(), queue = new Map(), sequences = new Map();
+  const payments = new Map(), events = new Map(), reservations = new Map(), queue = new Map();
   const unique = () => Object.assign(new Error('duplicate'), { name: 'SequelizeUniqueConstraintError' });
   const hydrate = data => Object.assign(data, { save: async () => {} });
   let tail = Promise.resolve();
   const db = { transaction: (...args) => {
     const run = async () => {
-      const snapshots = [payments, events, reservations, queue, sequences].map(map => JSON.parse(JSON.stringify([...map])));
+      const snapshots = [payments, events, reservations, queue].map(map => JSON.parse(JSON.stringify([...map])));
       try { return await args.at(-1)({ LOCK: { UPDATE: 'UPDATE' } }); }
       catch (error) {
-        [payments, events, reservations, queue, sequences].forEach((map, i) => { map.clear(); snapshots[i].forEach(([k, v]) => map.set(k, i === 0 || i === 4 ? hydrate(v) : v)); });
+        [payments, events, reservations, queue].forEach((map, i) => { map.clear(); snapshots[i].forEach(([k, v]) => map.set(k, i === 0 ? hydrate(v) : v)); });
         throw error;
       }
     };
     const pending = tail.then(run, run); tail = pending.catch(() => {}); return pending;
   } };
   const models = {
-    ZicbPrcnSequence: {
-      findOrCreate: async ({ where, defaults }) => { if (!sequences.has(where.year)) sequences.set(where.year, hydrate({ ...defaults })); },
-      findByPk: async year => sequences.get(year),
-    },
     ZicbH2hPayment: {
       create: async data => { if ([...payments.values()].some(row => row.paymentKey === data.paymentKey)) throw unique(); const row = hydrate({ leaseToken: null, leaseUntil: null, ...data }); payments.set(data.queueId, row); return row; },
       findByPk: async id => payments.get(id),
@@ -52,21 +48,8 @@ function fixture() {
   module.require = id => mocks[id] || original(id);
   module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, filename);
   const payment = { paymentId: 'SAGE-1', transactionType: 'RTGS', amount: 27.51, currency: 'ZMW', accountNumber: '0011223', accountName: 'Test', swiftCode: 'TESTZMLX', sortCode: '010001', transactionDate: '2026-09-07', remarks: 'Payment' };
-  return { ledger: module.exports, payments, events, reservations, queue, sequences, payment };
+  return { ledger: module.exports, payments, events, reservations, queue, payment };
 }
-test('annual PRCN counter allocates unique sequential references for concurrent payments', async () => {
-  const f = fixture();
-  const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Johannesburg' }).format(new Date()));
-  f.sequences.set(year - 1, { lastValue: 99999 });
-  const results = await Promise.all(Array.from({ length: 5 }, (_, index) => f.ledger.enqueueH2h({ ...f.payment, paymentId: `PAY-${index}` }, 'SOURCE')));
-  assert.deepEqual(results.map(result => result.prcn_number), Array.from({ length: 5 }, (_, index) => `IDC-${year}-${String(index + 1).padStart(5, '0')}`));
-  assert.equal(f.sequences.get(year).lastValue, 5);
-  f.sequences.get(year).lastValue = 99999;
-  await assert.rejects(() => f.ledger.enqueueH2h({ ...f.payment, paymentId: 'EXHAUSTED' }, 'SOURCE'), /sequence exhausted/);
-  assert.equal(f.payments.size, 5);
-  assert.equal(f.reservations.size, 5);
-});
-
 test('confirmed never-sent recovery requeues the original reference and refuses active or paid instructions', async () => {
   const f = fixture();
   await f.ledger.enqueueH2h(f.payment, 'SOURCE');
@@ -92,7 +75,7 @@ test('concurrent submissions reserve one payment and commit one canonical queue 
   const results = await Promise.allSettled([f.ledger.enqueueH2h(f.payment, 'SOURCE'), f.ledger.enqueueH2h(f.payment, 'SOURCE')]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(f.payments.size, 1); assert.equal(f.queue.size, 1); assert.equal(f.reservations.size, 1);
-  assert.match([...f.payments.values()][0].prcn, /^IDC-\d{4}-00001$/);
+  assert.match([...f.payments.values()][0].prcn, /^IDC[A-F0-9]{20}$/);
   assert.equal(JSON.parse([...f.queue.values()][0].paymentPayload).h2hProtocol, 'h2h-v1');
 });
 
@@ -132,7 +115,7 @@ test('corrected H2H attempts get new bank and accounting identities while preser
   assert.equal(JSON.stringify(f.payments.get(original.queueId)), before);
   const row = f.payments.get(next), doc = JSON.parse(row.document);
   assert.notEqual(row.reference, original.reference); assert.notEqual(row.prcn, original.prcn_number);
-  assert.match(row.prcn, /^IDC-\d{4}-00002$/);
+  assert.match(row.prcn, /^IDC[A-F0-9]{20}$/);
   assert.equal(doc.payment.paymentId, f.payment.paymentId); assert.equal(doc.payment.amount, f.payment.amount);
   assert.equal(doc.recoveryOf, original.queueId);
 });
