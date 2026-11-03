@@ -15,6 +15,9 @@ export async function processH2hWork(work: H2hWork, bank: Pick<H2hClient, 'submi
   const outcome = work.action === 'submit'
     ? await bank.submit(work.profileId, work.channel, work.batch, work.amountScale)
     : await bank.reconcile(work.profileId, work.channel, work.batch);
+  console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent', event: 'work_outcome',
+    queueId: work.queueId, reference: work.batch.reference, channel: work.channel, action: work.action,
+    state: outcome.state, notSent: outcome.notSent, notSentReason: outcome.notSentReason }));
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
     try { await portal.report(work, outcome); return; } catch (error) { lastError = error; }
