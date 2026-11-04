@@ -31,8 +31,11 @@ export async function loadIzbCashbookRecovery(queueId: string) {
     && payload.transactionId === receipt.transactionId
     && payload.entries.length > 0 && payload.entries.length === payload.noEntries
     && payload.entries.every(entry => entry.referenceNo === receipt.transactionId));
+  let bankFailure = false;
+  try { bankFailure = JSON.parse(queue.responsePayload || '{}').protocol === 'izb-bank-status-v1' && queue.status === 'failed'; } catch { /* no bank failure callback */ }
   const canRetry = Boolean(receipt?.status === 'failed' && validPayload);
   const message = receipts.length > 1 ? 'Multiple saved notifications match this payment. Review them before retrying.'
+    : !receipt && bankFailure ? 'IZB reported that the bank payment failed. Resolve the bank error with IZB; there is no cashbook notification to retry and no payment will be resent.'
     : !receipt ? 'No saved IZB cashbook notification was found. Ask IZB to resend the original cashbook notification; do not send another bank payment.'
     : !validPayload ? 'The saved notification is invalid or its references do not match. Review it before retrying.'
     : receipt.status === 'success' ? 'Cashbook posting is already complete.'
@@ -40,8 +43,8 @@ export async function loadIzbCashbookRecovery(queueId: string) {
     : 'Retry the saved cashbook notification now, after resolving the reported error. The bank payment will not be sent again.';
   return { queue, receipt, payload, details: {
     queueId, transactionId: receipt?.transactionId || queue.paymentId,
-    receiptId: receipt?.id, status: receipt?.status || 'missing',
-    lastError: receipt?.statusMessage || '', processedDate: receipt?.processedDate,
+    receiptId: receipt?.id, status: receipt?.status || (bankFailure ? 'bank_failed' : 'missing'),
+    lastError: receipt?.statusMessage || (bankFailure ? queue.lastError || '' : ''), processedDate: receipt?.processedDate,
     amount: receipt?.debitAmount, canRetry, message,
   } };
 }

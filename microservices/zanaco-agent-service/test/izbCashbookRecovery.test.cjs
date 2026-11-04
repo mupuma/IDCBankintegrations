@@ -6,13 +6,14 @@ const contract = load(root + 'lib/cashbookContract.ts');
 const policy = load(root + 'lib/sageQueryPolicy.ts');
 const Op = { in: Symbol('in'), or: Symbol('or'), like: Symbol('like') };
 
-function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate = false, sageExisting = false, fail = false, bankRace = false } = {}) {
+function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate = false, sageExisting = false, fail = false, bankRace = false, bankFailure = false } = {}) {
   const notification = { transactionId: 'IDC8A24F91C0', bankCode: 'IZB', description: 'Jason Songwe',
     noEntries: 1, creditAmount: 5000, debitAmount: 5000, entries: [{ entryNo: 1, referenceNo: 'IDC8A24F91C0', customerNo: 'PK-0034-IDC',
       noDetails: 1, amount: 5000, currency: 'ZMW', details: [{ entryDescription: 'Jason Songwe', accountId: 'GL-TEST', amount: 5000, DrCr: 'Cr', detailNo: 1 }] }] };
   const audit = [], writes = [], processed = new Map(), receipts = [], sageHeaders = new Map();
   const queue = { id: 1, queueId: 'original', bankCode: bank, paymentId: notification.transactionId, status: 'failed',
     paymentPayload: JSON.stringify({ paymentId: notification.transactionId, amount: 5000, currency: 'ZMW' }) };
+  if (bankFailure) Object.assign(queue, { responsePayload: JSON.stringify({ protocol: 'izb-bank-status-v1', bankStatus: 'failed' }), lastError: 'INVALID_ACCOUNT: Bank could not credit account' });
   let failSage = fail, tail = Promise.resolve(), claimed = 0, inTransaction = false;
   const hydrateReceipt = row => ({ ...row, update: async values => { Object.assign(row, values); } });
   if (!missing) receipts.push({ id: 1, transactionId: notification.transactionId, bankCode: 'IZB', status,
@@ -109,6 +110,17 @@ function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate =
     setFailure: value => { failSage = value; }, deny: () => { allowed = false; },
     post: body => route.POST({ json: async () => body || { queueId: 'original', reason: 'Sage connectivity restored' } }) };
 }
+
+test('bank-reported failures show their error and do not offer a Sage cashbook retry', async () => {
+  const f = fixture({ missing: true, bankFailure: true });
+  const context = await f.recovery.loadIzbCashbookRecovery('original');
+  assert.equal(context.details.status, 'bank_failed');
+  assert.equal(context.details.canRetry, false);
+  assert.match(context.details.lastError, /INVALID_ACCOUNT/);
+  assert.match(context.details.message, /bank payment failed/);
+  await assert.rejects(() => f.recovery.retryIzbCashbook('original'), /bank payment failed/);
+  assert.equal(f.writes.length, 0);
+});
 
 test('IZB retry immediately posts the saved notification and records the operator without altering financial fields', async () => {
   const f = fixture();

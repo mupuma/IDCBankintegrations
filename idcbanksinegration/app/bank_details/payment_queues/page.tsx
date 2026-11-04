@@ -274,7 +274,7 @@ export default function PaymentQueuesPage() {
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
                     <td className="px-5 py-4 text-sm">
-                      {item.bankCode === 'IZB' ? <button type="button" onClick={() => setCashbookItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Cashbook / retry</button> : null}
+                      {item.bankCode === 'IZB' ? <button type="button" onClick={() => setCashbookItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">{asRecord(item.response).protocol === 'izb-bank-status-v1' ? 'Bank failure / details' : 'Cashbook / retry'}</button> : null}
                       {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
                     </td>
                   </tr>

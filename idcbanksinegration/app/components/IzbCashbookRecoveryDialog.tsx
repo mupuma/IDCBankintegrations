@@ -50,15 +50,17 @@ export default function IzbCashbookRecoveryDialog({ item, canRetry, onClose, onC
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4" role="dialog" aria-modal="true" aria-labelledby="izb-cashbook-title">
       <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-6 shadow-xl">
         <div className="flex items-start justify-between gap-4">
-          <h2 id="izb-cashbook-title" className="text-xl font-bold text-slate-900">IZB cashbook recovery</h2>
+          <h2 id="izb-cashbook-title" className="text-xl font-bold text-slate-900">{details?.status === 'bank_failed' ? 'IZB bank payment failure' : 'IZB cashbook recovery'}</h2>
           <button type="button" onClick={onClose} disabled={busy} className="rounded-lg border px-3 py-2 disabled:opacity-40">Close</button>
         </div>
-        <p className="mt-3 text-sm text-slate-600">Retry Sage cashbook posting using the saved IZB notification. The original transaction reference and accounting details stay unchanged. This does not send another bank payment.</p>
-        <p className="mt-2 text-sm text-slate-600">Sage uses the current posting date and accounting period.</p>
+        {details?.status !== 'bank_failed' ? <>
+          <p className="mt-3 text-sm text-slate-600">Retry Sage cashbook posting using the saved IZB notification. The original transaction reference and accounting details stay unchanged. This does not send another bank payment.</p>
+          <p className="mt-2 text-sm text-slate-600">Sage uses the current posting date and accounting period.</p>
+        </> : null}
         {details ? <div className="mt-4 space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
           <p>Transaction: <span className="font-mono">{details.transactionId}</span></p>
-          <p>Cashbook status: <strong>{details.status}</strong></p>
-          {details.lastError ? <p className={details.status === 'failed' ? 'text-rose-700' : 'text-slate-600'}>{details.lastError}</p> : null}
+          <p>{details.status === 'bank_failed' ? 'Bank payment status: ' : 'Cashbook status: '}<strong>{details.status === 'bank_failed' ? 'failed' : details.status}</strong></p>
+          {details.lastError ? <p className={['failed', 'bank_failed'].includes(details.status) ? 'text-rose-700' : 'text-slate-600'}>{details.lastError}</p> : null}
           <p>{details.message}</p>
         </div> : <p className="mt-4 text-sm text-slate-500">Cashbook details are unavailable or loading.</p>}
         {error ? <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-800">{error}</p> : null}

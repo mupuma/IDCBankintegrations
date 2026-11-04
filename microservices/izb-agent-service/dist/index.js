@@ -21,7 +21,7 @@ app.use((0, cors_1.default)());
 // Register before JSON parsing so malformed requests are visible too.
 app.use((req, res, next) => {
     const startedAt = Date.now();
-    const endpoint = ['/api/v1/postCBTxn', '/api/v1/payments/by_date', '/health'].includes(req.path) ? req.path : 'unmatched';
+    const endpoint = ['/api/v1/postCBTxn', '/api/v1/payments/by_date', '/api/v1/payments/status', '/health'].includes(req.path) ? req.path : 'unmatched';
     console.log(JSON.stringify({ app: 'izb-agent', event: 'http.request', at: new Date().toISOString(), method: req.method, endpoint }));
     res.on('finish', () => {
         console.log(JSON.stringify({ app: 'izb-agent', event: 'http.response', at: new Date().toISOString(), method: req.method, endpoint, status: res.statusCode, durationMs: Date.now() - startedAt }));
@@ -208,6 +208,24 @@ app.post('/api/v1/payments/by_date', async (req, res) => {
 });
 // Bank-facing cashbook endpoint (Sage API contract)
 app.post('/api/v1/postCBTxn', proxyPostCashbook);
+// Bank failures are not cashbook notifications and must never invoke Sage.
+app.post('/api/v1/payments/status', async (req, res) => {
+    if (!AGENT_API_KEY || req.headers['x-api-key'] !== AGENT_API_KEY)
+        return res.status(401).json({ error: 'Unauthorized' });
+    if (!APP_API_URL || !PORTAL_API_KEY)
+        return res.status(503).json({ error: 'Portal callback configuration is incomplete' });
+    try {
+        const response = await fetch(`${APP_API_URL}/api/v1/izb/payment-status`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-bank-api-key': PORTAL_API_KEY },
+            body: JSON.stringify(req.body), signal: AbortSignal.timeout(30000), redirect: 'error',
+        });
+        const text = await response.text();
+        res.status(response.status).type(response.headers.get('content-type') || 'application/json').send(text);
+    }
+    catch {
+        return res.status(503).json({ error: 'Unable to confirm portal receipt; retry the same eventId' });
+    }
+});
 async function proxyPostCashbook(req, res) {
     // Only log the generated IDC reference, never bank details or credentials.
     const reference = req.body?.transactionId;
@@ -257,5 +275,5 @@ app.get('/health', (_req, res) => {
 });
 app.listen(port, () => {
     console.log(`IZB agent service running on http://localhost:${port}`);
-    console.log('Bank-facing: POST /api/v1/postCBTxn, POST /api/v1/payments/by_date');
+    console.log('Bank-facing: POST /api/v1/postCBTxn, POST /api/v1/payments/by_date, POST /api/v1/payments/status');
 });
