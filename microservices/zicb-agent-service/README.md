@@ -13,6 +13,10 @@ Payments are submitted through the portal's ZICB H2H ledger. The agent:
 
 There is no bank-facing `/payments` route in this service.
 
+Accepted and unknown payments are automatically queried through their channel's `transaction-status` endpoint using the original batch reference. The default interval is 60 seconds, controlled by `ZICB_H2H_RECONCILE_MS` in the **portal** environment (minimum 60000). Update any old explicit `7200000` setting to enable the shorter interval. Both portal and agent must remain running. Overdue instructions with older or missing schedules are picked up without overriding active agent leases. The worker immediately claims the next due item after completing work, and waits five seconds when idle or after an error; actual polling time also depends on bank latency and queue load.
+
+Each result updates the durable ledger and portal queue automatically. Processing remains accepted and is polled again; unavailable/uncertain responses remain unknown and are polled again. Confirmed paid results require matching transaction details and a bank reference, then trigger accounting only. Confirmed failure/rejection or needs-review outcomes stop automatic polling. Invalid or conflicting results remain for review. Status polling never submits the payment again; callbacks can also settle it safely while a query is in flight.
+
 New IDC instructions use `IDC-YYYY-NNNNN`, for example `IDC-2026-00001` (14 characters). The year follows Africa/Johannesburg time. A transactionally locked database counter starts at 00001 each year and is shared across channels and new recovery attempts. At 99999, new instructions are refused rather than wrapping. This is an IDC format choice within the contract's 35-character limit. Persisted references remain unchanged during reposting, status checks and callbacks. With `DB_SYNC=false`, apply `idcbanksinegration/sql/add_zicb_prcn_sequence.sql` before deployment; otherwise the registered model creates the table through normal database sync. Do not reset the counter after use.
 
 ## Bank HTTP diagnostics

@@ -10,7 +10,18 @@ const ts = require('typescript');
 function fixture() {
   const payments = new Map(), events = new Map(), reservations = new Map(), queue = new Map(), sequences = new Map();
   const unique = () => Object.assign(new Error('duplicate'), { name: 'SequelizeUniqueConstraintError' });
-  const hydrate = data => Object.assign(data, { save: async () => {} });
+  const ops = { lte: Symbol('lte'), or: Symbol('or'), and: Symbol('and'), in: Symbol('in') };
+  const matches = (row, where) => Reflect.ownKeys(where).every(key => {
+    const value = where[key];
+    if (key === ops.or) return value.some(condition => matches(row, condition));
+    if (key === ops.and) return value.every(condition => matches(row, condition));
+    if (value && typeof value === 'object' && !(value instanceof Date)) {
+      if (ops.lte in value) return row[key] != null && new Date(row[key]) <= value[ops.lte];
+      if (ops.in in value) return value[ops.in].includes(row[key]);
+    }
+    return row[key] === value;
+  });
+  const hydrate = data => Object.assign({ updatedAt: new Date() }, data, { save: async function () { this.updatedAt = new Date(); } });
   let tail = Promise.resolve();
   const db = { transaction: (...args) => {
     const run = async () => {
@@ -31,20 +42,18 @@ function fixture() {
     ZicbH2hPayment: {
       create: async data => { if ([...payments.values()].some(row => row.paymentKey === data.paymentKey)) throw unique(); const row = hydrate({ leaseToken: null, leaseUntil: null, ...data }); payments.set(data.queueId, row); return row; },
       findByPk: async id => payments.get(id),
-      findOne: async ({ where }) => [...payments.values()].find(row => where.reference
-        ? row.reference === where.reference && row.prcn === where.prcn && row.channel === where.channel
-        : row.nextRun && new Date(row.nextRun) <= new Date() && (!row.leaseUntil || new Date(row.leaseUntil) <= new Date())),
+      findOne: async ({ where }) => [...payments.values()].find(row => matches(row, where)),
     },
     ZicbH2hEvent: { create: async data => { if (events.has(data.eventId)) throw unique(); events.set(data.eventId, data); }, findByPk: async id => events.get(id) },
     PaymentDispatchReservation: { create: async data => { if (reservations.has(data.paymentKey)) throw unique(); reservations.set(data.paymentKey, data); } },
   };
   const mocks = {
-    'sequelize': { Op: { lte: Symbol('lte'), or: Symbol('or') }, Transaction: { ISOLATION_LEVELS: { READ_COMMITTED: 'READ COMMITTED' } } },
+    'sequelize': { Op: ops, Transaction: { ISOLATION_LEVELS: { READ_COMMITTED: 'READ COMMITTED' } } },
     '../db': { connectDatabase: async () => {}, getSequelize: async () => db },
     '@/app/models/internal/ZicbH2hPayment': models,
     '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: { create: async data => queue.set(data.queueId, data), update: async (data, options) => Object.assign(queue.get(options.where.queueId), data) } },
     '../paymentPostGuard': { findExistingPaymentPost: async () => null },
-    './config': { sourceProfile: () => ({ profileId: 'test', currency: 'ZMW', regionCode: 'TEST', amountScale: 2, channels: ['RTGS', 'DDACC', 'INTERNAL'], cashbookAccount: '4000' }), reconcileDelay: () => 7200000 },
+    './config': { sourceProfile: () => ({ profileId: 'test', currency: 'ZMW', regionCode: 'TEST', amountScale: 2, channels: ['RTGS', 'DDACC', 'INTERNAL'], cashbookAccount: '4000' }), reconcileDelay: () => 60000 },
   };
   const filename = path.resolve(__dirname, '../../../idcbanksinegration/app/lib/zicb/ledger.ts');
   const module = new Module(filename); module.filename = filename; module.paths = Module._nodeModulePaths(path.dirname(filename));
@@ -54,6 +63,73 @@ function fixture() {
   const payment = { paymentId: 'SAGE-1', transactionType: 'RTGS', amount: 27.51, currency: 'ZMW', accountNumber: '0011223', accountName: 'Test', swiftCode: 'TESTZMLX', sortCode: '010001', transactionDate: '2026-09-07', remarks: 'Payment' };
   return { ledger: module.exports, payments, events, reservations, queue, sequences, payment };
 }
+test('accepted payments poll automatically, survive temporary failures, and update the queue without another submission', async () => {
+  const f = fixture();
+  const original = await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const submit = await f.ledger.claimH2hWork();
+  assert.equal(submit.action, 'submit');
+  await f.ledger.reportH2hWork(submit.queueId, submit.leaseToken, { state: 'accepted' });
+  const row = f.payments.get(original.queueId);
+  assert.equal(f.queue.get(row.queueId).status, 'accepted');
+  assert.ok(new Date(row.nextRun).getTime() - Date.now() > 59000);
+  assert.equal(await f.ledger.claimH2hWork(), null);
+  for (const outcome of [
+    { state: 'accepted', rawStatus: 'processing' },
+    { state: 'unknown', error: 'Temporary bank status failure' },
+    { state: 'accepted', rawStatus: 'processing' },
+    { state: 'paid', bankRef: 'BANK-FINAL', rawStatus: 'completed' },
+  ]) {
+    row.nextRun = new Date(0);
+    const poll = await f.ledger.claimH2hWork();
+    assert.equal(poll.action, 'reconcile');
+    assert.deepEqual(poll.batch, submit.batch);
+    await f.ledger.reportH2hWork(poll.queueId, poll.leaseToken, outcome);
+    assert.equal(f.queue.get(row.queueId).status, outcome.state);
+  }
+  assert.equal(JSON.parse(row.document).submissionAttempts, 1);
+  const accounting = await f.ledger.claimH2hWork();
+  assert.equal(accounting.action, 'accounting');
+  await f.ledger.withAccountingLease(accounting.queueId, accounting.leaseToken, async () => ({ posted: true }));
+  assert.equal(await f.ledger.claimH2hWork(), null);
+  assert.equal(f.queue.get(row.queueId).status, 'paid');
+});
+
+test('old accepted/unknown schedules are picked up after one interval without taking active leases', async () => {
+  for (const state of ['accepted', 'unknown']) {
+    const f = fixture();
+    await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+    const submit = await f.ledger.claimH2hWork();
+    await f.ledger.reportH2hWork(submit.queueId, submit.leaseToken, { state });
+    const row = f.payments.get(submit.queueId);
+    row.nextRun = new Date(Date.now() + 7200000);
+    assert.equal(await f.ledger.claimH2hWork(), null);
+    row.updatedAt = new Date(Date.now() - 61000);
+    row.leaseUntil = new Date(Date.now() + 300000);
+    assert.equal(await f.ledger.claimH2hWork(), null);
+    row.leaseUntil = null;
+    const results = await Promise.all([f.ledger.claimH2hWork(), f.ledger.claimH2hWork()]);
+    const claimed = results.filter(Boolean);
+    assert.equal(claimed.length, 1);
+    assert.equal(claimed[0].action, 'reconcile');
+    assert.equal(claimed[0].batch.reference, submit.batch.reference);
+  }
+});
+
+test('automatic status failure stops polling and does not start accounting', async () => {
+  const f = fixture();
+  await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const submit = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(submit.queueId, submit.leaseToken, { state: 'accepted' });
+  const row = f.payments.get(submit.queueId);
+  row.nextRun = new Date(0);
+  const poll = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(poll.queueId, poll.leaseToken, { state: 'failed', error: 'Bank confirmed failure' });
+  assert.equal(f.queue.get(row.queueId).status, 'failed');
+  assert.equal(row.nextRun, null);
+  row.updatedAt = new Date(0);
+  assert.equal(await f.ledger.claimH2hWork(), null);
+});
+
 test('annual PRCN counter allocates unique sequential references for concurrent payments', async () => {
   const f = fixture();
   const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Johannesburg' }).format(new Date()));

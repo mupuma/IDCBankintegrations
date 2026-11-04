@@ -142,8 +142,17 @@ export async function claimH2hWork() {
   const db = await getSequelize();
   return db.transaction({ isolationLevel: Transaction.ISOLATION_LEVELS.READ_COMMITTED }, async transaction => {
     const now = new Date();
+    const overdue = new Date(now.getTime() - reconcileDelay());
     const row = await ZicbH2hPayment.findOne({
-      where: { nextRun: { [Op.lte]: now }, [Op.or]: [{ leaseUntil: null }, { leaseUntil: { [Op.lte]: now } }] },
+      where: { [Op.and]: [
+        { [Op.or]: [
+          { nextRun: { [Op.lte]: now } },
+          // Pick up older accepted/unknown instructions after an interval change
+          // or missing schedule, while preserving active leases and terminal holds.
+          { state: { [Op.in]: ['accepted', 'unknown'] }, updatedAt: { [Op.lte]: overdue } },
+        ] },
+        { [Op.or]: [{ leaseUntil: null }, { leaseUntil: { [Op.lte]: now } }] },
+      ] },
       order: [['next_run', 'ASC']], lock: transaction.LOCK.UPDATE, transaction,
     });
     if (!row) return null;
