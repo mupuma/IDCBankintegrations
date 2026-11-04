@@ -7,6 +7,8 @@ export async function register() {
   // Keep the import itself inside a positive runtime guard so the Edge
   // compilation can eliminate Node-only database dependencies.
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    const { installHttpLogging } = require('../shared/http-logging');
+    installHttpLogging('banks-portal');
     const { connectDatabase } = await import('./app/lib/db');
     await connectDatabase();
   }

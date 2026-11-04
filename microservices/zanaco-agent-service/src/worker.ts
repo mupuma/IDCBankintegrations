@@ -1,4 +1,5 @@
 import 'dotenv/config';
+require('../../../shared/http-logging').installHttpLogging('zanaco-worker');
 import { buildWorker, enqueuePaymentWork, queueScheduler, reserveBankReferences, markSubmissionStarted, findPaymentWork, submissionStarted } from './queue';
 import { processPaymentJob } from './paymentProcessor';
 import { isZanacoServicePayload } from './zanacoValidation';

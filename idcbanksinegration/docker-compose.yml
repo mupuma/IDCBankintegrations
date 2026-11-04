@@ -2,7 +2,9 @@ version: '3.8'
 
 services:
   web:
-    build: .
+    build:
+      context: ..
+      dockerfile: idcbanksinegration/Dockerfile
     depends_on:
       - redis
       - zicb-agent
@@ -32,7 +34,8 @@ services:
 
   zicb-agent:
     build:
-      context: ../microservices/zicb-agent-service
+      context: ..
+      dockerfile: microservices/zicb-agent-service/Dockerfile
     depends_on:
       - redis
     ports:
@@ -47,7 +50,8 @@ services:
 
   zanaco-agent:
     build:
-      context: ../microservices/zanaco-agent-service
+      context: ..
+      dockerfile: microservices/zanaco-agent-service/Dockerfile
     depends_on:
       - redis
     ports:

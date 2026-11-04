@@ -10,6 +10,7 @@ const dotenv_1 = __importDefault(require("dotenv"));
 const db_1 = require("./db");
 //import type { PaymentJobPayload, PaymentsResponse } from './types';
 dotenv_1.default.config();
+require('../../../shared/http-logging').installHttpLogging('izb-agent');
 (0, db_1.initDatabase)();
 const app = (0, express_1.default)();
 const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '') || null;

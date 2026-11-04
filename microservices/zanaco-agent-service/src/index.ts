@@ -1,4 +1,5 @@
 import 'dotenv/config';
+require('../../../shared/http-logging').installHttpLogging('zanaco-agent');
 import express from 'express';
 import cors from 'cors';
 import { enqueuePaymentWork } from './queue';

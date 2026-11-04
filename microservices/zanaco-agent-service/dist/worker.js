@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
+require('../../../shared/http-logging').installHttpLogging('zanaco-worker');
 const queue_1 = require("./queue");
 const paymentProcessor_1 = require("./paymentProcessor");
 const zanacoValidation_1 = require("./zanacoValidation");

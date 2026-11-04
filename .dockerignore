@@ -6,4 +6,6 @@
 !**/.env.h2h.example
 **/*-db.json
 .git
+**/zanaco_keys
+**/*private*.pem
 review-artifacts

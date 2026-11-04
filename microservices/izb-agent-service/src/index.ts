@@ -9,6 +9,7 @@ import { initDatabase } from './db';
 
 
 dotenv.config();
+require('../../../shared/http-logging').installHttpLogging('izb-agent');
 initDatabase();
 
 const app = express();

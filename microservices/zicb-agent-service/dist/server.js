@@ -34,4 +34,5 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
+require('../../../shared/http-logging').installHttpLogging('zicb-agent');
 void Promise.resolve().then(() => __importStar(require('./h2hServer'))).then(({ startH2hService }) => startH2hService());

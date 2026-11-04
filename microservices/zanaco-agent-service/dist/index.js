@@ -4,6 +4,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
+require('../../../shared/http-logging').installHttpLogging('zanaco-agent');
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const queue_1 = require("./queue");
