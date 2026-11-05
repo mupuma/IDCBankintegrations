@@ -5,11 +5,13 @@ import type { BankQueueItem } from '@/app/lib/bankQueue';
 import type { RecoveryAction } from '@/app/lib/paymentRecoveryPolicy';
 
 const LABELS: Record<RecoveryAction, string> = {
+  repost_not_sent: 'Repost payment confirmed never sent',
   retry_connection: 'Retry connection (payment was not sent)',
   check_status: 'Check original bank status', retry_reporting: 'Report saved outcome again',
   retry_accounting: 'Retry accounting only', new_attempt: 'Submit a corrected new attempt',
 };
 const HELP: Record<RecoveryAction, string> = {
+  repost_not_sent: 'Administrator confirmation that this payment was never sent or accepted by the bank. Requeue the original payment with the same batch and item references. A not-found status response alone does not establish this.',
   retry_connection: 'Resume this instruction after fixing the connection or credentials. This is available only with recorded proof that no payment was sent.',
   check_status: 'Check the original bank reference. This does not send another payment.',
   retry_reporting: 'Send the outcome already saved by the agent to the portal. This does not contact the bank payment endpoint.',
@@ -63,7 +65,7 @@ export default function PaymentRecoveryDialog({ item, canRecover, canRetry, onCl
     return () => { controller.abort(); clearInterval(timer); };
   }, [item.id, refresh]);
 
-  const available = (details?.actions || []).filter(value => value === 'new_attempt' ? canRetry : canRecover);
+  const available = (details?.actions || []).filter(value => ['new_attempt', 'repost_not_sent'].includes(value) ? canRetry : canRecover);
   const selected = available.includes(action) ? action : available[0];
   const pending = details?.history.some(entry => ['pending', 'processing'].includes(entry.status));
 
@@ -132,11 +134,11 @@ export default function PaymentRecoveryDialog({ item, canRecover, canRetry, onCl
                 <label className="block text-sm font-semibold">Reason / bank confirmation reference
                   <textarea value={reason} onChange={event => setReason(event.target.value)} required minLength={10} maxLength={1000} disabled={busy || pending || Boolean(message)} className="mt-1 block w-full rounded-xl border p-3" />
                 </label>
-                {selected === 'new_attempt' ? <label className="flex items-start gap-2 text-sm text-amber-900">
+                {['new_attempt', 'repost_not_sent'].includes(selected) ? <label className="flex items-start gap-2 text-sm text-amber-900">
                   <input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)} required disabled={busy || Boolean(message)} />
-                  I reviewed the recorded failure and confirm this corrected new instruction should be submitted. The original instruction remains in the audit history.
+                  {selected === 'repost_not_sent' ? 'I confirm this payment was never sent to or accepted by ZICB and authorise reposting the original instruction.' : 'I reviewed the recorded failure and confirm this corrected new instruction should be submitted. The original instruction remains in the audit history.'}
                 </label> : null}
-                <button disabled={busy || pending || Boolean(message) || reason.trim().length < 10 || (selected === 'new_attempt' && !confirmed)} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? 'Recording request...' : LABELS[selected]}</button>
+                <button disabled={busy || pending || Boolean(message) || reason.trim().length < 10 || (['new_attempt', 'repost_not_sent'].includes(selected) && !confirmed)} className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-semibold text-white disabled:opacity-40">{busy ? 'Recording request...' : LABELS[selected]}</button>
               </form>
             ) : <p className="mt-4 text-sm text-slate-600">No recovery action is available for this outcome or your permissions. Paid payments cannot be resubmitted. Legacy, bulk and conflicting outcomes may require manual bank reconciliation.</p>}
             <h3 className="mt-6 font-semibold">Recovery history</h3>

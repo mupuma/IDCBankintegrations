@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null);
-  const auth = await requirePermission(request, body?.action === 'new_attempt' ? PERMISSIONS.PAYMENTS_RETRY : PERMISSIONS.PAYMENTS_POST);
+  const auth = await requirePermission(request, ['new_attempt', 'repost_not_sent'].includes(body?.action) ? PERMISSIONS.PAYMENTS_RETRY : PERMISSIONS.PAYMENTS_POST);
   if (isAuthError(auth)) return auth;
   try {
     if (!body || typeof body.queueId !== 'string' || body.queueId.length > 100

@@ -1,6 +1,6 @@
 # Infratel ZICB alignment
 
-Portal and ZICB agent aligned with master `5cf5499`. Infratel branding and
+Portal and ZICB agent aligned with master `c86e787` (ZICB flows only). Infratel branding and
 ZICB-only selection are retained. No deployment credentials are copied.
 
 The portal now uses the H2H ledger for all ZICB payments. The agent claims
@@ -24,7 +24,7 @@ Portal `.env` (replace every placeholder):
 
 ```dotenv
 ZICB_H2H_AGENT_KEY=SHARED_PORTAL_AGENT_SECRET
-ZICB_H2H_RECONCILE_MS=7200000
+ZICB_H2H_RECONCILE_MS=60000
 ZICB_H2H_SOURCE_PROFILES={"INFRATEL_SOURCE_CODE":{"profileId":"infratel-uat","regionCode":"BANK_APPROVED_REGION","currency":"ZMW","amountScale":2,"cashbookAccount":"FINANCE_APPROVED_GL_ACCOUNT","channels":["RTGS","DDACC","INTERNAL"]}}
 ```
 
@@ -67,3 +67,27 @@ for the H2H ledger, recovery actions, and vendor details/storage widths.
 Never run these migrations against SQL Server. SQL Server schema changes
 remain blocked; existing authorised cashbook writes and their transaction
 lock remain available. Live bank and database behaviour requires UAT validation.
+
+## Additional ZICB flow updates
+
+New instructions and corrected attempts use the master bank reference format
+`IDC-YYYY-NNNNN`, allocated transactionally per Johannesburg calendar year.
+Existing instruction references remain unchanged. IDC here is the bank reference
+prefix inherited from master; the portal retains Infratel branding.
+When DB_SYNC=false, apply sql/add_zicb_prcn_sequence.sql to portal MySQL before
+starting the updated portal. The annual counter refuses allocations after 99999.
+
+Accepted and unknown payments reconcile every minute by default. Explicit longer
+ZICB_H2H_RECONCILE_MS settings remain effective; update existing configuration
+if one-minute reconciliation is required. Older unresolved schedules are picked
+up without overriding active leases. The agent drains available work immediately.
+
+Recovery / history now offers reposting an unknown payment only with retry
+permission, a recorded reason and explicit operator confirmation that it was
+never sent or accepted. A not-found bank response alone is insufficient.
+The original instruction, references and audit history are retained; settlement
+evidence and active leases block reposting.
+
+The ZICB agent installs shared/http-logging for redacted HTTP and webhook
+exchanges. Deploy that shared directory alongside shared/zicb-h2h, including
+for systemd deployments. See ../HTTP_LOGGING.md for controls.

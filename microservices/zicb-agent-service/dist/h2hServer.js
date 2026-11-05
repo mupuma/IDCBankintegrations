@@ -28,17 +28,20 @@ function startH2hService() {
     async function tick() {
         if (stopped)
             return;
+        let completedWork = false;
         try {
             const work = await portal.claim();
-            if (work)
+            if (work) {
                 await (0, h2hRunner_1.processH2hWork)(work, bank, portal);
+                completedWork = true;
+            }
         }
         catch (error) {
             console.error('[ZICB H2H] Work interrupted; durable lease recovery will reconcile', error instanceof Error ? error.message : 'unknown error');
         }
         finally {
             if (!stopped)
-                setTimeout(() => void tick(), 5000);
+                setTimeout(() => void tick(), completedWork ? 0 : 5000);
         }
     }
     void tick();

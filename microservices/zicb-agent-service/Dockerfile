@@ -6,6 +6,7 @@ RUN npm ci --production=false --prefer-offline --no-audit --progress=false
 
 COPY microservices/zicb-agent-service/ .
 COPY shared/zicb-h2h /app/shared/zicb-h2h
+COPY shared/http-logging /app/shared/http-logging
 RUN npm run build
 
 FROM node:22-alpine AS runner
@@ -16,6 +17,7 @@ COPY --from=builder /app/microservices/zicb-agent-service/package.json ./package
 COPY --from=builder /app/microservices/zicb-agent-service/dist ./dist
 COPY --from=builder /app/microservices/zicb-agent-service/node_modules ./node_modules
 COPY --from=builder /app/shared/zicb-h2h /app/shared/zicb-h2h
+COPY --from=builder /app/shared/http-logging /app/shared/http-logging
 
 EXPOSE 4001
 CMD ["node", "dist/server.js"]

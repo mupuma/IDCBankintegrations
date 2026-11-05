@@ -96,7 +96,8 @@ class H2hClient {
         const controller = new AbortController();
         const started = Date.now();
         const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
-        const httpDiagnostics = process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+        const systemHttpLogging = Boolean(globalThis[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
+        const httpDiagnostics = !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
         const exchangeId = (0, node_crypto_1.randomUUID)();
         const headerLines = (headers) => Array.from(headers.entries()).map(([name, value]) => `${name}: ${/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? '[REDACTED]' : value}`);
         const label = `[ZICB HTTP ${exchangeId}] profile=${context.profileId || '-'} reference=${context.reference || '-'}`;
@@ -121,7 +122,7 @@ class H2hClient {
                     `${label} END RESPONSE`,
                 ].join('\n'));
             }
-            if (process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
+            if (!systemHttpLogging && process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
                 // Explicit diagnostic mode: preserve the exact decoded bank response text.
                 // Do not pass through summary redaction/truncation or log token endpoints.
                 console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent',

@@ -11,7 +11,24 @@ const { H2hClient } = require('../src/h2hClient.ts');
 const { processH2hWork } = require('../src/h2hRunner.ts');
 const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
-const { sourceProfile } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
+const { sourceProfile, reconcileDelay } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
+
+test('automatic status polling defaults to one minute and preserves configured longer intervals', () => {
+  const previous = process.env.ZICB_H2H_RECONCILE_MS;
+  try {
+    delete process.env.ZICB_H2H_RECONCILE_MS;
+    assert.equal(reconcileDelay(), 60000);
+    for (const invalid of ['bad', '0', '-1', '1000', 'Infinity']) {
+      process.env.ZICB_H2H_RECONCILE_MS = invalid;
+      assert.equal(reconcileDelay(), 60000);
+    }
+    process.env.ZICB_H2H_RECONCILE_MS = '120000';
+    assert.equal(reconcileDelay(), 120000);
+  } finally {
+    if (previous === undefined) delete process.env.ZICB_H2H_RECONCILE_MS;
+    else process.env.ZICB_H2H_RECONCILE_MS = previous;
+  }
+});
 // Keep routine test output structured; enable readable diagnostics in its own test.
 process.env.ZICB_H2H_LOG_HTTP = 'false';
 

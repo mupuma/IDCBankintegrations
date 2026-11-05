@@ -11,6 +11,6 @@ export function sourceProfile(sourceBank: string) {
 
 export function reconcileDelay() {
   // This is an operational default, not a claim that the PDF establishes a rate limit.
-  const value = Number(process.env.ZICB_H2H_RECONCILE_MS || 7200000);
-  return Number.isFinite(value) && value >= 60000 ? value : 7200000;
+  const value = Number(process.env.ZICB_H2H_RECONCILE_MS || 60000);
+  return Number.isFinite(value) && value >= 60000 ? value : 60000;
 }
