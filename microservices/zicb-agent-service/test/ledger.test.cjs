@@ -94,6 +94,23 @@ test('accepted payments poll automatically, survive temporary failures, and upda
   assert.equal(f.queue.get(row.queueId).status, 'paid');
 });
 
+test('manual accepted-payment status recovery immediately reconciles and applies the new bank outcome', async () => {
+  const f = fixture();
+  await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const submit = await f.ledger.claimH2hWork();
+  await f.ledger.reportH2hWork(submit.queueId, submit.leaseToken, { state: 'accepted' });
+  const row = f.payments.get(submit.queueId);
+  row.nextRun = new Date(Date.now() + 7200000);
+  await f.ledger.recoverH2hInstruction(row.queueId, 'check_status', { LOCK: { UPDATE: 'UPDATE' } });
+  const poll = await f.ledger.claimH2hWork();
+  assert.equal(poll.action, 'reconcile');
+  assert.deepEqual(poll.batch, submit.batch);
+  await f.ledger.reportH2hWork(poll.queueId, poll.leaseToken, { state: 'paid', bankRef: 'RECOVERED-BANK-REF', rawStatus: 'completed' });
+  assert.equal(f.queue.get(row.queueId).status, 'paid');
+  assert.equal(JSON.parse(f.queue.get(row.queueId).responsePayload).bankStatus, 'completed');
+  assert.equal(JSON.parse(row.document).submissionAttempts, 1);
+});
+
 test('old accepted/unknown schedules are picked up after one interval without taking active leases', async () => {
   for (const state of ['accepted', 'unknown']) {
     const f = fixture();

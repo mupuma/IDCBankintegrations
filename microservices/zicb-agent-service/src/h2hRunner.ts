@@ -34,7 +34,13 @@ export class HttpWorkPortal implements WorkPortal {
       method, headers: { 'Content-Type': 'application/json', 'x-zicb-agent-key': this.key },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(120000), redirect: 'error',
     });
-    if (!response.ok) throw new Error(`H2H portal ${path} failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      const hint = response.status === 401 ? '; configure the same ZICB_H2H_AGENT_KEY in the portal and agent and restart both'
+        : response.status === 404 ? '; check APP_API_URL points to the H2H portal deployment'
+        : response.status === 409 ? '; the work lease changed; inspect the portal work logs'
+        : '; inspect the portal work logs for the database or processing error';
+      throw new Error(`H2H portal ${path} failed (HTTP ${response.status})${hint}`);
+    }
     return response.json() as Promise<any>;
   }
   async claim() { return (await this.request('work', 'POST')).item as H2hWork | null; }
