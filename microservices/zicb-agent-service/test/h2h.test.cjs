@@ -8,7 +8,7 @@ require.extensions['.ts'] = (module, filename) => module._compile(ts.transpileMo
 }).outputText, filename);
 const contract = require('../../../shared/zicb-h2h');
 const { H2hClient } = require('../src/h2hClient.ts');
-const { processH2hWork } = require('../src/h2hRunner.ts');
+const { processH2hWork, HttpWorkPortal } = require('../src/h2hRunner.ts');
 const { handleBankCallback } = require('../src/h2hCallback.ts');
 const security = require('../../../idcbanksinegration/app/lib/zicb/security.ts');
 const { sourceProfile, reconcileDelay } = require('../../../idcbanksinegration/app/lib/zicb/config.ts');
@@ -363,6 +363,39 @@ test('report failures retry only reporting, not bank submission or accounting', 
   const bank = { submit: async () => { sends++; return { state: 'accepted' }; }, reconcile: async () => { throw new Error('unexpected'); } };
   await assert.rejects(processH2hWork(work, bank, { report: async () => { reports++; throw new Error('portal down'); }, account: async () => { accounting++; } }));
   assert.equal(sends, 1); assert.equal(reports, 3); assert.equal(accounting, 0);
+});
+
+test('status checks expose safe authentication and network causes without resubmitting', async () => {
+  const missing = new H2hClient({}, async () => { throw new Error('must not contact bank'); });
+  const absent = await missing.reconcile('missing', 'RTGS', batch());
+  assert.equal(absent.state, 'unknown');
+  assert.match(absent.error, /No agent credentials profile matches/);
+  const denied = new H2hClient({ test: profile }, async () => json(401, { error: 'invalid_client', secret: 'bank-secret' }));
+  const auth = await denied.reconcile('test', 'RTGS', batch());
+  assert.match(auth.error, /Token request rejected \(HTTP 401\)/);
+  assert.doesNotMatch(auth.error, /bank-secret|test-secret/);
+  let sends = 0;
+  const disconnected = new H2hClient({ test: profile }, async (url) => {
+    if (url.includes('client-credentials')) return token();
+    if (url.endsWith('/send-money')) sends++;
+    throw Object.assign(new Error('private endpoint and credentials'), { code: 'ECONNREFUSED' });
+  });
+  const network = await disconnected.reconcile('test', 'RTGS', batch());
+  assert.equal(network.state, 'unknown');
+  assert.match(network.error, /Status request failed \(ECONNREFUSED\)/);
+  assert.doesNotMatch(network.error, /private endpoint|test-secret/);
+  assert.equal(sends, 0);
+});
+
+test('portal claim failures identify agent key and deployment URL configuration', async () => {
+  for (const [status, expected] of [[401, /same ZICB_H2H_AGENT_KEY/], [404, /APP_API_URL/], [503, /portal work logs/]]) {
+    const portal = new HttpWorkPortal('http://portal.test', 'private-key', async () => json(status, { error: 'private database details' }));
+    await assert.rejects(portal.claim(), error => {
+      assert.match(error.message, expected);
+      assert.doesNotMatch(error.message, /private-key|private database details/);
+      return true;
+    });
+  }
 });
 test('accounting recovery never calls the bank', async () => {
   let accounting = 0;

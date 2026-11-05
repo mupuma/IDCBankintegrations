@@ -36,6 +36,8 @@ export async function getRecoveryDetails(queueId: string) {
     queueId, bankCode: row.bankCode, status: row.status, payment: parse(row.paymentPayload),
     actions: recoveryActions(row.bankCode, row.status, evidenceOf(row, h2h), response.accountingStatus),
     evidence: evidenceOf(row, h2h),
+    lastError: row.lastError || null,
+    bankStatus: response.bankStatus || null,
     history: history.map(action => ({ id: action.actionId, action: action.action, status: action.status,
       requestedBy: action.requestedBy, reason: action.reason, result: parse(action.result), createdAt: action.get('createdAt') })),
   };

@@ -20,6 +20,7 @@ const HELP: Record<RecoveryAction, string> = {
 };
 type Details = {
   status: string; actions: RecoveryAction[]; payment: Record<string, any>;
+  lastError?: string | null; bankStatus?: string | null;
   evidence: { notSent?: boolean; confirmedRejected?: boolean };
   history: Array<{ id: string; action: RecoveryAction; status: string; requestedBy: string; reason: string; result: { message?: string; queueId?: string } }>;
 };
@@ -109,6 +110,8 @@ export default function PaymentRecoveryDialog({ item, canRecover, canRetry, onCl
             <p className="mt-4 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
               {details.evidence.notSent ? 'Recorded outcome: payment was not sent.' : details.evidence.confirmedRejected ? 'Recorded outcome: bank-confirmed rejection/failure.' : 'No proof authorising another payment is recorded. Recovery must preserve the original reference.'}
             </p>
+            {details.bankStatus ? <p className="mt-3 text-sm text-slate-700">Last bank status: {details.bankStatus}</p> : null}
+            {details.lastError ? <p role="status" className="mt-3 text-sm text-amber-800">Last bank check / payment error: {details.lastError}</p> : null}
             {pending ? <p className="mt-3 text-sm text-amber-800">A recovery action is waiting for the agent or is being processed.</p> : null}
             {selected ? (
               <form onSubmit={submit} className="mt-4 space-y-4">

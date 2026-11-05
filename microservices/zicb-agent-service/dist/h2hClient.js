@@ -273,12 +273,19 @@ class H2hClient {
     async reconcile(id, channel, batch) {
         try {
             const result = await this.authenticated(id, this.businessUrl(id, channel, 'transaction-status'), 'POST', { ext_batch_ref_no: batch.reference });
-            if (result.status !== 200)
-                return { state: 'unknown', error: `Bank status unavailable (HTTP ${result.status}); original reference retained` };
+            if (result.status !== 200) {
+                const hint = result.status === 401 ? 'check the agent credentials and token configuration'
+                    : result.status === 403 ? 'ask ZICB to check status-query permissions and source IP allowlisting'
+                        : result.status === 404 ? 'confirm the status endpoint and original batch reference with ZICB; not-found does not authorise resubmission'
+                            : 'check the ZICB status service and agent HTTP logs';
+                return { state: 'unknown', error: `Bank status unavailable (HTTP ${result.status}); ${hint}; original reference retained` };
+            }
             return (0, zicb_h2h_1.statusOutcome)(result.body, batch, channel);
         }
-        catch {
-            return { state: 'unknown', error: 'Bank status temporarily unavailable' };
+        catch (error) {
+            const detail = error instanceof H2hAuthenticationError ? error.message
+                : authenticationConnectionError(error).replace(/Token request/g, 'Status request').replace(/authentication/g, 'bank status');
+            return { state: 'unknown', error: `Bank status check failed: ${detail}; original reference retained` };
         }
     }
     async verifyToken(id) {
