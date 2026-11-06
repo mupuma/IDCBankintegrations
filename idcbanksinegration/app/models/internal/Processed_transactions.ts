@@ -59,14 +59,14 @@ export class ProcessedTransaction extends Model<ProcessedTransaction, ProcessedT
   noEntries!: number;
 
   @Column({
-    type: DataType.DOUBLE(4, 2),
+    type: DataType.DECIMAL(19, 2),
     field: 'credit_amount',
     allowNull: false
   })
   creditAmount!: number;
 
   @Column({
-    type: DataType.DOUBLE(4, 2),
+    type: DataType.DECIMAL(19, 2),
     field: 'debit_amount',
     allowNull: false
   })
