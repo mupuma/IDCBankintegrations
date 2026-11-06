@@ -271,7 +271,21 @@ test('accounting failure preserves paid state and retries accounting with canoni
   await f.ledger.reportH2hWork(send.queueId, send.leaseToken, { state: 'accepted' });
   await f.ledger.receiveH2hCallback('RTGS', { reference: send.batch.reference, prcn_number: send.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK1' });
   const first = await f.ledger.claimH2hWork();
-  await f.ledger.withAccountingLease(first.queueId, first.leaseToken, async () => { throw new Error('Sage offline'); });
+  const logs = [], originalError = console.error;
+  let failure;
+  try {
+    console.error = value => logs.push(JSON.parse(value));
+    failure = await f.ledger.withAccountingLease(first.queueId, first.leaseToken, async () => {
+      throw Object.assign(new Error('Sage write failed'), { original: { code: 'EREQUEST', number: 2628,
+        message: "String or binary data would be truncated in table 'CBBTDT', column 'ACCTID'. Truncated value: 'private-account'." }, sql: 'private SQL' });
+    });
+  } finally { console.error = originalError; }
+  assert.match(failure.error, /String or binary data would be truncated/);
+  assert.doesNotMatch(failure.error, /private-account|private SQL/);
+  assert.equal(logs[0].event, 'zicb.h2h.accounting.failed');
+  assert.equal(logs[0].queueId, first.queueId);
+  assert.equal(logs[0].databaseNumber, 2628);
+  assert.equal(logs[0].databaseCode, 'EREQUEST');
   const row = f.payments.get(send.queueId); assert.equal(row.state, 'paid'); assert.equal(JSON.parse(row.document).accounting, 'retry');
   row.nextRun = new Date(0); assert.equal((await f.ledger.claimH2hWork()).action, 'accounting');
 });

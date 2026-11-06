@@ -17,6 +17,22 @@ export type LedgerDocument = {
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
+function accountingFailure(error: unknown) {
+  const value = error as { name?: string; message?: string; original?: { code?: string; number?: number; message?: string }; parent?: { code?: string; number?: number; message?: string } } | null;
+  const database = value?.original || value?.parent;
+  const { redact } = require('../../../../shared/http-logging');
+  let message = String(database?.message || value?.message || 'Unknown accounting failure');
+  // Database errors can echo SQL literals. Keep the diagnostic without values,
+  // connection credentials, raw SQL, bind parameters or complete error objects.
+  for (const [key, secret] of Object.entries(process.env)) {
+    if (/password|secret|token|key/i.test(key) && secret && secret.length >= 4) message = message.split(secret).join('[REDACTED]');
+  }
+  message = redact(message.replace(/'(?:''|[^'])*'/g, "'[REDACTED]'"));
+  return { errorName: String(value?.name || 'Error').slice(0, 80),
+    databaseCode: String(database?.code || '').replace(/[^a-z0-9_-]/gi, '').slice(0, 80),
+    databaseNumber: typeof database?.number === 'number' ? database.number : undefined,
+    message: message.slice(0, 600) };
+}
 async function nextPrcn(transaction: Transaction): Promise<string> {
   const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Johannesburg' }).format(new Date()));
   await ZicbPrcnSequence.findOrCreate({ where: { year }, defaults: { year, lastValue: 0 }, transaction });
@@ -257,7 +273,12 @@ export async function withAccountingLease(queueId: string, leaseToken: string, r
     if (doc.accounting === 'posted') return { posted: true };
     if (row.state !== 'paid' || row.leaseToken !== leaseToken || doc.lastAction !== 'accounting') throw new LedgerError('No current paid-item accounting lease', 409);
     let result;
-    try { result = await run(doc); } catch { result = { posted: false, error: 'Accounting service unavailable; retry scheduled' }; }
+    try { result = await run(doc); } catch (error) {
+      const diagnostic = accountingFailure(error);
+      console.error(JSON.stringify({ event: 'zicb.h2h.accounting.failed', queueId: row.queueId,
+        reference: row.reference, prcn: row.prcn, ...diagnostic }));
+      result = { posted: false, error: `Accounting failed: ${diagnostic.message}; retry scheduled` };
+    }
     doc.accounting = result.posted ? 'posted' : result.review ? 'needs_review' : 'retry';
     doc.accountingError = result.error;
     row.leaseToken = null; row.leaseUntil = null;
