@@ -5,6 +5,7 @@ import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
+import TransactionHealth from '@/app/components/TransactionHealth';
 import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
 import TransactionDetailsDialog from '@/app/components/TransactionDetailsDialog';
 import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
@@ -281,10 +282,10 @@ export default function PaymentQueuesPage() {
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
-                    <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
+                    <td className="px-5 py-4 text-sm"><TransactionHealth status={item.status} error={item.lastError} /></td>
                     <td className="px-5 py-4 text-sm" onClick={event => event.stopPropagation()}>
                       <button type="button" onClick={() => setDetailItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">View details</button>
-                      {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
+                      {['IZB', 'ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">{['failed', 'rejected'].includes(item.status) ? 'Correct details / recovery' : 'Recovery / history'}</button> : null}
                     </td>
                   </tr>
                 ))
@@ -301,7 +302,7 @@ export default function PaymentQueuesPage() {
         />
       </div>
       {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
-        canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
+        canEdit={hasPermission(PERMISSIONS.BANK_DETAILS_WRITE)} canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
         onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
       {detailItem ? <TransactionDetailsDialog key={detailItem.id} item={detailItem} onClose={() => setDetailItem(null)} /> : null}
     </div>

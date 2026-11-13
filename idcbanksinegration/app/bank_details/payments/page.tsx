@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { paymentErrors } from '../../../../shared/zicb-h2h';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
+import TransactionHealth from '@/app/components/TransactionHealth';
 import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
@@ -1424,7 +1425,7 @@ export default function PaymentQueueDashboard() {
                               {bankResponseReferences(bankQueueItems.find(item => item.paymentId === payment.paymentId)?.response).filter(ref => ref.label.startsWith('Bank')).map(ref => <div key={`${ref.label}:${ref.value}`} className="select-all break-all font-mono">{ref.value}</div>)}
                               {!bankResponseReferences(bankQueueItems.find(item => item.paymentId === payment.paymentId)?.response).some(ref => ref.label.startsWith('Bank')) ? <span className="ml-1">Not received</span> : null}
                             </div> : null}
-                            {queueStatus.lastError ? <div className="mt-1 text-rose-700">Error: {queueStatus.lastError}</div> : null}
+                            <div className="mt-1">Error: <TransactionHealth status={queueStatus.status} error={queueStatus.lastError} /></div>
                           </div>
                         ) : null}
                         {validation && !validation.valid ? (

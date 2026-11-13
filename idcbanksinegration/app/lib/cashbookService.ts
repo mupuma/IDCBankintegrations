@@ -707,14 +707,18 @@ function queueIdentifiersForReceipt(receipt: ReceiptRequest) {
 
 function queuePayloadMatchesReceipt(record: PaymentQueueRequest, identifiers: string[]) {
   if (!identifiers.length) return false;
-  if (identifiers.includes(normalizeMatchValue(record.paymentId))) return true;
 
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(record.paymentPayload) as Record<string, unknown>;
   } catch {
-    return false;
+    return identifiers.includes(normalizeMatchValue(record.paymentId));
   }
+
+  if (record.bankCode === 'IZB' && payload.izbAttemptReference) {
+    return identifiers.includes(normalizeMatchValue(payload.izbAttemptReference));
+  }
+  if (identifiers.includes(normalizeMatchValue(record.paymentId))) return true;
 
   const payloadIdentifiers = [
     payload.paymentId,

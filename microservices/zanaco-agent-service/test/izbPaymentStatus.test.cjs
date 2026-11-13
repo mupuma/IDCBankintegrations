@@ -40,6 +40,17 @@ function fixture() {
   };
 }
 
+test('IZB callbacks identify corrected attempts separately from the original Sage payment', async () => {
+  const f = fixture();
+  f.addRow({ queueId: 'CORRECTED', status: 'pulled', paymentPayload: JSON.stringify({ paymentId: f.event.transactionId,
+    transactionId: 'IDCNEW123456', izbAttemptReference: 'IDCNEW123456', recoveryOf: 'QUEUE-1' }) });
+  await f.record({ ...f.event, eventId: 'OLD-FAIL' });
+  assert.equal(f.rows[0].status, 'failed'); assert.equal(f.rows[1].status, 'pulled');
+  await f.record({ ...f.event, eventId: 'NEW-FAIL', transactionId: 'IDCNEW123456' });
+  assert.equal(f.rows[1].status, 'failed');
+  assert.equal(f.audits[1].resourceId, 'CORRECTED');
+});
+
 test('IZB bank failure updates the original payment and error, without creating a cashbook or changing money', async () => {
   const f = fixture(); const before = f.rows[0].paymentPayload;
   const result = await f.record(f.event);

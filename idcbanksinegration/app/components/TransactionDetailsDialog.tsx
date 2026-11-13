@@ -1,5 +1,6 @@
 'use client';
 
+import TransactionHealth from '@/app/components/TransactionHealth';
 import { useEffect, useRef } from 'react';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
@@ -28,6 +29,7 @@ export default function TransactionDetailsDialog({ item, onClose }: { item: Bank
     </div>
     <div className="my-5 rounded-xl bg-slate-50 p-4">
       <p className="font-semibold">{item.bankCode} · {item.status}</p>
+      <p className="mt-2 text-sm">Error: <TransactionHealth status={item.status} error={item.lastError} /></p>
       {references.length ? references.map(ref => <p key={`${ref.label}:${ref.value}`} className="mt-2 break-all text-sm"><strong>{ref.label}:</strong> <span className="font-mono">{ref.value}</span></p>) : <p className="mt-2 text-sm text-slate-500">No bank reference received yet.</p>}
     </div>
     <div className="grid gap-6 md:grid-cols-2">

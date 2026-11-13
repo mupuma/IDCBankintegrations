@@ -1,23 +1,23 @@
-export type RecoveryAction = 'retry_connection' | 'check_status' | 'retry_reporting' | 'retry_accounting' | 'new_attempt' | 'repost_not_sent';
+export type RecoveryAction = 'edit_details' | 'retry_connection' | 'check_status' | 'retry_reporting' | 'retry_accounting' | 'new_attempt' | 'repost_not_sent';
 export type RecoveryEvidence = {
   protocol?: string; notSent?: boolean; retryable?: boolean; confirmedRejected?: boolean;
 };
 export function recoveryActions(bank: string, status: string, evidence: RecoveryEvidence = {}, accounting?: string) {
   const actions: RecoveryAction[] = [];
-  if (!['ZANACO', 'ZICB'].includes(bank)) return actions;
+  if (!['IZB', 'ZANACO', 'ZICB'].includes(bank)) return actions;
   if (bank === 'ZICB' && status === 'paid') return actions;
   if (['success', 'paid', 'queued'].includes(status)) return actions;
   if (bank === 'ZICB' && status === 'unknown' && !evidence.confirmedRejected) actions.push('repost_not_sent');
   if (bank === 'ZANACO' && ['processing', 'unknown', 'accepted', 'failed', 'rejected', 'needs_review'].includes(status)) actions.push('retry_reporting');
-  if (!evidence.notSent && ['processing', 'submitting', 'unknown', 'accepted', 'needs_review', 'failed', 'rejected'].includes(status)) actions.push('check_status');
+  if (bank !== 'IZB' && !evidence.notSent && ['processing', 'submitting', 'unknown', 'accepted', 'needs_review', 'failed', 'rejected'].includes(status)) actions.push('check_status');
   if (evidence.notSent && evidence.retryable && ['failed', 'rejected', 'processing'].includes(status)) actions.push('retry_connection');
-  if (['failed', 'rejected'].includes(status) && (evidence.confirmedRejected || (evidence.notSent && !evidence.retryable))) actions.push('new_attempt');
+  if (['failed', 'rejected'].includes(status) && (evidence.confirmedRejected || (evidence.notSent && !evidence.retryable))) actions.push('edit_details', 'new_attempt');
   return actions;
 }
 
 export function correctedPayment(original: Record<string, any>, corrections: unknown) {
   if (!corrections || typeof corrections !== 'object' || Array.isArray(corrections)) throw new Error('Corrections must be an object');
-  const allowed = ['accountName', 'accountNumber', 'bankName', 'swiftCode', 'sortCode', 'tpin', 'purposeCode', 'sectorCode', 'physicalAddress'];
+  const allowed = PAYMENT_DETAIL_FIELDS;
   const output = { ...original };
   for (const [key, value] of Object.entries(corrections)) {
     if (!allowed.includes(key)) throw new Error(`Cannot change ${key} when retrying a payment`);
@@ -25,7 +25,12 @@ export function correctedPayment(original: Record<string, any>, corrections: unk
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Physical address must be an object');
       const address = value as Record<string, unknown>;
       if (Object.keys(address).some(field => !['plotNo', 'streetName', 'town'].includes(field))) throw new Error('Unsupported address field');
-      output.physicalAddress = Object.fromEntries(['plotNo', 'streetName', 'town'].map(field => [field, String(address[field] ?? '').trim()]));
+      const nextAddress = { ...original.physicalAddress };
+      for (const [field, value] of Object.entries(address)) {
+        if (typeof value !== 'string' || value.length > 255) throw new Error(`Invalid physical address ${field}`);
+        nextAddress[field] = value.trim();
+      }
+      output.physicalAddress = nextAddress;
     } else {
       if (typeof value !== 'string' || value.length > 255) throw new Error(`Invalid ${key}`);
       output[key] = value.trim();
@@ -33,4 +38,13 @@ export function correctedPayment(original: Record<string, any>, corrections: unk
     }
   }
   return output;
+}
+
+export const PAYMENT_DETAIL_FIELDS = ['accountName', 'accountNumber', 'bankName', 'branchCode', 'swiftCode', 'sortCode', 'tpin', 'purposeCode', 'sectorCode', 'physicalAddress', 'email', 'phoneNumber', 'countryOfOrigin'];
+export function paymentDetailChanges(before: Record<string, any>, after: Record<string, any>) {
+  return PAYMENT_DETAIL_FIELDS.flatMap(field => {
+    const oldValue = (field === 'tpin' ? before.tpin ?? before.tpIn : before[field]) ?? null;
+    const newValue = (field === 'tpin' ? after.tpin ?? after.tpIn : after[field]) ?? null;
+    return JSON.stringify(oldValue) === JSON.stringify(newValue) ? [] : [{ field, before: oldValue, after: newValue }];
+  });
 }

@@ -153,3 +153,16 @@ test('IZB bank reference is retained in the local queue response for reconciliat
   assert.equal(JSON.parse(f.queue.responsePayload).bankNotification.bankResponse.bankReference, 'IZB-RECON-009');
   assert.equal(f.writes.length, 0);
 });
+
+test('success notifications for corrected IZB attempts cannot match their predecessor by shared Sage ID', async () => {
+  const f = fixture();
+  f.queue.paymentPayload = JSON.stringify({ paymentId: f.notification.transactionId,
+    transactionId: 'IDCNEW123456', izbAttemptReference: 'IDCNEW123456', recoveryOf: 'predecessor' });
+  await f.core.processCashbookReceipt(f.notification);
+  assert.equal(f.queue.status, 'failed', 'old success callback must not complete the successor');
+  const corrected = { ...f.notification, transactionId: 'IDCNEW123456',
+    entries: f.notification.entries.map(entry => ({ ...entry, referenceNo: 'IDCNEW123456' })) };
+  await f.core.processCashbookReceipt(corrected);
+  assert.equal(f.queue.status, 'success');
+  assert.equal(JSON.parse(f.queue.responsePayload).bankNotification.transactionId, 'IDCNEW123456');
+});

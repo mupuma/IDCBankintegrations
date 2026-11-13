@@ -21,6 +21,8 @@ const ACTION_LABELS: Record<string, string> = {
   LOGIN_FAILED: 'Login failed',
   LOGOUT: 'Logout',
   PAYMENT_POSTED: 'Payment posted',
+  PAYMENT_DETAILS_UPDATED: 'Failed payment details corrected',
+  PAYMENT_CORRECTED_ATTEMPT: 'Corrected payment attempt submitted',
   BANK_DETAILS_CREATED: 'Bank details created',
   BANK_DETAILS_UPDATED: 'Bank details updated',
   BANK_DETAILS_DELETED: 'Bank details deleted',

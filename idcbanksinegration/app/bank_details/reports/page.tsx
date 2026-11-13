@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import TransactionHealth from '@/app/components/TransactionHealth';
 import Pagination from '@/app/components/Pagination';
 import TransactionDetailsDialog from '@/app/components/TransactionDetailsDialog';
 import { usePortalUser } from '@/app/lib/usePortalUser';
@@ -103,7 +104,7 @@ export default function TransactionReportsPage() {
           <td className={cellClass}>{row.vendorId}<div>{row.beneficiary}</div></td><td className={`${cellClass} font-mono`}>{row.account}</td>
           <td className={cellClass}>{row.amount || 'Missing'} {row.currency}</td><td className={cellClass}>{row.transactionType}</td>
           <td className={cellClass}>{row.status}<div className="text-xs text-slate-500">{row.statusScope}</div></td><td className={`${cellClass} select-all font-mono`}>{row.bankReferences || 'Not received'}</td>
-          <td className={`${cellClass} max-w-sm !whitespace-normal text-xs`}>{row.dataQuality}<div className="mt-1 text-rose-700">{row.error}</div></td>
+          <td className={`${cellClass} max-w-sm !whitespace-normal text-xs`}>{row.dataQuality}<div className="mt-1"><TransactionHealth status={row.status} error={row.error} /></div></td>
         </tr>)}
         {!data.total ? <tr><td colSpan={10} className="p-8 text-center text-slate-500">No transactions match these filters. Try all dates or all statuses.</td></tr> : null}
       </tbody></table></div><Pagination page={page} pageSize={pageSize} total={data.total} onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1); }} /></section>

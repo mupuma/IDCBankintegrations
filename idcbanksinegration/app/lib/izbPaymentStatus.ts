@@ -23,6 +23,9 @@ function inputOf(body: unknown): Failure {
 function identifiersOf(row: PaymentQueueRequest) {
   let payment: Record<string, unknown> = {};
   try { payment = JSON.parse(row.paymentPayload); } catch { /* retain the canonical paymentId */ }
+  // Each corrected attempt has its own bank-facing identity. Delayed callbacks
+  // for the predecessor must never update the successor sharing its Sage ID.
+  if (payment.izbAttemptReference) return [String(payment.izbAttemptReference).trim()];
   return [...new Set([row.paymentId, payment?.paymentId, payment?.transactionId].filter(value => typeof value === 'string' && value.trim()).map(value => String(value).trim()))];
 }
 
