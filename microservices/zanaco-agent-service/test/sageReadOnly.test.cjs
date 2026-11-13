@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const { load } = require('./helpers/portal.cjs');
 const prefix = 'idcbanksinegration/app/';
 const policy = load(prefix + 'lib/sageQueryPolicy.ts');
+const MssqlQueryGenerator = require('../../../idcbanksinegration/node_modules/sequelize/lib/dialects/mssql/query-generator');
+const versionCheck = MssqlQueryGenerator.prototype.versionQuery();
 
 test('Sage connection authenticates without schema SQL even when the old sync flag is enabled', async () => {
   const calls = [];
@@ -10,7 +12,12 @@ test('Sage connection authenticates without schema SQL even when the old sync fl
     tedious: {},
     'sequelize-typescript': { Sequelize: class {
       constructor() { this.query = async sql => { calls.push(sql); return []; }; }
-      async authenticate() { await this.query('SELECT 1+1 AS result'); }
+      async authenticate() {
+        // A fresh real Sequelize connection checks the server version before
+        // authentication. This must remain possible when Sage writes are off.
+        await this.query(versionCheck);
+        await this.query('SELECT 1+1 AS result');
+      }
     } },
     './sageQueryPolicy': policy,
   };
@@ -24,22 +31,33 @@ test('Sage connection authenticates without schema SQL even when the old sync fl
     delete process.env.SAGE_ALLOW_CASHBOOK_WRITES;
     const db = load(prefix + 'lib/sageDb.ts', mocks);
     await db.connectSageDatabase();
-    assert.deepEqual(calls, ['SELECT 1+1 AS result']);
+    assert.deepEqual(calls, [versionCheck, 'SELECT 1+1 AS result']);
     assert.throws(() => db.default.query('ALTER TABLE VENBANK ADD TPIN VARCHAR(20)'), /changes are disabled/);
     assert.throws(() => db.default.query('CREATE TABLE VENBANK (ID INT)'), /changes are disabled/);
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
     // Old environment flags must not re-enable Sage writes.
     process.env.SAGE_ALLOW_CASHBOOK_WRITES = 'true';
     for (const sql of ['BEGIN TRANSACTION', 'INSERT INTO CBBTHD (BTCHENTRY) VALUES (1)',
       'UPDATE CBBCTL SET CNTBTCH = 2', 'DELETE FROM CBBTHD', policy.SAGE_CASHBOOK_LOCK_SQL]) {
       assert.throws(() => db.default.query(sql), /read-only/);
     }
-    assert.equal(calls.length, 1);
+    assert.equal(calls.length, 2);
   } finally {
     if (previous === undefined) delete process.env.SAGE_SYNC_VENBANK_SCHEMA;
     else process.env.SAGE_SYNC_VENBANK_SCHEMA = previous;
     if (previousCashbook === undefined) delete process.env.SAGE_ALLOW_CASHBOOK_WRITES;
     else process.env.SAGE_ALLOW_CASHBOOK_WRITES = previousCashbook;
+  }
+});
+
+test('the installed Sequelize version check can bootstrap read-only Sage connections without opening a write bypass', () => {
+  assert.equal(versionCheck, policy.SAGE_VERSION_CHECK_SQL);
+  assert.doesNotThrow(() => policy.assertSageQueryAllowed(versionCheck, false));
+  assert.doesNotThrow(() => policy.assertSageQueryAllowed({ query: versionCheck }, false));
+  for (const sql of [versionCheck + '; INSERT INTO CBBCTL (BANKCODE) VALUES (1)',
+    versionCheck + '; DELETE FROM APPYM', versionCheck + '; UPDATE APVEN SET NAMEVEND = 1',
+    versionCheck + '; EXEC sp_executesql @sql', 'DECLARE @value INT; SET @value=1; SELECT @value']) {
+    assert.throws(() => policy.assertSageQueryAllowed(sql, false));
   }
 });
 
