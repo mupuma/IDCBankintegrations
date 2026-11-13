@@ -216,6 +216,7 @@ export default function PaymentQueuesPage() {
               <tr className="bg-slate-50 border-b border-slate-200/60">
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference / Description</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank Reference</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Vendor</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Amount</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Txn Type</th>
@@ -229,13 +230,13 @@ export default function PaymentQueuesPage() {
             <tbody className="divide-y divide-slate-100">
               {error ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-rose-700">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-rose-700">
                     {error}
                   </td>
                 </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-500">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-slate-500">
                     {loading ? 'Loading queue items...' : appliedSearch.text ? 'No payments match this search.' : 'No queue transactions found.'}
                   </td>
                 </tr>
@@ -248,13 +249,19 @@ export default function PaymentQueuesPage() {
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">
                       <button type="button" onClick={() => setDetailItem(item)} className="text-left font-mono font-semibold text-slate-800 underline decoration-slate-300 underline-offset-4">{getQueuePaymentSummary(item).reference}</button>
-                      {bankResponseReferences(item.response).map(ref => <div key={`${ref.label}:${ref.value}`} className="mt-1 break-all text-xs text-slate-700"><strong>{ref.label}:</strong> <span className="font-mono">{ref.value}</span></div>)}
+
                       {getQueuePaymentSummary(item).description ? (
                         <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-slate-500">
                           {getQueuePaymentSummary(item).description}
                         </div>
                       ) : null}
                       {getQueuePaymentSummary(item).batchReference ? <div className="mt-1 text-xs text-slate-500">Batch: {getQueuePaymentSummary(item).batchReference}</div> : null}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {bankResponseReferences(item.response).filter(ref => ref.label.startsWith('Bank')).length
+                        ? bankResponseReferences(item.response).filter(ref => ref.label.startsWith('Bank')).map(ref => (
+                          <div key={`${ref.label}:${ref.value}`} className="mb-2"><div className="text-xs text-slate-500">{ref.label}</div><span className="select-all break-all font-mono font-semibold">{ref.value}</span></div>
+                        )) : <span className="text-xs text-slate-500">Not received</span>}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).vendor}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).amount.toFixed(2)} {getQueuePaymentSummary(item).currency}</td>

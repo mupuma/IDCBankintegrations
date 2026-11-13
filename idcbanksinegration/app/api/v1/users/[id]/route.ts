@@ -36,7 +36,7 @@ export async function PUT(
 
   if (body?.role !== undefined) {
     const role = normalizeRole(body.role);
-    if (!Object.values(ROLES).includes(role)) {
+    if (!Object.values(ROLES).some(value => value === String(body?.role ?? '').toUpperCase())) {
       return NextResponse.json({ error: 'Invalid role.' }, { status: 400 });
     }
     user.role = role;

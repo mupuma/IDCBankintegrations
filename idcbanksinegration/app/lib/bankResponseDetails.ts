@@ -1,4 +1,6 @@
 const REFERENCE_LABELS: Record<string, string> = {
+  bankreferenceno: 'Bank reference', bankreferencenumber: 'Bank reference', bankrefno: 'Bank reference',
+  banktransactionreference: 'Bank transaction reference', banktransactionid: 'Bank transaction ID',
   bankref: 'Bank reference', bankreference: 'Bank reference', tranrefno: 'Bank transaction reference',
   batchreference: 'Bank batch reference', prcnnumber: 'PRCN', externaltranref: 'External reference',
   transactionreference: 'Transaction reference', reference: 'Instruction reference',
@@ -10,7 +12,7 @@ export function bankResponseReferences(response: unknown) {
   function visit(value: unknown, depth: number) {
     if (!value || typeof value !== 'object' || depth > 12) return;
     for (const [key, child] of Object.entries(value)) {
-      const label = REFERENCE_LABELS[key.toLowerCase().replace(/[_-]/g, '')];
+      const label = REFERENCE_LABELS[key.toLowerCase().replace(/[^a-z0-9]/g, '')];
       if (label && (typeof child === 'string' || typeof child === 'number') && String(child).trim()) {
         const text = String(child).trim(), identity = `${label}:${text}`;
         if (!seen.has(identity)) { references.push({ label, value: text }); seen.add(identity); }

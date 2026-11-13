@@ -2,19 +2,16 @@ import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import type { PaymentsResponse, BankCode } from '../../../models/dtos';
 import { BANK_CODES } from '../../../lib/banks';
-import { verifySessionToken } from '../../auth/login/middleware/auth';
+import { isAuthError, requirePermission } from '../../../lib/rbac';
+import { PERMISSIONS } from '../../../lib/permissions';
 import { enqueuePayment, getQueueItem, getAllQueueItems, getQueueItemsByBank, ensureQueueItemProcessing } from '../../../lib/bankQueue';
 import { connectDatabase } from '../../../lib/db';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 
 export async function POST(request: NextRequest) {
-  const sessionToken = request.cookies.get('session')?.value;
-  const user = await verifySessionToken(sessionToken);
-
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  }
+  const auth = await requirePermission(request, PERMISSIONS.PAYMENTS_POST);
+  if (isAuthError(auth)) return auth;
 
   const body = await request.json();
   const bankCode = String(body?.bankCode ?? '').toUpperCase() as BankCode;
@@ -80,6 +77,8 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requirePermission(request, PERMISSIONS.QUEUES_READ);
+  if (isAuthError(auth)) return auth;
   const queueId = request.nextUrl.searchParams.get('queueId');
   const bankCode = request.nextUrl.searchParams.get('bankCode') as BankCode | null;
 

@@ -145,3 +145,11 @@ test('original bank reference and extra response fields survive normalization', 
   const normalized = contract.normalizeReceiptRequest(original);
   assert.deepEqual(normalized.bankResponse, original);
 });
+
+test('IZB bank reference is retained in the local queue response for reconciliation', async () => {
+  const f = fixture();
+  const receipt = contract.normalizeReceiptRequest({ ...f.notification, bankReference: 'IZB-RECON-009' });
+  assert.equal((await f.core.processCashbookReceipt(receipt)).success, true);
+  assert.equal(JSON.parse(f.queue.responsePayload).bankNotification.bankResponse.bankReference, 'IZB-RECON-009');
+  assert.equal(f.writes.length, 0);
+});

@@ -1,3 +1,4 @@
+import { bankResponseReferences } from './bankResponseDetails';
 import type { BankQueueItem } from './bankQueue';
 
 export const QUEUE_SEARCH_FIELDS = [
@@ -39,7 +40,7 @@ export function matchesQueueSearch(item: BankQueueItem, field: QueueSearchField,
     vendor: [payment.vendorId, payment.accountName, payment.name, payment.customerNo,
       request.vendorId, request.name, request.accountName, request.beneName, request.customerId, request.customerNo,
       ...children.flatMap(child => [child.vendorId, child.accountName, child.name])],
-    reference: [item.id, item.paymentId, payment.transactionId, payment.transactionReference, payment.externalTranRef,
+    reference: [...bankResponseReferences(item.response).map(ref => ref.value), item.id, item.paymentId, payment.transactionId, payment.transactionReference, payment.externalTranRef,
       payment.reference, request.externalTranRef, request.batchName, request.reference,
       request.transferRef, request.transactionReference, request.transactionId,
       response.transactionId, response.reference, response.prcn_number, response.bankRef, response.batchId,

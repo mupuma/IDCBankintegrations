@@ -246,6 +246,7 @@ test('callback before submission report remains paid with bank responses saved l
   assert.equal(await f.ledger.claimH2hWork(), null);
   const response = JSON.parse(f.queue.get(work.queueId).responsePayload);
   assert.equal(response.bankRef, 'BANK1');
+  assert.ok(Number.isFinite(Date.parse(response.outcomeRecordedAt)));
   assert.deepEqual(response.bankCallback, callback);
   assert.equal(response.accountingStatus, 'not_required');
 });

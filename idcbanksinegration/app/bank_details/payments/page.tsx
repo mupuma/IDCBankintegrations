@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { paymentErrors } from '../../../../shared/zicb-h2h';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import { motion, AnimatePresence } from 'framer-motion';
+import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
+import { usePortalUser } from '@/app/lib/usePortalUser';
+import { PERMISSIONS } from '@/app/lib/permissions';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPaymentSelection } from '@/app/lib/banks/payloadBuilders';
@@ -463,6 +466,8 @@ function validatePayment(payment: EnrichedPayment, bankCode: BankCode, transacti
 }
 
 export default function PaymentQueueDashboard() {
+  const { hasPermission } = usePortalUser();
+  const canPost = hasPermission(PERMISSIONS.PAYMENTS_POST);
   const [startDate, setStartDate] = useState(() => {
     const date = new Date();
     date.setDate(date.getDate() - 7);
@@ -789,6 +794,7 @@ export default function PaymentQueueDashboard() {
   };
 
   const handlePush = async (payment: EnrichedPayment) => {
+    if (!canPost) return;
     if (submittingPayments[payment.paymentId]) return;
     setSubmissionErrors((prev) => ({ ...prev, [payment.paymentId]: '' }));
     const bankCode = selectedQueues[payment.paymentId];
@@ -896,6 +902,7 @@ export default function PaymentQueueDashboard() {
   };
 
   const handleBulkPush = async () => {
+    if (!canPost) return;
     if (!selectedPayments.length) {
       setMessage('Select at least one payment to send.');
       return;
@@ -1171,7 +1178,7 @@ export default function PaymentQueueDashboard() {
           <button
             type="button"
             onClick={handleBulkPush}
-            disabled={!selectedPayments.length || bulkSubmitting}
+            disabled={!canPost || !selectedPayments.length || bulkSubmitting}
             className="inline-flex items-center justify-center rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
           >
             {bulkSubmitting ? 'Sending...' : `Send ${selectedPayments.length || ''}`.trim()}
@@ -1381,7 +1388,7 @@ export default function PaymentQueueDashboard() {
                             type="button"
                             onClick={() => handlePush(payment)}
                             className="p-2 text-slate-400 hover:text-emerald-700 hover:bg-emerald-50 rounded-xl transition-all outline-none disabled:opacity-40 disabled:cursor-not-allowed"
-                            disabled={!selectedBank || !validation?.valid || isQueued || isAlreadyPosted || submittingPayments[payment.paymentId] || bulkSubmitting}
+                            disabled={!canPost || !selectedBank || !validation?.valid || isQueued || isAlreadyPosted || submittingPayments[payment.paymentId] || bulkSubmitting}
                           >
                             {isAlreadyPosted ? 'Posted' : submittingPayments[payment.paymentId] ? 'Submitting...' : 'Push'}
                           </button>
@@ -1412,6 +1419,11 @@ export default function PaymentQueueDashboard() {
                             <div className="font-semibold mb-1">{isAlreadyPosted ? 'Posted to bank' : 'Queue status'}:</div>
                             <div>Status: <span className="font-semibold">{queueStatus.status}</span></div>
                             {postedBank ? <div className="mt-1">Bank: <span className="font-semibold">{postedBank}</span></div> : null}
+                            {postedBank === 'IZB' ? <div className="mt-2">
+                              <span className="font-semibold">Bank references:</span>
+                              {bankResponseReferences(bankQueueItems.find(item => item.paymentId === payment.paymentId)?.response).filter(ref => ref.label.startsWith('Bank')).map(ref => <div key={`${ref.label}:${ref.value}`} className="select-all break-all font-mono">{ref.value}</div>)}
+                              {!bankResponseReferences(bankQueueItems.find(item => item.paymentId === payment.paymentId)?.response).some(ref => ref.label.startsWith('Bank')) ? <span className="ml-1">Not received</span> : null}
+                            </div> : null}
                             {queueStatus.lastError ? <div className="mt-1 text-rose-700">Error: {queueStatus.lastError}</div> : null}
                           </div>
                         ) : null}

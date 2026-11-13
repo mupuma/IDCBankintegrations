@@ -113,6 +113,26 @@ export async function reportBankQueueResult(
       ...(updates.response !== undefined ? { responsePayload: JSON.stringify(updates.response) } : {}),
     };
 
+    // Keep the locally recorded outcome date stable when an agent replays its
+    // saved result. Reconciliation reports must not move payments to a new day.
+    if (['success', 'paid', 'failed', 'rejected', 'partially_completed'].includes(updates.status)) {
+      let previous: Record<string, unknown> = {};
+      try {
+        const saved = JSON.parse(existing.responsePayload || '{}');
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) previous = saved;
+      } catch { /* new response remains authoritative */ }
+      const sameOutcome = existing.status === updates.status
+        || ['success', 'paid'].includes(existing.status) && ['success', 'paid'].includes(updates.status);
+      const incoming = updates.response === undefined ? previous : updates.response;
+      const body = incoming && typeof incoming === 'object' && !Array.isArray(incoming) ? incoming : { bankResponse: incoming };
+      const preservedDate = sameOutcome ? previous.outcomeRecordedAt || previous.processedAt || previous.receivedAt : undefined;
+      const historicalDate = sameOutcome && !preservedDate && existing.updatedAt ? new Date(existing.updatedAt).toISOString() : undefined;
+      statusUpdate.responsePayload = JSON.stringify({ ...body,
+        outcomeRecordedAt: preservedDate || historicalDate || new Date().toISOString(),
+        outcomeDateSource: historicalDate ? 'historical' : sameOutcome ? previous.outcomeDateSource : undefined,
+      });
+    }
+
     if (updates.status === 'success' || updates.status === 'failed' || updates.status === 'queued') {
       statusUpdate.lockedBy = null;
       statusUpdate.lockedAt = null;

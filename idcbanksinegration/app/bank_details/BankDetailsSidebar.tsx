@@ -14,6 +14,12 @@ type NavItem = {
 
 const coreNavItems: NavItem[] = [
   {
+    name: 'Transaction Reports',
+    href: '/bank_details/reports',
+    permission: PERMISSIONS.REPORTS_READ,
+    icon: <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeWidth={2} d="M4 3h16v18H4zM8 8h8M8 12h8M8 16h5" /></svg>,
+  },
+  {
     name: 'Vendor Bank Details',
     href: '/bank_details',
     permission: PERMISSIONS.BANK_DETAILS_READ,

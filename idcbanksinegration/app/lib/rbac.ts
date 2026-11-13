@@ -24,7 +24,7 @@ function sessionFromToken(payload: {
 }): SessionUser | null {
   if (!payload?.sub || !payload?.username) return null;
 
-  const role = String(payload.role ?? 'OPERATOR');
+  const role = String(payload.role ?? 'VIEWER');
   return {
     id: Number(payload.sub),
     username: String(payload.username),
@@ -44,7 +44,7 @@ export async function getSessionUser(request: NextRequest): Promise<SessionUser 
     const user = await User.findByPk(fromToken.id);
     if (user?.isActive === false) return null;
     if (user) {
-      const role = user.role ?? fromToken.role;
+      const role = user.role ?? 'VIEWER';
       return {
         id: user.id,
         username: user.username,
@@ -53,10 +53,11 @@ export async function getSessionUser(request: NextRequest): Promise<SessionUser 
       };
     }
   } catch (error) {
-    console.error('Session user DB lookup failed, using token claims:', error);
+    console.error('Session user DB lookup failed; access denied:', error);
   }
 
-  return fromToken;
+  // Current database roles must be available to enforce separation of duties.
+  return null;
 }
 
 export async function requireAuth(

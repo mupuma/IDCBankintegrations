@@ -168,8 +168,9 @@ export default function UsersPage() {
           <div key={role} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
             <p className="text-sm font-bold text-slate-900">{ROLE_LABELS[role]}</p>
             <p className="mt-1 text-xs text-slate-500">
-              {role === ROLES.ADMIN && 'Full access including users and audit logs.'}
-              {role === ROLES.OPERATOR && 'Can read/write bank details and post payments.'}
+              {role === ROLES.ADMIN && 'Manages users and views audit logs. Cannot edit bank details or submit payments.'}
+              {role === ROLES.BANK_DETAILS_MAKER && 'Creates and maintains bank details. Cannot submit payments to bank queues.'}
+              {role === ROLES.OPERATOR && 'Submits payments to bank queues and manages payment recovery. Cannot edit bank details.'}
               {role === ROLES.VIEWER && 'Read-only access to bank details, payments, and queues.'}
             </p>
           </div>

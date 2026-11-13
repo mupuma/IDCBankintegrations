@@ -192,6 +192,7 @@ POST /api/v1/postCBTxn
   "transactionId": "IDC9F8A7B6C5",
   "bankCode": "IZB",
   "Description": "Supplier payment",
+  "bankReference": "IZB-BANK-REFERENCE",
   "noEntries": 1,
   "creditAmount": 1500,
   "debitAmount": 1500,
@@ -224,6 +225,7 @@ POST /api/v1/postCBTxn
 | `transactionId` | string | Yes | Unique IDC transaction ID received from `/api/v1/payments/by_date`. This must not be replaced with narration text. |
 | `bankCode` | string | Yes | Bank code. For this integration use `IZB`. |
 | `Description` | string | Yes | Transaction description or narration. Lowercase `description` is also accepted. |
+| `bankReference` | string | No | IZB-issued bank reference for reconciliation. Supply it when available; keep the IDC `transactionId` unchanged. Saved locally and displayed on the transaction. |
 | `noEntries` | number | Yes | Number of entries in the `entries` array. |
 | `creditAmount` | number | Yes | Total credit amount for the cashbook transaction. |
 | `debitAmount` | number | Yes | Total debit amount for the cashbook transaction. |

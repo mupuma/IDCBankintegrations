@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { load, routeFixture } = require('./helpers/portal.cjs');
-const { matchesQueueSearch: matches } = load('idcbanksinegration/app/lib/queueSearch.ts');
+const { matchesQueueSearch: matches } = load('idcbanksinegration/app/lib/queueSearch.ts', { './bankResponseDetails': load('idcbanksinegration/app/lib/bankResponseDetails.ts') });
 
 const item = {
   id: 'queue-1', paymentId: 'IDC123456789', bankCode: 'IZB', sourceBank: '77050', status: 'failed',
@@ -10,6 +10,13 @@ const item = {
     currency: 'ZMW', remarks: 'Staff fuel payment' },
   response: { bankRef: 'BANK-REF-007' },
 };
+
+test('IZB reconciliation search finds bank references saved inside local notifications', () => {
+  const row = { ...item, response: { bankNotification: { bankResponse: { bankReference: 'IZB-RECON-008' } } } };
+  assert.equal(matches(row, 'reference', 'izb-recon-008'), true);
+  assert.equal(matches(row, 'all', 'IZB-RECON'), true);
+  assert.equal(matches(row, 'reference', 'unknown-bank-ref'), false);
+});
 
 test('queue search matches vendor IDs and names case-insensitively and keeps fields separate', () => {
   assert.equal(matches(item, 'vendor', '  totalenergies  '), true);

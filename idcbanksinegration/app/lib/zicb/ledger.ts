@@ -8,6 +8,7 @@ import { sourceProfile, reconcileDelay } from './config';
 import { findExistingPaymentPost } from '../paymentPostGuard';
 
 export type LedgerDocument = {
+  outcomeRecordedAt?: string; outcomeRecordedStatus?: string;
   bankReport?: Outcome; bankCallback?: unknown;
   payment: any; batch: Batch; profileId: string; sourceBank: string; amountScale: number;
   accounting: 'not_required' | 'pending' | 'processing' | 'retry' | 'posted' | 'needs_review';
@@ -17,6 +18,13 @@ export type LedgerDocument = {
   notSent?: boolean; notSentReason?: 'authentication' | 'validation'; confirmedRejected?: boolean; recoveryCheck?: boolean; recoveryOf?: string;
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
+function recordOutcomeDate(row: ZicbH2hPayment, doc: LedgerDocument) {
+  if (['paid', 'failed', 'rejected', 'needs_review'].includes(row.state)
+    && (!doc.outcomeRecordedAt || doc.outcomeRecordedStatus !== row.state)) {
+    doc.outcomeRecordedAt = new Date().toISOString();
+    doc.outcomeRecordedStatus = row.state;
+  }
+}
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 function accountingFailure(error: unknown) {
   const value = error as { name?: string; message?: string; original?: { code?: string; number?: number; message?: string }; parent?: { code?: string; number?: number; message?: string } } | null;
@@ -57,6 +65,7 @@ async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Tr
     responsePayload: JSON.stringify({ protocol: 'h2h-v1', reference: row.reference, prcn_number: row.prcn,
       channel: row.channel, bankRef: doc.bankRef, bankStatus: doc.rawStatus,
       accountingStatus: 'not_required', bankReport: doc.bankReport, bankCallback: doc.bankCallback,
+      outcomeRecordedAt: doc.outcomeRecordedAt,
       recovery: { protocol: 'zicb-recovery-v1', notSent: Boolean(doc.notSent), retryable: doc.notSentReason === 'authentication', confirmedRejected: Boolean(doc.confirmedRejected) } }),
   } as any, { where: { queueId: row.queueId }, transaction });
 }
@@ -226,6 +235,7 @@ export async function reportH2hWork(queueId: string, leaseToken: string, outcome
     doc.accounting = 'not_required'; doc.accountingError = undefined;
     row.state = mergeOutcome(row.state as State, outcome.state);
     if (doc.bankRef && outcome.bankRef && doc.bankRef !== outcome.bankRef) row.state = 'needs_review';
+    recordOutcomeDate(row, doc);
     if (outcome.bankRef) doc.bankRef = outcome.bankRef;
     if (outcome.rawStatus) doc.rawStatus = outcome.rawStatus;
     doc.error = row.state === 'needs_review' ? outcome.error || 'Conflicting or unconfirmed bank outcome' : outcome.error;
@@ -253,6 +263,7 @@ export async function receiveH2hCallback(channel: Channel, body: any) {
     doc.accounting = 'not_required'; doc.accountingError = undefined;
     row.state = mergeOutcome(row.state as State, body.status_code === 200 ? 'paid' : 'failed');
     if (doc.bankRef && body.bankRef && doc.bankRef !== body.bankRef) row.state = 'needs_review';
+    recordOutcomeDate(row, doc);
     doc.notSent = false; doc.notSentReason = undefined;
     if (body.status_code === 400 && row.state === 'failed') doc.confirmedRejected = true;
     if (body.bankRef) doc.bankRef = body.bankRef;

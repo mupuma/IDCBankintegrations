@@ -565,6 +565,7 @@ async function postManyPayments(input: {
     },
     meta: {
       paymentIds: payments.map((row) => resolvePaymentId(row as { paymentId?: string }, '')),
+      payments: payments.map(row => ({ ...row, transactionType: effectiveType })),
       sagePayments: payments.map(row => ({ paymentId: row.paymentId, transactionId: row.transactionId, sageBankCode: row.sageBankCode })),
       transactionType: effectiveType,
       sourceBank: sourceBankCode,

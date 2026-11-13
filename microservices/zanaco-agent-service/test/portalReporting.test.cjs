@@ -43,3 +43,21 @@ test('unknown and accepted outcomes remain unresolved until a success report arr
   }
   assert.equal(f.writes(), 3);
 });
+
+test('recorded outcome dates remain stable across reporting retries for daily reconciliation', async () => {
+  const f = fixture('accepted');
+  await f.report('queue1', { status: 'success', response: { bankRef: 'BANK1' } });
+  const first = JSON.parse(f.row.responsePayload).outcomeRecordedAt;
+  assert.ok(Number.isFinite(Date.parse(first)));
+  await f.report('queue1', { status: 'success', response: { bankRef: 'BANK1', replayed: true } });
+  assert.equal(JSON.parse(f.row.responsePayload).outcomeRecordedAt, first);
+  assert.equal(JSON.parse(f.row.responsePayload).replayed, true);
+});
+
+test('replayed historical outcomes retain their original update date with a fallback label', async () => {
+  const f = fixture('success'); f.row.updatedAt = new Date('2026-01-15T10:00:00Z');
+  await f.report('queue1', { status: 'success', response: { bankRef: 'BANK1' } });
+  const response = JSON.parse(f.row.responsePayload);
+  assert.equal(response.outcomeRecordedAt, '2026-01-15T10:00:00.000Z');
+  assert.equal(response.outcomeDateSource, 'historical');
+});

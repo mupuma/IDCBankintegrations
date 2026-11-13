@@ -50,7 +50,7 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
     '@/app/lib/zicb/ledger': { LedgerError: class extends Error {} },
     '@/app/lib/zicb/config': {},
     '@/app/lib/terminalLog': { terminalLog: () => {}, terminalError: () => {} },
-    '@/app/lib/queueSearch': load('idcbanksinegration/app/lib/queueSearch.ts'),
+    '@/app/lib/queueSearch': load('idcbanksinegration/app/lib/queueSearch.ts', { './bankResponseDetails': load('idcbanksinegration/app/lib/bankResponseDetails.ts') }),
   });
   return { records, updates, post: body => route.POST({ json: async () => body }),
     get: query => route.GET({ nextUrl: new URL(`http://portal/api/v1/posted_payments?${query}`), cookies: { get: () => ({ value: 'session' }) }, headers: { get: () => null } }) };
