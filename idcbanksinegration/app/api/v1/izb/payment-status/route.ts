@@ -8,7 +8,7 @@ export async function POST(request: NextRequest) {
   try { body = await request.json(); } catch { return NextResponse.json({ error: 'Invalid JSON payload' }, { status: 400 }); }
   try { return NextResponse.json(await recordIzbPaymentFailure(body)); }
   catch (error) {
-    if (error instanceof IzbStatusError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof IzbStatusError) return NextResponse.json(error.validation || { error: error.message }, { status: error.status });
     console.error('[IZB payment status] Unable to save bank failure');
     return NextResponse.json({ error: 'Unable to record bank failure; retry the same eventId' }, { status: 503 });
   }

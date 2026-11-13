@@ -31,7 +31,7 @@ If the API key is missing or incorrect, the service returns `401 Unauthorized`.
 4. IZB must keep the exact `transactionId` received in the pull response.
 5. After IZB processes the payment and needs to post the cashbook result, IZB calls `POST /api/v1/postCBTxn`.
 6. IZB must send that same `transactionId` as both the cashbook `transactionId` and `entries[].referenceNo`.
-7. The IDC portal posts the cashbook transaction to Sage and updates the queue status shown to portal users.
+7. The IDC portal saves the bank notification locally and updates the queue status shown to portal users. Sage write-back is disabled.
 
 ## Critical Reference Rule
 
@@ -225,7 +225,7 @@ POST /api/v1/postCBTxn
 | `transactionId` | string | Yes | Unique IDC transaction ID received from `/api/v1/payments/by_date`. This must not be replaced with narration text. |
 | `bankCode` | string | Yes | Bank code. For this integration use `IZB`. |
 | `Description` | string | Yes | Transaction description or narration. Lowercase `description` is also accepted. |
-| `bankReference` | string | No | IZB-issued bank reference for reconciliation. Supply it when available; keep the IDC `transactionId` unchanged. Saved locally and displayed on the transaction. |
+| `bankReference` | string | Yes | IZB-issued bank reconciliation reference. Required, nonblank, at most 100 characters, with no control characters. Keep the IDC `transactionId` unchanged. Saved locally and displayed on the transaction. |
 | `noEntries` | number | Yes | Number of entries in the `entries` array. |
 | `creditAmount` | number | Yes | Total credit amount for the cashbook transaction. |
 | `debitAmount` | number | Yes | Total debit amount for the cashbook transaction. |
@@ -294,6 +294,7 @@ curl -i -X POST "https://<izb-agent-host>/api/v1/postCBTxn" \
     "transactionId": "IDC9F8A7B6C5",
     "bankCode": "IZB",
     "Description": "Supplier payment",
+    "bankReference": "IZB-BANK-REFERENCE",
     "noEntries": 1,
     "creditAmount": 1500,
     "debitAmount": 1500,
@@ -377,3 +378,19 @@ POST /api/v1/payments/by_date
 POST /api/v1/postCBTxn
 ```
 
+
+## Mandatory bank reference validation
+
+Every new IZB success or failure callback must include top-level `bankReference`. This is the IZB-issued reference, separate from the unchanged IDC `transactionId`. Missing, null or whitespace-only references return HTTP 400 before any transaction is saved or updated:
+
+```json
+{
+  "responseCode": 400,
+  "errorCode": "BANK_REFERENCE_REQUIRED",
+  "field": "bankReference",
+  "responseMessage": "bankReference is required for IZB callbacks. Supply IZB's bank-issued reconciliation reference, keep transactionId unchanged, and retry.",
+  "error": "bankReference is required for IZB callbacks. Supply IZB's bank-issued reconciliation reference, keep transactionId unchanged, and retry."
+}
+```
+
+Wrong types, references over 100 characters, or control characters return HTTP 400 with `errorCode: "INVALID_BANK_REFERENCE"` and correction instructions. Add the bank reference and retry the callback using the same `transactionId` (and the same `eventId` for failure notifications). Callback retries must retain the bank reference. This validation does not rewrite historical records. The agent forwards the portal's status and error body unchanged.

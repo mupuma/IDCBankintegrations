@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { izbBankReferenceError } from '../../../../../shared/izb-callback';
 import {
   isCashbookAlreadyProcessed,
   isCashbookProcessError,
@@ -25,6 +26,11 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const callback = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  if (String(callback.bankCode ?? '').trim().toUpperCase() === 'IZB') {
+    const referenceError = izbBankReferenceError(callback.bankReference);
+    if (referenceError) return NextResponse.json(referenceError, { status: 400 });
+  }
   const receipt = normalizeReceiptRequest(body);
   if (!receipt) {
     return NextResponse.json(

@@ -2,6 +2,7 @@ const APP_API_URL = process.env.APP_API_URL?.replace(/\/$/, '');
 const SAGE_API_KEY = process.env.SAGE_API_KEY;
 
 export type ReceiptRequest = {
+  bankReference: string;
   transactionId: string;
   bankCode: string;
   Description: string;

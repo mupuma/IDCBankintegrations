@@ -14,6 +14,7 @@ import {
 import { logAuditEvent } from '@/app/lib/auditLog';
 import { getSessionUser, isAuthError, requirePermission } from '@/app/lib/rbac';
 import { PERMISSIONS } from '@/app/lib/permissions';
+import { izbBankReferenceError } from '../../../shared/izb-callback';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -46,6 +47,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     );
   }
 
+  const callback = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+  if (String(callback.bankCode ?? '').trim().toUpperCase() === 'IZB') {
+    const referenceError = izbBankReferenceError(callback.bankReference);
+    if (referenceError) return NextResponse.json(referenceError, { status: 400 });
+  }
   const receipt = normalizeReceiptRequest(body);
   if (!receipt) {
     return NextResponse.json(

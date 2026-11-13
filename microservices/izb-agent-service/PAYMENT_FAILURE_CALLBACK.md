@@ -13,12 +13,13 @@ x-api-key: <existing IZB agent AGENT_API_KEY>
   "eventId": "IZB-FAIL-20261104-00001",
   "transactionId": "IDC8A24F91C0",
   "status": "failed",
+  "bankReference": "IZB-BANK-REFERENCE",
   "errorCode": "INVALID_ACCOUNT",
   "errorMessage": "Beneficiary account could not be credited"
 }
 ```
 
-Use the exact `transactionId` returned by the payment pull. `eventId` is a bank-generated identifier for this notification; retries must retain the same event ID and payload. `status` accepts `failed` or `rejected` only. Optional `bankReference` can identify the bank's attempt. Optional `queueId` disambiguates multiple historical instructions. Required identifiers and error code are strings up to 100 characters; `errorMessage` is a nonempty string up to 1000 characters. Financial fields are not accepted as changes to the original payment.
+Use the exact `transactionId` returned by the payment pull. `eventId` is a bank-generated identifier for this notification; retries must retain the same event ID and payload. `status` accepts `failed` or `rejected` only. Required `bankReference` identifies the bank's attempt and must be a nonblank string of at most 100 characters without control characters. Missing references return HTTP 400 with `errorCode: "BANK_REFERENCE_REQUIRED"`, `field: "bankReference"`, and instructions to supply the bank-issued reference and retry using the same transaction and event IDs. Invalid references return `INVALID_BANK_REFERENCE`. No transaction or audit entry is saved for an invalid callback. Optional `queueId` disambiguates multiple historical instructions. Required identifiers and error code are strings up to 100 characters; `errorMessage` is a nonempty string up to 1000 characters. Financial fields are not accepted as changes to the original payment.
 
 The agent forwards this to the portal at `POST /api/v1/izb/payment-status` using its existing `BANK_PULL_API_KEY` as `x-bank-api-key`. Configure `APP_API_URL`, `AGENT_API_KEY`, and `BANK_PULL_API_KEY` as for the existing IZB endpoints. Authentication and JSON-parser errors are returned before any update. No database migration or new credential is required.
 

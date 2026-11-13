@@ -4,7 +4,7 @@ const { load } = require('./helpers/portal.cjs');
 
 function fixture() {
   const Op = { in: Symbol('in') };
-  const event = { eventId: 'IZB-EVENT-1', transactionId: 'IDC8A24F91C0', status: 'failed', errorCode: 'INVALID_ACCOUNT', errorMessage: 'Beneficiary account is invalid' };
+  const event = { bankReference: 'IZB-BANK-001', eventId: 'IZB-EVENT-1', transactionId: 'IDC8A24F91C0', status: 'failed', errorCode: 'INVALID_ACCOUNT', errorMessage: 'Beneficiary account is invalid' };
   const hydrate = value => Object.assign(value, { update: async function (values) { Object.assign(this, values); } });
   const rows = [hydrate({ queueId: 'QUEUE-1', paymentId: event.transactionId, bankCode: 'IZB', status: 'pulled', paymentPayload: JSON.stringify({ paymentId: event.transactionId, amount: 5000 }), attempts: 1 })];
   const audits = [], receipts = [], processed = [];
@@ -107,6 +107,20 @@ test('invalid callbacks are rejected and audit failure rolls back the queue chan
   }
   f.failAudit(); await assert.rejects(() => f.record(f.event), /Audit storage unavailable/);
   assert.equal(f.rows[0].status, 'pulled'); assert.equal(f.audits.length, 0);
+});
+
+test('failure callbacks require a valid bank reference and reject missing references before any mutation', async t => {
+  const previous = process.env.BANK_PULL_API_KEY;
+  process.env.BANK_PULL_API_KEY = 'reference-test-key';
+  t.after(() => { if (previous === undefined) delete process.env.BANK_PULL_API_KEY; else process.env.BANK_PULL_API_KEY = previous; });
+  for (const bankReference of [undefined, null, '', '   ', 123, 'X'.repeat(101), 'REF\n1']) {
+    const f = fixture();
+    const response = await f.route.POST({ headers: new Headers({ 'x-bank-api-key': 'reference-test-key' }),
+      json: async () => ({ ...f.event, bankReference }) });
+    assert.equal(response.status, 400); assert.equal(response.body.field, 'bankReference');
+    assert.match(response.body.errorCode, /BANK_REFERENCE_REQUIRED|INVALID_BANK_REFERENCE/);
+    assert.equal(f.rows[0].status, 'pulled'); assert.equal(f.audits.length, 0);
+  }
 });
 
 test('portal callback requires the bank key and returns actionable HTTP statuses', async t => {

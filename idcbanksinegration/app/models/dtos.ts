@@ -76,6 +76,7 @@ export type PaymentsRequest = {
 
 
 export type ReceiptRequest = {
+    bankReference?: string;
     bankResponse?: unknown;
     sageBankCode?: string;
     transactionId: string;

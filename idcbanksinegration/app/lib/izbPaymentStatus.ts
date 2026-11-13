@@ -4,12 +4,15 @@ import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
 import { AuditLog } from '@/app/models/internal/AuditLog';
 import { ProcessedTransaction } from '@/app/models/internal/Processed_transactions';
+import { izbBankReferenceError, type IzbBankReferenceError } from '../../../shared/izb-callback';
 
-export class IzbStatusError extends Error { constructor(message: string, public status = 400) { super(message); } }
-type Failure = { eventId: string; transactionId: string; queueId?: string; status: 'failed' | 'rejected'; errorCode: string; errorMessage: string; bankReference?: string };
+export class IzbStatusError extends Error { constructor(message: string, public status = 400, public validation?: IzbBankReferenceError) { super(message); } }
+type Failure = { eventId: string; transactionId: string; queueId?: string; status: 'failed' | 'rejected'; errorCode: string; errorMessage: string; bankReference: string };
 function inputOf(body: unknown): Failure {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new IzbStatusError('A JSON object is required');
   const value = body as Record<string, unknown>;
+  const referenceError = izbBankReferenceError(value.bankReference);
+  if (referenceError) throw new IzbStatusError(referenceError.responseMessage, 400, referenceError);
   const text = (name: string, max: number, required = true) => {
     const item = value[name];
     if (!required && item === undefined) return undefined;
@@ -18,7 +21,7 @@ function inputOf(body: unknown): Failure {
   };
   if (!['failed', 'rejected'].includes(String(value.status))) throw new IzbStatusError('status must be failed or rejected; successful payments use postCBTxn');
   return { eventId: text('eventId', 100)!, transactionId: text('transactionId', 100)!, queueId: text('queueId', 100, false),
-    status: value.status as Failure['status'], errorCode: text('errorCode', 100)!, errorMessage: text('errorMessage', 1000)!, bankReference: text('bankReference', 100, false) };
+    status: value.status as Failure['status'], errorCode: text('errorCode', 100)!, errorMessage: text('errorMessage', 1000)!, bankReference: text('bankReference', 100)! };
 }
 function identifiersOf(row: PaymentQueueRequest) {
   let payment: Record<string, unknown> = {};
