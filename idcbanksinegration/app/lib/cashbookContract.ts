@@ -56,6 +56,7 @@ export function normalizeReceiptRequest(body: unknown): ReceiptRequest | null {
   }
 
   return {
+    bankResponse: record.bankResponse ?? record,
     transactionId: normalized.transactionId,
     bankCode: normalized.bankCode,
     description: normalized.description,

@@ -6,7 +6,8 @@ import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
 import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
-import IzbCashbookRecoveryDialog from '@/app/components/IzbCashbookRecoveryDialog';
+import TransactionDetailsDialog from '@/app/components/TransactionDetailsDialog';
+import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import { QUEUE_SEARCH_FIELDS, type QueueSearchField } from '@/app/lib/queueSearch';
@@ -41,7 +42,7 @@ function getQueuePaymentSummary(item: BankQueueItem) {
 
 function getQueueResponseDetails(item: BankQueueItem) {
   const response = asRecord(item.response);
-  return ['cashbookStatus', 'batchId', 'message', 'reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError']
+  return ['bankStatus', 'bankStatusCode', 'notificationStatus', 'message']
     .map((key) => {
       const value = response[key];
       return value ? { key, value: String(value) } : null;
@@ -52,7 +53,7 @@ function getQueueResponseDetails(item: BankQueueItem) {
 export default function PaymentQueuesPage() {
   const { hasPermission } = usePortalUser();
   const [recoveryItem, setRecoveryItem] = useState<BankQueueItem | null>(null);
-  const [cashbookItem, setCashbookItem] = useState<BankQueueItem | null>(null);
+  const [detailItem, setDetailItem] = useState<BankQueueItem | null>(null);
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -240,13 +241,14 @@ export default function PaymentQueuesPage() {
                 </tr>
               ) : (
                 filteredItems.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={item.id} onClick={() => setDetailItem(item)} className="cursor-pointer hover:bg-slate-50/50 transition-colors">
                     <td className="px-5 py-4 text-sm font-semibold text-slate-700">
                       {item.bankCode}
                       {getQueuePaymentSummary(item).isBulk ? <div className="mt-1 text-xs font-normal text-slate-500">Bulk batch</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">
-                      <div className="font-mono font-semibold text-slate-800">{getQueuePaymentSummary(item).reference}</div>
+                      <button type="button" onClick={() => setDetailItem(item)} className="text-left font-mono font-semibold text-slate-800 underline decoration-slate-300 underline-offset-4">{getQueuePaymentSummary(item).reference}</button>
+                      {bankResponseReferences(item.response).map(ref => <div key={`${ref.label}:${ref.value}`} className="mt-1 break-all text-xs text-slate-700"><strong>{ref.label}:</strong> <span className="font-mono">{ref.value}</span></div>)}
                       {getQueuePaymentSummary(item).description ? (
                         <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-slate-500">
                           {getQueuePaymentSummary(item).description}
@@ -273,8 +275,8 @@ export default function PaymentQueuesPage() {
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
                     <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
-                    <td className="px-5 py-4 text-sm">
-                      {item.bankCode === 'IZB' ? <button type="button" onClick={() => setCashbookItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">{asRecord(item.response).protocol === 'izb-bank-status-v1' ? 'Bank failure / details' : 'Cashbook / retry'}</button> : null}
+                    <td className="px-5 py-4 text-sm" onClick={event => event.stopPropagation()}>
+                      <button type="button" onClick={() => setDetailItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">View details</button>
                       {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
                     </td>
                   </tr>
@@ -294,9 +296,7 @@ export default function PaymentQueuesPage() {
       {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
         canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
         onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
-      {cashbookItem ? <IzbCashbookRecoveryDialog key={cashbookItem.id} item={cashbookItem}
-        canRetry={hasPermission(PERMISSIONS.CASHBOOK_POST)}
-        onClose={() => setCashbookItem(null)} onChange={() => void refreshQueueItems()} /> : null}
+      {detailItem ? <TransactionDetailsDialog key={detailItem.id} item={detailItem} onClose={() => setDetailItem(null)} /> : null}
     </div>
   );
 }

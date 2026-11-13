@@ -56,8 +56,8 @@ const sageSequelize = new Sequelize({
 
 const executeSageQuery = (sageSequelize.query as (...args: any[]) => Promise<any>).bind(sageSequelize);
 sageSequelize.query = ((sql: unknown, ...args: any[]) => {
-  // Schema changes are always blocked; keep the existing cashbook flow enabled.
-  assertSageQueryAllowed(sql, process.env.SAGE_ALLOW_CASHBOOK_WRITES !== 'false');
+  // Sage is read-only. Bank outcomes are stored in the portal database.
+  assertSageQueryAllowed(sql, false);
   return executeSageQuery(sql, ...args);
 }) as typeof sageSequelize.query;
 

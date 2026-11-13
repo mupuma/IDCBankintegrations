@@ -87,10 +87,9 @@ test('accepted payments poll automatically, survive temporary failures, and upda
     assert.equal(f.queue.get(row.queueId).status, outcome.state);
   }
   assert.equal(JSON.parse(row.document).submissionAttempts, 1);
-  const accounting = await f.ledger.claimH2hWork();
-  assert.equal(accounting.action, 'accounting');
-  await f.ledger.withAccountingLease(accounting.queueId, accounting.leaseToken, async () => ({ posted: true }));
   assert.equal(await f.ledger.claimH2hWork(), null);
+  assert.equal(JSON.parse(row.document).accounting, 'not_required');
+  assert.equal(JSON.parse(f.queue.get(row.queueId).responsePayload).bankRef, 'BANK-FINAL');
   assert.equal(f.queue.get(row.queueId).status, 'paid');
 });
 
@@ -238,16 +237,17 @@ test('expired submission lease becomes unknown and never claims another send', a
   const recovered = await f.ledger.claimH2hWork();
   assert.equal(recovered.action, 'reconcile'); assert.equal(recovered.batch.reference, first.batch.reference);
 });
-test('callback before submission report remains paid and schedules only accounting', async () => {
+test('callback before submission report remains paid with bank responses saved locally', async () => {
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const work = await f.ledger.claimH2hWork();
   const callback = { reference: work.batch.reference, prcn_number: work.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK1' };
   await f.ledger.receiveH2hCallback('RTGS', callback);
   await f.ledger.reportH2hWork(work.queueId, work.leaseToken, { state: 'accepted' });
   assert.equal(f.payments.get(work.queueId).state, 'paid');
-  const next = await f.ledger.claimH2hWork(); assert.equal(next.action, 'accounting');
-  let amount;
-  await f.ledger.withAccountingLease(next.queueId, next.leaseToken, async doc => { amount = doc.payment.amount; return { posted: true }; });
-  assert.equal(amount, 27.51); assert.equal(JSON.parse(f.payments.get(work.queueId).document).accounting, 'posted');
+  assert.equal(await f.ledger.claimH2hWork(), null);
+  const response = JSON.parse(f.queue.get(work.queueId).responsePayload);
+  assert.equal(response.bankRef, 'BANK1');
+  assert.deepEqual(response.bankCallback, callback);
+  assert.equal(response.accountingStatus, 'not_required');
 });
 test('duplicate callbacks and retried reports are durably deduplicated', async () => {
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const work = await f.ledger.claimH2hWork();
@@ -266,45 +266,32 @@ test('conflicting outcomes hold the payment for review and prevent accounting', 
   await f.ledger.receiveH2hCallback('RTGS', { ...body, status_code: 400, bankRef: '' });
   assert.equal(f.payments.get(work.queueId).state, 'needs_review'); assert.equal(await f.ledger.claimH2hWork(), null);
 });
-test('accounting failure preserves paid state and retries accounting with canonical data', async () => {
-  const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const send = await f.ledger.claimH2hWork();
+test('legacy paid accounting retries are drained locally without invoking a writer', async () => {
+  const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  const send = await f.ledger.claimH2hWork();
   await f.ledger.reportH2hWork(send.queueId, send.leaseToken, { state: 'accepted' });
   await f.ledger.receiveH2hCallback('RTGS', { reference: send.batch.reference, prcn_number: send.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK1' });
-  const first = await f.ledger.claimH2hWork();
-  const logs = [], originalError = console.error;
-  let failure;
-  try {
-    console.error = value => logs.push(JSON.parse(value));
-    failure = await f.ledger.withAccountingLease(first.queueId, first.leaseToken, async () => {
-      throw Object.assign(new Error('Sage write failed'), { original: { code: 'EREQUEST', number: 2628,
-        message: "String or binary data would be truncated in table 'CBBTDT', column 'ACCTID'. Truncated value: 'private-account'." }, sql: 'private SQL' });
-    });
-  } finally { console.error = originalError; }
-  assert.match(failure.error, /String or binary data would be truncated/);
-  assert.doesNotMatch(failure.error, /private-account|private SQL/);
-  assert.equal(logs[0].event, 'zicb.h2h.accounting.failed');
-  assert.equal(logs[0].queueId, first.queueId);
-  assert.equal(logs[0].databaseNumber, 2628);
-  assert.equal(logs[0].databaseCode, 'EREQUEST');
-  const row = f.payments.get(send.queueId); assert.equal(row.state, 'paid'); assert.equal(JSON.parse(row.document).accounting, 'retry');
-  row.nextRun = new Date(0); assert.equal((await f.ledger.claimH2hWork()).action, 'accounting');
+  const row = f.payments.get(send.queueId), doc = JSON.parse(row.document);
+  doc.accounting = 'retry'; doc.accountingError = 'Old Sage error';
+  row.document = JSON.stringify(doc); row.nextRun = new Date(0);
+  assert.equal(await f.ledger.claimH2hWork(), null);
+  assert.equal(row.state, 'paid');
+  assert.equal(row.nextRun, null);
+  assert.equal(JSON.parse(row.document).accounting, 'not_required');
+  let writes = 0;
+  await assert.rejects(f.ledger.withAccountingLease(send.queueId, 'old-lease', async () => { writes++; return { posted: true }; }), /Sage posting is disabled/);
+  assert.equal(writes, 0);
 });
 
-test('operator recovery of a paid item retries accounting only and refuses a second bank send', async () => {
+test('paid items cannot retry Sage accounting or submit another bank payment', async () => {
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE');
   const send = await f.ledger.claimH2hWork();
   await f.ledger.reportH2hWork(send.queueId, send.leaseToken, { state: 'accepted' });
   await f.ledger.receiveH2hCallback('RTGS', { reference: send.batch.reference, prcn_number: send.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK-PAID' });
-  const accounting = await f.ledger.claimH2hWork();
-  await f.ledger.withAccountingLease(accounting.queueId, accounting.leaseToken, async () => ({ posted: false, review: true, error: 'Cashbook configuration needs review' }));
   const transaction = { LOCK: { UPDATE: 'UPDATE' } };
-  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'retry_connection', transaction));
-  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'check_status', transaction));
-  await f.ledger.recoverH2hInstruction(send.queueId, 'retry_accounting', transaction);
-  const next = await f.ledger.claimH2hWork();
-  assert.equal(next.action, 'accounting');
-  assert.equal(next.batch.reference, send.batch.reference);
-  await f.ledger.withAccountingLease(next.queueId, next.leaseToken, async () => ({ posted: true }));
+  for (const action of ['retry_connection', 'check_status', 'retry_accounting']) {
+    await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, action, transaction));
+  }
+  assert.equal(await f.ledger.claimH2hWork(), null);
   assert.equal(f.payments.get(send.queueId).state, 'paid');
-  await assert.rejects(f.ledger.recoverH2hInstruction(send.queueId, 'retry_accounting', transaction));
 });

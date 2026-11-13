@@ -5,10 +5,7 @@ export type RecoveryEvidence = {
 export function recoveryActions(bank: string, status: string, evidence: RecoveryEvidence = {}, accounting?: string) {
   const actions: RecoveryAction[] = [];
   if (!['ZANACO', 'ZICB'].includes(bank)) return actions;
-  if (bank === 'ZICB' && status === 'paid') {
-    if (['pending', 'retry', 'needs_review'].includes(accounting || '')) actions.push('retry_accounting');
-    return actions;
-  }
+  if (bank === 'ZICB' && status === 'paid') return actions;
   if (['success', 'paid', 'queued'].includes(status)) return actions;
   if (bank === 'ZICB' && status === 'unknown' && !evidence.confirmedRejected) actions.push('repost_not_sent');
   if (bank === 'ZANACO' && ['processing', 'unknown', 'accepted', 'failed', 'rejected', 'needs_review'].includes(status)) actions.push('retry_reporting');

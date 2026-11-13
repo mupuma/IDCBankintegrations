@@ -12,7 +12,7 @@ function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate =
       noDetails: 1, amount: 5000, currency: 'ZMW', details: [{ entryDescription: 'Jason Songwe', accountId: 'GL-TEST', amount: 5000, DrCr: 'Cr', detailNo: 1 }] }] };
   const audit = [], writes = [], processed = new Map(), receipts = [], sageHeaders = new Map();
   const queue = { id: 1, queueId: 'original', bankCode: bank, paymentId: notification.transactionId, status: 'failed',
-    paymentPayload: JSON.stringify({ paymentId: notification.transactionId, amount: 5000, currency: 'ZMW' }) };
+    paymentPayload: JSON.stringify({ paymentId: notification.transactionId, sageBankCode: '77050', amount: 5000, currency: 'ZMW' }) };
   if (bankFailure) Object.assign(queue, { responsePayload: JSON.stringify({ protocol: 'izb-bank-status-v1', bankStatus: 'failed' }), lastError: 'INVALID_ACCOUNT: Bank could not credit account' });
   let failSage = fail, tail = Promise.resolve(), claimed = 0, inTransaction = false;
   const hydrateReceipt = row => ({ ...row, update: async values => { Object.assign(row, values); } });
@@ -77,7 +77,7 @@ function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate =
   const coreMocks = {
     sequelize: { Op, Transaction: {} },
     '@/app/lib/db': { connectDatabase: async () => {} },
-    '@/app/lib/sageDb': { __esModule: true, default: sage, connectSageDatabase: async () => {} },
+    '@/app/lib/sageDb': { __esModule: true, default: sage, connectSageDatabase: async () => { throw new Error('Sage must never be contacted when recording bank notifications'); } },
     '@/app/lib/sageQueryPolicy': policy,
     '@/app/models/internal/CashbookReceipt': { CashbookReceipt: receiptModel },
     '@/app/models/internal/Processed_transactions': { ProcessedTransaction: processedModel },
@@ -111,106 +111,37 @@ function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate =
     post: body => route.POST({ json: async () => body || { queueId: 'original', reason: 'Sage connectivity restored' } }) };
 }
 
-test('bank-reported failures show their error and do not offer a Sage cashbook retry', async () => {
-  const f = fixture({ missing: true, bankFailure: true });
-  const context = await f.recovery.loadIzbCashbookRecovery('original');
-  assert.equal(context.details.status, 'bank_failed');
-  assert.equal(context.details.canRetry, false);
-  assert.match(context.details.lastError, /INVALID_ACCOUNT/);
-  assert.match(context.details.message, /bank payment failed/);
-  await assert.rejects(() => f.recovery.retryIzbCashbook('original'), /bank payment failed/);
-  assert.equal(f.writes.length, 0);
-});
-
-test('IZB retry immediately posts the saved notification and records the operator without altering financial fields', async () => {
-  const f = fixture();
-  const before = f.receipts[0].paymentPayload;
-  const response = await f.post();
-  assert.equal(response.status, 200, JSON.stringify(response.body));
-  assert.equal(f.receipts[0].paymentPayload, before);
-  assert.equal(f.queue.status, 'success');
-  assert.equal(f.receipts[0].status, 'success');
-  const header = f.writes.find(row => row.model === 'header'), detail = f.writes.find(row => row.model === 'detail');
-  assert.equal(header.reference, f.notification.transactionId);
-  assert.equal(header.totamount, 5000);
-  assert.equal(detail.acctid, 'GL-TEST');
-  assert.equal(f.audit[0].action, 'CASHBOOK_RETRY_REQUESTED');
-  assert.equal(f.audit[0].username, 'operator');
-  assert.equal(f.audit.at(-1).action, 'SAGE_CASHBOOK_SUCCESS');
-});
-
-test('a failed retry can be retried again immediately after correcting Sage connectivity', async () => {
+test('bank notifications are stored locally without Sage connectivity or original Sage bank codes', async () => {
   const f = fixture({ fail: true });
-  assert.equal((await f.post()).status, 502);
-  assert.equal(f.receipts[0].status, 'failed');
-  assert.equal(f.writes.length, 0, 'Sage transaction rolled back');
-  f.setFailure(false);
-  assert.equal((await f.post()).status, 200);
-  assert.equal(f.receipts[0].status, 'success');
-  assert.equal(f.claimed(), 2);
-});
-
-test('concurrent retries and bank callbacks cannot create duplicate Sage cashbook entries', async () => {
-  const f = fixture();
-  const results = await Promise.allSettled([
-    f.recovery.retryIzbCashbook('original'), f.recovery.retryIzbCashbook('original'), f.core.processCashbookReceipt(f.notification),
-  ]);
-  assert.ok(results.some(result => result.status === 'fulfilled'));
-  assert.equal(f.claimed(), 1);
-  assert.equal(f.writes.filter(row => row.model === 'header').length, 1);
-  assert.equal(f.receipts[0].status, 'success');
-});
-
-test('existing Sage references reconcile local success even when the original commit response was lost', async () => {
-  for (const options of [{ sageExisting: true }, { bankRace: true }]) {
-    const f = fixture(options);
-    assert.equal((await f.post()).status, 200);
-    assert.equal(f.writes.length, 0);
-    assert.equal(f.receipts[0].status, 'success');
-    assert.equal(f.queue.status, 'success');
-  }
-});
-
-test('saved success repairs a stale failed receipt and queue without repeating Sage writes', async () => {
-  const f = fixture();
-  f.processed.set(f.notification.transactionId, { statusCode: 200, statusMessage: 'Already posted', save: async () => {} });
-  assert.equal((await f.post()).status, 200);
+  f.queue.paymentPayload = JSON.stringify({ paymentId: f.notification.transactionId });
+  const result = await f.core.processCashbookReceipt(f.notification);
+  assert.equal(result.success, true);
+  assert.equal(result.batchId, '');
   assert.equal(f.writes.length, 0);
   assert.equal(f.receipts[0].status, 'success');
   assert.equal(f.queue.status, 'success');
+  const response = JSON.parse(f.queue.responsePayload);
+  assert.deepEqual(response.bankNotification, f.notification);
+  assert.equal(response.notificationStatus, 'success');
 });
 
-test('missing, ambiguous, invalid, completed or active notifications and other banks cannot be retried', async () => {
-  for (const options of [{ missing: true }, { duplicate: true }, { status: 'success' }, { status: 'pending' }, { status: 'processing' }, { bank: 'ZICB' }]) {
-    const f = fixture(options);
-    assert.ok((await f.post()).status >= 400, JSON.stringify(options));
-    assert.equal(f.writes.length, 0);
-  }
+test('duplicate notifications do not create additional local receipts or Sage writes', async () => {
   const f = fixture();
-  f.receipts[0].paymentPayload = JSON.stringify({ ...f.notification, transactionId: 'DIFFERENT' });
-  assert.equal((await f.post()).status, 409);
+  assert.equal((await f.core.processCashbookReceipt(f.notification)).success, true);
+  assert.equal((await f.core.processCashbookReceipt(f.notification)).alreadyProcessed, true);
+  assert.equal(f.receipts.length, 1);
   assert.equal(f.writes.length, 0);
 });
 
-test('cashbook recovery requires permission and a reason, and rejects attempts to edit saved payment data', async () => {
+test('legacy Sage writer cannot be called even through the H2H helper', async () => {
   const f = fixture();
-  for (const body of [
-    { queueId: 'original', reason: 'short' },
-    { queueId: 'original', reason: 'Approved cashbook recovery', amount: 1 },
-    { queueId: 'original', reason: 'Approved cashbook recovery', accountId: 'OTHER' },
-  ]) assert.equal((await f.post(body)).status, 400);
-  f.deny();
-  assert.equal((await f.post()).status, 403);
+  await assert.rejects(() => f.core.postConfirmedH2hCashbook(f.notification), /Sage posting is disabled/);
   assert.equal(f.writes.length, 0);
 });
 
-test('ordinary posting cannot turn an existing IZB failure back into a bank payment', async () => {
-  const f = routeFixture({ retry: true });
-  const result = await f.post({ bankCode: 'IZB', sourceBank: 'SOURCE1', payment: {
-    paymentId: 'IDC8A24F91C0', accountNumber: '1234567890123', amount: 5000, currency: 'ZMW', transactionType: 'INT',
-  } });
-  assert.equal(result.status, 409, JSON.stringify(result.body));
-  assert.equal(result.body.recoveryRequired, true);
-  assert.equal(f.updates.length, 0);
-  assert.equal(f.records.length, 0);
+test('original bank reference and extra response fields survive normalization', () => {
+  const f = fixture();
+  const original = { ...f.notification, bankReference: 'BANK-123', bankStatus: 'PAID', extra: { message: 'Confirmed' } };
+  const normalized = contract.normalizeReceiptRequest(original);
+  assert.deepEqual(normalized.bankResponse, original);
 });

@@ -28,17 +28,13 @@ test('Sage connection authenticates without schema SQL even when the old sync fl
     assert.throws(() => db.default.query('ALTER TABLE VENBANK ADD TPIN VARCHAR(20)'), /changes are disabled/);
     assert.throws(() => db.default.query('CREATE TABLE VENBANK (ID INT)'), /changes are disabled/);
     assert.equal(calls.length, 1);
-    await db.default.query('BEGIN TRANSACTION');
-    await db.default.query('INSERT INTO CBBTHD (BTCHENTRY) VALUES (1)');
-    await db.default.query('UPDATE CBBCTL SET CNTBTCH = 2');
-    await db.default.query('COMMIT TRANSACTION');
-    assert.equal(calls.length, 5);
-    await db.default.query(policy.SAGE_CASHBOOK_LOCK_SQL);
-    assert.equal(calls.length, 6);
-    process.env.SAGE_ALLOW_CASHBOOK_WRITES = 'false';
-    assert.throws(() => db.default.query('INSERT INTO CBBTHD (BTCHENTRY) VALUES (1)'), /read-only/);
-    assert.throws(() => db.default.query(policy.SAGE_CASHBOOK_LOCK_SQL), /read-only/);
-    assert.equal(calls.length, 6);
+    // Old environment flags must not re-enable Sage writes.
+    process.env.SAGE_ALLOW_CASHBOOK_WRITES = 'true';
+    for (const sql of ['BEGIN TRANSACTION', 'INSERT INTO CBBTHD (BTCHENTRY) VALUES (1)',
+      'UPDATE CBBCTL SET CNTBTCH = 2', 'DELETE FROM CBBTHD', policy.SAGE_CASHBOOK_LOCK_SQL]) {
+      assert.throws(() => db.default.query(sql), /read-only/);
+    }
+    assert.equal(calls.length, 1);
   } finally {
     if (previous === undefined) delete process.env.SAGE_SYNC_VENBANK_SCHEMA;
     else process.env.SAGE_SYNC_VENBANK_SCHEMA = previous;

@@ -63,7 +63,7 @@ test('paid, uncertain and legacy outcomes cannot authorise a new attempt', () =>
     assert.equal(recoveryActions(bank, 'failed', { confirmedRejected: true }).includes('new_attempt'), true);
     assert.equal(recoveryActions(bank, 'failed', { notSent: true, retryable: true }).includes('new_attempt'), false);
   }
-  assert.deepEqual(recoveryActions('ZICB', 'paid', {}, 'retry'), ['retry_accounting']);
+  assert.deepEqual(recoveryActions('ZICB', 'paid', {}, 'retry'), []);
 });
 
 test('corrected attempts cannot change amount, currency, payment ID, source or channel', () => {

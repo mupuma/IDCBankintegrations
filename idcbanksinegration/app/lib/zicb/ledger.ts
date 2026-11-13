@@ -8,8 +8,9 @@ import { sourceProfile, reconcileDelay } from './config';
 import { findExistingPaymentPost } from '../paymentPostGuard';
 
 export type LedgerDocument = {
+  bankReport?: Outcome; bankCallback?: unknown;
   payment: any; batch: Batch; profileId: string; sourceBank: string; amountScale: number;
-  accounting: 'pending' | 'processing' | 'retry' | 'posted' | 'needs_review';
+  accounting: 'not_required' | 'pending' | 'processing' | 'retry' | 'posted' | 'needs_review';
   accountingId: string; cashbookAccount?: string; accountingAttempts: number;
   submissionAttempts: number; submittedAt?: string; bankRef?: string; rawStatus?: string;
   error?: string; accountingError?: string; lastAction?: 'submit' | 'reconcile' | 'accounting';
@@ -55,7 +56,7 @@ async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Tr
     status: row.state, attempts: doc.submissionAttempts, lastError: doc.error || null,
     responsePayload: JSON.stringify({ protocol: 'h2h-v1', reference: row.reference, prcn_number: row.prcn,
       channel: row.channel, bankRef: doc.bankRef, bankStatus: doc.rawStatus,
-      accountingStatus: doc.accounting, accountingError: doc.accountingError,
+      accountingStatus: 'not_required', bankReport: doc.bankReport, bankCallback: doc.bankCallback,
       recovery: { protocol: 'zicb-recovery-v1', notSent: Boolean(doc.notSent), retryable: doc.notSentReason === 'authentication', confirmedRejected: Boolean(doc.confirmedRejected) } }),
   } as any, { where: { queueId: row.queueId }, transaction });
 }
@@ -79,7 +80,7 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
       const batch = buildBatch(payment, { reference, prcn, regionCode: profile.regionCode, amountScale: profile.amountScale });
       const doc: LedgerDocument = {
         payment: { ...payment, paymentId, currency, h2hProtocol: 'h2h-v1' }, batch, profileId: profile.profileId,
-        sourceBank, amountScale: profile.amountScale, accounting: 'pending',
+        sourceBank, amountScale: profile.amountScale, accounting: 'not_required',
         accountingId: `ZH${hash(paymentId).slice(0, 20)}`, cashbookAccount: profile.cashbookAccount,
         accountingAttempts: 0, submissionAttempts: 0,
       };
@@ -103,7 +104,7 @@ export async function recoverH2hInstruction(queueId: string, action: 'check_stat
   const doc = documentOf(row);
   if (row.leaseUntil && new Date(row.leaseUntil).getTime() > Date.now()) throw new LedgerError('The agent is still processing this instruction. Wait for its lease to finish.', 409);
   if (action === 'repost_not_sent') {
-    if (row.state !== 'unknown' || doc.bankRef || doc.confirmedRejected || doc.accounting !== 'pending') throw new LedgerError('Only unresolved instructions without settlement evidence can be reposted', 409);
+    if (row.state !== 'unknown' || doc.bankRef || doc.confirmedRejected || !['pending', 'not_required'].includes(doc.accounting)) throw new LedgerError('Only unresolved instructions without settlement evidence can be reposted', 409);
     row.state = 'queued';
     doc.recoveryCheck = false;
     doc.error = undefined;
@@ -111,11 +112,7 @@ export async function recoverH2hInstruction(queueId: string, action: 'check_stat
     if (row.state !== 'rejected' || !doc.notSent || doc.notSentReason !== 'authentication') throw new LedgerError('This instruction has no recorded proof that authentication failed before submission', 409);
     row.state = 'queued';
   } else if (action === 'retry_accounting') {
-    if (row.state !== 'paid' || doc.accounting === 'posted') throw new LedgerError('Accounting recovery requires a paid payment with incomplete accounting', 409);
-    const profile = sourceProfile(doc.sourceBank);
-    if (!profile.cashbookAccount) throw new LedgerError('Configure the source profile cashbook GL account before retrying accounting');
-    doc.cashbookAccount = profile.cashbookAccount;
-    doc.accounting = 'retry';
+    throw new LedgerError('Sage posting is disabled; bank results are stored locally', 409);
   } else {
     if (['paid', 'queued'].includes(row.state)) throw new LedgerError('This payment does not require a bank-status check', 409);
     doc.recoveryCheck = true;
@@ -141,7 +138,7 @@ export async function createH2hRecoveryAttempt(payment: any, sourceBank: string,
   const doc: LedgerDocument = {
     payment: { ...payment, currency, h2hProtocol: 'h2h-v1', recoveryOf }, batch,
     profileId: profile.profileId, sourceBank, amountScale: profile.amountScale,
-    accounting: 'pending', accountingId: `ZH${hash(identity).slice(0, 20)}`, cashbookAccount: profile.cashbookAccount,
+    accounting: 'not_required', accountingId: `ZH${hash(identity).slice(0, 20)}`, cashbookAccount: profile.cashbookAccount,
     accountingAttempts: 0, submissionAttempts: 0, recoveryOf,
   };
   const row = await ZicbH2hPayment.create({ queueId, paymentKey: hash(identity), reference, prcn,
@@ -189,7 +186,10 @@ export async function claimH2hWork() {
       doc.submittedAt = now.toISOString();
     } else if (['accepted', 'unknown'].includes(row.state) || doc.recoveryCheck) { action = 'reconcile'; doc.recoveryCheck = false; }
     else if (row.state === 'paid' && ['pending', 'retry', 'processing'].includes(doc.accounting)) {
-      action = 'accounting'; doc.accounting = 'processing'; doc.accountingAttempts += 1;
+      // Drain legacy accounting schedules without contacting Sage.
+      doc.accounting = 'not_required'; doc.accountingError = undefined;
+      row.nextRun = null; row.leaseToken = null; row.leaseUntil = null;
+      await persist(row, doc, transaction); return null;
     } else { row.nextRun = null; await persist(row, doc, transaction); return null; }
     doc.lastAction = action;
     row.leaseToken = randomUUID(); row.leaseUntil = new Date(Date.now() + 300000);
@@ -222,6 +222,8 @@ export async function reportH2hWork(queueId: string, leaseToken: string, outcome
       doc.notSentReason = outcome.notSent ? outcome.notSentReason : undefined;
       doc.confirmedRejected = outcome.state === 'rejected' && !outcome.notSent;
     } else if (outcome.state === 'failed') doc.confirmedRejected = true;
+    doc.bankReport = outcome;
+    doc.accounting = 'not_required'; doc.accountingError = undefined;
     row.state = mergeOutcome(row.state as State, outcome.state);
     if (doc.bankRef && outcome.bankRef && doc.bankRef !== outcome.bankRef) row.state = 'needs_review';
     if (outcome.bankRef) doc.bankRef = outcome.bankRef;
@@ -229,7 +231,7 @@ export async function reportH2hWork(queueId: string, leaseToken: string, outcome
     doc.error = row.state === 'needs_review' ? outcome.error || 'Conflicting or unconfirmed bank outcome' : outcome.error;
     row.leaseToken = null; row.leaseUntil = null;
     row.nextRun = ['accepted', 'unknown'].includes(row.state) ? new Date(Date.now() + reconcileDelay())
-      : row.state === 'paid' && doc.accounting !== 'posted' ? new Date() : null;
+      : null;
     await event(row, 'bank_report', outcome, transaction, reportId);
     await persist(row, doc, transaction);
   });
@@ -247,6 +249,8 @@ export async function receiveH2hCallback(channel: Channel, body: any) {
     if (await ZicbH2hEvent.findByPk(id, { transaction })) throw new LedgerError('Reference has already been processed', 409);
     const doc = documentOf(row);
     if (!doc.submittedAt) throw new LedgerError('Payment has not been submitted', 409);
+    doc.bankCallback = body;
+    doc.accounting = 'not_required'; doc.accountingError = undefined;
     row.state = mergeOutcome(row.state as State, body.status_code === 200 ? 'paid' : 'failed');
     if (doc.bankRef && body.bankRef && doc.bankRef !== body.bankRef) row.state = 'needs_review';
     doc.notSent = false; doc.notSentReason = undefined;
@@ -255,13 +259,15 @@ export async function receiveH2hCallback(channel: Channel, body: any) {
     doc.error = row.state === 'needs_review' ? 'Conflicting bank notifications; manual review required' : body.status_code === 400 ? String(body.message || 'Bank reported payment failure') : undefined;
     // Preserve an in-flight submit/reconcile lease: its late report is harmless
     // and must not cancel or cause a second accounting action.
-    row.nextRun = row.state === 'paid' && doc.accounting !== 'posted' ? new Date() : null;
+    row.nextRun = null;
     await event(row, 'callback', body, transaction, id);
     await persist(row, doc, transaction);
   });
 }
 
 export async function withAccountingLease(queueId: string, leaseToken: string, run: (doc: LedgerDocument) => Promise<{ posted: boolean; error?: string; review?: boolean }>) {
+  throw new LedgerError('Sage posting is disabled; bank responses are stored locally', 409);
+  /* Legacy Sage accounting lease
   await connectDatabase();
   const db = await getSequelize();
   // Hold the row lock across the accounting call. A second claimant cannot run
@@ -287,4 +293,5 @@ export async function withAccountingLease(queueId: string, leaseToken: string, r
     await persist(row, doc, transaction);
     return result;
   });
+  */
 }

@@ -38,9 +38,9 @@ export async function loadIzbCashbookRecovery(queueId: string) {
     : !receipt && bankFailure ? 'IZB reported that the bank payment failed. Resolve the bank error with IZB; there is no cashbook notification to retry and no payment will be resent.'
     : !receipt ? 'No saved IZB cashbook notification was found. Ask IZB to resend the original cashbook notification; do not send another bank payment.'
     : !validPayload ? 'The saved notification is invalid or its references do not match. Review it before retrying.'
-    : receipt.status === 'success' ? 'Cashbook posting is already complete.'
-    : receipt.status !== 'failed' ? 'Cashbook posting is pending or in progress. Another retry is blocked.'
-    : 'Retry the saved cashbook notification now, after resolving the reported error. The bank payment will not be sent again.';
+    : receipt.status === 'success' ? 'Bank notification is saved locally.'
+    : receipt.status !== 'failed' ? 'Local notification recording is pending or in progress.'
+    : 'Retry saving the notification locally. Sage posting is disabled.';
   return { queue, receipt, payload, details: {
     queueId, transactionId: receipt?.transactionId || queue.paymentId,
     receiptId: receipt?.id, status: receipt?.status || (bankFailure ? 'bank_failed' : 'missing'),
