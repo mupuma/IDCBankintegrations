@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (!Object.values(ROLES).includes(role)) {
+  if (!Object.values(ROLES).some(value => value === String(body?.role ?? '').toUpperCase())) {
     return NextResponse.json({ error: 'Invalid role.' }, { status: 400 });
   }
 

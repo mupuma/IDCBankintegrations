@@ -7,6 +7,7 @@ export type PhysicalAddress = {
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
 
 export type PaymentsResponse = {
+    sageBankCode?: string; // Original APPYM.IDBANK, retained for Sage accounting.
     paymentId: any; //To be used by IZB to pull payments onto banking platform
     transactionId: string;
 
@@ -75,6 +76,9 @@ export type PaymentsRequest = {
 
 
 export type ReceiptRequest = {
+    bankReference?: string;
+    bankResponse?: unknown;
+    sageBankCode?: string;
     transactionId: string;
     bankCode: string;
     description: string;

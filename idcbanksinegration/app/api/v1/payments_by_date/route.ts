@@ -254,6 +254,7 @@ function normalizePayment(appym: SageRawRecord, bankDetails: VendorBankDetails, 
 
   return {
     paymentId: transactionId,
+    sageBankCode: trimString(getRawField(appym, ['idbank', 'IDBANK'], '')),
     transactionId,
     accountNumber: bankDetails.accountNumber,
     amount,

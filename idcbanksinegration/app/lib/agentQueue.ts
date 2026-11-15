@@ -2,6 +2,7 @@ import { QueryTypes, Transaction } from 'sequelize';
 import { connectDatabase, getSequelize } from '@/app/lib/db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import type { BankCode, PaymentsResponse } from '@/app/models/dtos';
+import { processedAtWrite } from './paymentProcessedAt';
 
 export type ClaimedQueueItem = {
   queueId: string;
@@ -93,6 +94,7 @@ export async function reportBankQueueResult(
     attempts?: number;
   },
 ) {
+  const receivedAt = new Date();
   await connectDatabase();
 
   const sequelize = await getSequelize();
@@ -107,11 +109,32 @@ export async function reportBankQueueResult(
     }
 
     const statusUpdate: Record<string, unknown> = {
+      ...processedAtWrite(updates.status, receivedAt, updates.response),
       status: updates.status,
       lastError: updates.error ?? null,
       ...(updates.attempts !== undefined ? { attempts: updates.attempts } : {}),
       ...(updates.response !== undefined ? { responsePayload: JSON.stringify(updates.response) } : {}),
     };
+
+    // Keep the locally recorded outcome date stable when an agent replays its
+    // saved result. Reconciliation reports must not move payments to a new day.
+    if (['success', 'paid', 'failed', 'rejected', 'partially_completed'].includes(updates.status)) {
+      let previous: Record<string, unknown> = {};
+      try {
+        const saved = JSON.parse(existing.responsePayload || '{}');
+        if (saved && typeof saved === 'object' && !Array.isArray(saved)) previous = saved;
+      } catch { /* new response remains authoritative */ }
+      const sameOutcome = existing.status === updates.status
+        || ['success', 'paid'].includes(existing.status) && ['success', 'paid'].includes(updates.status);
+      const incoming = updates.response === undefined ? previous : updates.response;
+      const body = incoming && typeof incoming === 'object' && !Array.isArray(incoming) ? incoming : { bankResponse: incoming };
+      const preservedDate = sameOutcome ? previous.outcomeRecordedAt || previous.processedAt || previous.receivedAt : undefined;
+      const historicalDate = sameOutcome && !preservedDate && existing.updatedAt ? new Date(existing.updatedAt).toISOString() : undefined;
+      statusUpdate.responsePayload = JSON.stringify({ ...body,
+        outcomeRecordedAt: preservedDate || historicalDate || new Date().toISOString(),
+        outcomeDateSource: historicalDate ? 'historical' : sameOutcome ? previous.outcomeDateSource : undefined,
+      });
+    }
 
     if (updates.status === 'success' || updates.status === 'failed' || updates.status === 'queued') {
       statusUpdate.lockedBy = null;

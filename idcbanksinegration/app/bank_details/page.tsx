@@ -1,6 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react'; // ← FIX 1: Added useCallback
+import { usePortalUser } from '@/app/lib/usePortalUser';
+import { PERMISSIONS } from '@/app/lib/permissions';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -470,6 +472,8 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
 // --- Main Application Component Layout ---
 
 export default function BankManagementPage() {
+  const { hasPermission } = usePortalUser();
+  const canWrite = hasPermission(PERMISSIONS.BANK_DETAILS_WRITE);
   const [banks, setBanks] = useState<Venbank[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
@@ -737,7 +741,7 @@ export default function BankManagementPage() {
               value={filterVendor}
               onChange={(e) => setFilterVendor(e.target.value)}
             />
-            <button
+            {canWrite && (<button
               onClick={() => { setEditingBank(null); setOpenForm(true); }}
               className="px-5 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-100 whitespace-nowrap outline-none active:scale-98"
             >
@@ -745,7 +749,7 @@ export default function BankManagementPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
               </svg>
               Add Record
-            </button>
+            </button>)}
             <button
               onClick={() => { void fetchBanks(true); void fetchVendorOptions(); }}
               className="p-2.5 bg-slate-100 text-slate-600 border border-slate-200/50 rounded-xl hover:bg-slate-200/70 transition-all outline-none"
@@ -835,7 +839,7 @@ export default function BankManagementPage() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                           </svg>
                         </button>
-                        <button 
+                        {canWrite && (<button
                           onClick={() => { setEditingBank(bank); setOpenForm(true); }} 
                           className="p-2 text-slate-400 hover:text-amber-600 hover:bg-amber-50 rounded-xl transition-all outline-none"
                           title="Edit"
@@ -843,8 +847,8 @@ export default function BankManagementPage() {
                           <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
-                        </button>
-                        <button 
+                        </button>)}
+                        {canWrite && (<button
                           onClick={() => handleDelete(bank.id)} 
                           className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all outline-none"
                           title="Delete"
@@ -852,7 +856,7 @@ export default function BankManagementPage() {
                           <svg className="w-4.5 h-4.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
                           </svg>
-                        </button>
+                        </button>)}
                       </div>
                     </td>
                   </tr>

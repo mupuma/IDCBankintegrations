@@ -12,6 +12,7 @@ import { Cbbtm } from '@/app/models/sage_entities/Cbbtm';
 import { Cboptio } from '@/app/models/sage_entities/Cboptio';
 import { Arcus } from '@/app/models/sage_entities/Arcus';
 import type { EntryDetails, ReceiptRequest } from '@/app/models/dtos';
+import { processedAtWrite } from './paymentProcessedAt';
 
 const MAX_STATUS_MESSAGE_LENGTH = 255;
 const SAGE_BINARY_FIELD_LENGTH = 32;
@@ -198,7 +199,7 @@ async function insertCbbctl(receipt: ReceiptRequest, batchId: string, transactio
     audttime: time,
     audtuser: 'ADMIN',
     audtorg: getCompanyCode(),
-    bankcode: safeString(receipt.bankCode, 12),
+    bankcode: receipt.sageBankCode!,
     activesw: 'A',
     textdesc: safeString(receipt.description ?? '', 30),
     srceledger: 'CB',
@@ -597,7 +598,7 @@ async function insertCbbthd(receipt: ReceiptRequest, batchId: string, transactio
       swtaxincl3: 0,
       swtaxincl4: 0,
       swtaxincl5: 0,
-      bankcode: safeString(receipt.bankCode, 12),
+      bankcode: receipt.sageBankCode!,
       swposted: 0,
       values: 0,
       processcmd: 0,
@@ -707,14 +708,18 @@ function queueIdentifiersForReceipt(receipt: ReceiptRequest) {
 
 function queuePayloadMatchesReceipt(record: PaymentQueueRequest, identifiers: string[]) {
   if (!identifiers.length) return false;
-  if (identifiers.includes(normalizeMatchValue(record.paymentId))) return true;
 
   let payload: Record<string, unknown>;
   try {
     payload = JSON.parse(record.paymentPayload) as Record<string, unknown>;
   } catch {
-    return false;
+    return identifiers.includes(normalizeMatchValue(record.paymentId));
   }
+
+  if (record.bankCode === 'IZB' && payload.izbAttemptReference) {
+    return identifiers.includes(normalizeMatchValue(payload.izbAttemptReference));
+  }
+  if (identifiers.includes(normalizeMatchValue(record.paymentId))) return true;
 
   const payloadIdentifiers = [
     payload.paymentId,
@@ -729,6 +734,7 @@ async function markPaymentQueueFromCashbook(
   status: 'success' | 'failed',
   message: string,
   batchId?: string,
+  receivedAt: Date = new Date(),
 ) {
   const bankCode = String(receipt.bankCode || '').trim().toUpperCase();
   if (!bankCode) return;
@@ -744,7 +750,6 @@ async function markPaymentQueueFromCashbook(
         },
       },
       order: [['updatedAt', 'DESC']],
-      limit: 200,
     });
 
     const matched = candidates.filter((record) => queuePayloadMatchesReceipt(record, identifiers));
@@ -759,8 +764,12 @@ async function markPaymentQueueFromCashbook(
       return;
     }
 
+    let previousResponse: Record<string, unknown> = {};
+    try { previousResponse = JSON.parse(matched[0].responsePayload || '{}'); } catch { /* retain the new notification */ }
     const responsePayload = JSON.stringify({
-      cashbookStatus: status,
+      ...previousResponse,
+      notificationStatus: status,
+      bankNotification: receipt,
       transactionId: receipt.transactionId,
       bankCode,
       batchId: batchId || null,
@@ -770,6 +779,7 @@ async function markPaymentQueueFromCashbook(
 
     await PaymentQueueRequest.update(
       {
+        ...processedAtWrite(status, receivedAt),
         status,
         lastError: status === 'success' ? null : truncateStatusMessage(message),
         responsePayload,
@@ -794,6 +804,7 @@ async function finalizeLocalCashbookSuccess(
   receipt: ReceiptRequest,
   message: string,
   batchId?: string,
+  receivedAt: Date = new Date(),
 ) {
   const statusMessage = truncateStatusMessage(message);
   try {
@@ -808,7 +819,7 @@ async function finalizeLocalCashbookSuccess(
     console.error('Failed to update processed transaction after Sage success', error);
   }
 
-  await markPaymentQueueFromCashbook(receipt, 'success', statusMessage, batchId);
+  await markPaymentQueueFromCashbook(receipt, 'success', statusMessage, batchId, receivedAt);
 }
 
 export type CashbookProcessResult =
@@ -833,7 +844,7 @@ const ACTIVE_LOCAL_RECEIPT_STATUSES = new Set(['pending', 'processing', 'success
 async function persistLocalCashbookReceipt(
   receipt: ReceiptRequest,
   existingReceipt: CashbookReceipt | null,
-): Promise<CashbookReceipt> {
+): Promise<CashbookReceipt | null> {
   const payload = {
     bankCode: receipt.bankCode,
     description: safeString(receipt.description, 255),
@@ -847,7 +858,13 @@ async function persistLocalCashbookReceipt(
   };
 
   if (existingReceipt) {
-    await existingReceipt.update(payload);
+    // Claim a failed notification atomically, including when a bank callback
+    // races an operator retry or another portal process.
+    if (existingReceipt.status !== 'failed') return null;
+    const [claimed] = await CashbookReceipt.update(payload, {
+      where: { id: existingReceipt.id, status: 'failed', bankCode: receipt.bankCode },
+    });
+    if (!claimed) return null;
     return existingReceipt;
   }
 
@@ -858,22 +875,23 @@ async function persistLocalCashbookReceipt(
 }
 
 export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<CashbookProcessResult> {
+  const receivedAt = new Date();
   // Always persist the bank payload locally before any Sage work.
   await connectDatabase();
 
   const existingProcessed = await ProcessedTransaction.findByPk(receipt.transactionId);
-  if (existingProcessed?.statusCode === 200) {
-    await markPaymentQueueFromCashbook(
-      receipt,
-      'success',
-      existingProcessed.statusMessage || 'Cashbook transaction already processed',
-    );
-    return { success: false, alreadyProcessed: true };
-  }
-
   const existingReceipt = await CashbookReceipt.findOne({
     where: { transactionId: receipt.transactionId },
   });
+  // An operator retry reuses an already received notification. Its receipt
+  // creation time is the known local record, rather than the time of the retry.
+  const originalReceivedAt = existingReceipt?.createdAt || receivedAt;
+  if (existingProcessed?.statusCode === 200) {
+    const message = existingProcessed.statusMessage || 'Cashbook transaction already processed';
+    if (existingReceipt) await finalizeLocalCashbookSuccess(existingReceipt, receipt, message, undefined, originalReceivedAt);
+    else await markPaymentQueueFromCashbook(receipt, 'success', message, undefined, originalReceivedAt);
+    return { success: false, alreadyProcessed: true };
+  }
 
   if (existingReceipt && ACTIVE_LOCAL_RECEIPT_STATUSES.has(existingReceipt.status)) {
     if (existingReceipt.status === 'success') {
@@ -881,91 +899,35 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
         receipt,
         'success',
         existingReceipt.statusMessage || 'Cashbook transaction already processed',
+        undefined,
+        originalReceivedAt,
       );
     }
     return { success: false, alreadyProcessed: true, receiptId: existingReceipt.id };
   }
 
   const localReceipt = await persistLocalCashbookReceipt(receipt, existingReceipt);
+  if (!localReceipt) return { success: false, alreadyProcessed: true, receiptId: existingReceipt?.id };
 
-  let sagePosted = false;
-  let batchId = '';
-
+  // Bank notifications are retained locally. Sage posting is discontinued.
+  const message = 'Bank notification recorded locally';
   try {
-    await connectSageDatabase();
-
-    if (await existingCashbookReference(sageCashbookReference(receipt))) {
-      const message = 'Already Reported';
-      await localReceipt.update({ status: 'failed', statusMessage: message, processedDate: new Date() });
-      try {
-        await updateProcessedTransaction(receipt, 409, message);
-      } catch (error) {
-        console.error('Failed to record duplicate cashbook transaction', error);
-      }
-      await markPaymentQueueFromCashbook(receipt, 'success', message);
-      return { success: false, alreadyProcessed: true, receiptId: localReceipt.id };
-    }
-
-    await localReceipt.update({ status: 'processing' });
-
-    const written = await writeCashbookAtomically(receipt);
-    batchId = written.batchId;
-    sagePosted = true;
-
-    const message = `Cashbook transaction inserted into Sage batch ${batchId}`;
-    await finalizeLocalCashbookSuccess(localReceipt, receipt, message, batchId);
-
-    return {
-      success: true,
-      receiptId: localReceipt.id,
-      batchId,
-      status: 'success',
-      message,
-    };
-  } catch (error: any) {
-    const rawMessage = error?.message ?? String(error);
-    const statusMessage = truncateStatusMessage(rawMessage);
-
-    if (sagePosted) {
-      const successMessage = batchId
-        ? `Cashbook transaction inserted into Sage batch ${batchId}`
-        : 'Cashbook transaction saved to Sage';
-      await finalizeLocalCashbookSuccess(localReceipt, receipt, successMessage, batchId);
-      console.error('Sage cashbook posted but follow-up bookkeeping failed', error);
-      return {
-        success: true,
-        receiptId: localReceipt.id,
-        batchId,
-        status: 'success',
-        message: successMessage,
-      };
-    }
-
-    try {
-      await localReceipt.update({ status: 'failed', statusMessage, processedDate: new Date() });
-    } catch (updateError) {
-      console.error('Failed to record cashbook failure on local receipt', updateError);
-    }
-
-    try {
-      await updateProcessedTransaction(receipt, -1, statusMessage);
-    } catch (updateError) {
-      console.error('Failed to record cashbook failure', updateError);
-    }
-
-    await markPaymentQueueFromCashbook(receipt, 'failed', statusMessage);
-
-    console.error('Cashbook Sage processing failed', error);
-
-    return {
-      success: false,
-      receiptId: localReceipt.id,
-      error: statusMessage,
-    };
+    await updateProcessedTransaction(receipt, 200, message);
+    await localReceipt.update({ status: 'success', statusMessage: message, processedDate: new Date() });
+    await markPaymentQueueFromCashbook(receipt, 'success', message, undefined, originalReceivedAt);
+    return { success: true, receiptId: localReceipt.id, batchId: '', status: 'success', message };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unable to save bank notification locally';
+    await localReceipt.update({ status: 'failed', statusMessage: truncateStatusMessage(errorMessage) });
+    return { success: false, receiptId: localReceipt.id, error: errorMessage };
   }
 }
 
-async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = false) {
+async function writeCashbookAtomically(receipt: ReceiptRequest) {
+  throw new Error("Sage posting is disabled; bank responses are stored locally");
+  /* Legacy Sage writer retained for reference.
+  const sageBankCode = await resolveSageBankCode(receipt);
+  receipt = { ...receipt, sageBankCode };
   return sageSequelize.transaction(async transaction => {
     // Serializes batch allocation across portal processes. The lock is released
     // automatically on commit/rollback, including after a lost connection.
@@ -976,7 +938,7 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
     const lockResult = Array.isArray(rows) && rows.length ? Number((rows[0] as any).lockResult) : NaN;
     if (!Number.isFinite(lockResult) || lockResult < 0) throw new Error('Unable to acquire Sage cashbook posting lock');
     const reference = sageCashbookReference(receipt);
-    const existing = deduplicate ? await Cbbthd.findOne({ where: { reference }, transaction }) : null;
+    const existing = await Cbbthd.findOne({ where: { reference }, transaction });
     if (existing) return { batchId: String(existing.get('batchid')), alreadyPosted: true };
     const batchId = await getNextBatchId(transaction);
     await insertCbbctl(receipt, batchId, transaction);
@@ -984,15 +946,33 @@ async function writeCashbookAtomically(receipt: ReceiptRequest, deduplicate = fa
     await updateCashbookOptions(batchId, transaction);
     return { batchId, alreadyPosted: false };
   });
+  */
 }
 
-export async function postConfirmedH2hCashbook(receipt: ReceiptRequest) {
-  // The H2H ledger owns retries. A stable Sage-safe reference is checked
-  // inside the same Sage transaction as all writes, so a lost commit response
-  // can be recovered without creating another cashbook entry.
-  await connectSageDatabase();
-  const result = await writeCashbookAtomically(receipt, true);
-  await connectDatabase();
-  await updateProcessedTransaction(receipt, 200, `Cashbook transaction inserted into Sage batch ${result.batchId}`);
-  return result;
+// Bank callbacks carry the portal routing code. Resolve accounting codes from
+// the original queued payment, never from the callback or source profile.
+async function resolveSageBankCode(receipt: ReceiptRequest): Promise<string> {
+  const identifiers = queueIdentifiersForReceipt(receipt);
+  const records = await PaymentQueueRequest.findAll({ where: { bankCode: receipt.bankCode } });
+  const codes = new Set<string>();
+  for (const record of records) {
+    let payload: any;
+    try { payload = JSON.parse(record.paymentPayload); } catch { continue; }
+    const payments = Array.isArray(payload.meta?.sagePayments) ? payload.meta.sagePayments : [payload];
+    for (const payment of payments) {
+      if (![record.paymentId, payment.paymentId, payment.transactionId].some(id => identifiers.includes(normalizeMatchValue(id)))) continue;
+      const code = String(payment.sageBankCode ?? '').trim();
+      if (code) codes.add(code);
+    }
+  }
+  // H2H supplies this from its canonical payment under the accounting lease.
+  if (!codes.size && receipt.sageBankCode) codes.add(receipt.sageBankCode.trim());
+  if (codes.size !== 1) throw new Error('Cannot post to Sage: original Sage bank code is missing or ambiguous. Reload the payment from Sage before retrying.');
+  const code = [...codes][0];
+  if (!code || code.length > 12) throw new Error('Invalid original Sage bank code');
+  return code;
+}
+
+export async function postConfirmedH2hCashbook(_receipt: ReceiptRequest) {
+  throw new Error('Sage posting is disabled; bank responses are stored locally');
 }

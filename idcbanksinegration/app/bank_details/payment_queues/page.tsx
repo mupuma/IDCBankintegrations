@@ -1,15 +1,19 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Pagination from '@/app/components/Pagination';
 import type { BankCode } from '@/app/models/dtos';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { useAdaptiveQueuePolling } from '@/app/lib/useAdaptiveQueuePolling';
+import TransactionHealth from '@/app/components/TransactionHealth';
 import PaymentRecoveryDialog from '@/app/components/PaymentRecoveryDialog';
+import TransactionDetailsDialog from '@/app/components/TransactionDetailsDialog';
+import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
-import { BANK_CODES } from '@/app/lib/enabledBanks';
+import { QUEUE_SEARCH_FIELDS, type QueueSearchField } from '@/app/lib/queueSearch';
 
+import { BANK_CODES } from '@/app/lib/enabledBanks';
 
 function asRecord(value: unknown): Record<string, any> {
   return value && typeof value === 'object' ? value as Record<string, any> : {};
@@ -28,7 +32,7 @@ function getQueuePaymentSummary(item: BankQueueItem) {
     isBulk,
     reference: isBulk ? String(request.batchName ?? item.paymentId) : String(payment.transactionId ?? payment.transactionReference ?? item.paymentId),
     description: isBulk ? String(request.description ?? request.narration ?? '') : String(payment.remarks ?? payment.description ?? ''),
-    vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : String(payment.vendorId ?? payment.accountName ?? 'N/A'),
+    vendor: isBulk ? `${Number(request.totalCount ?? 0)} payments` : [payment.vendorId, payment.accountName].filter(Boolean).join(' · ') || 'N/A',
     amount: Number.isFinite(amount) ? amount : 0,
     currency: isBulk ? String(request.currency ?? '') : String(payment.currency ?? payment.currencyCode ?? ''),
     transactionType: isBulk ? String(meta.transactionType ?? payment.service).replace('ZANACO_BULK_', '') : String(payment.transactionType ?? 'N/A'),
@@ -39,7 +43,7 @@ function getQueuePaymentSummary(item: BankQueueItem) {
 
 function getQueueResponseDetails(item: BankQueueItem) {
   const response = asRecord(item.response);
-  return ['cashbookStatus', 'batchId', 'message', 'reference', 'prcn_number', 'bankRef', 'accountingStatus', 'accountingError']
+  return ['bankStatus', 'bankStatusCode', 'notificationStatus', 'message']
     .map((key) => {
       const value = response[key];
       return value ? { key, value: String(value) } : null;
@@ -50,6 +54,7 @@ function getQueueResponseDetails(item: BankQueueItem) {
 export default function PaymentQueuesPage() {
   const { hasPermission } = usePortalUser();
   const [recoveryItem, setRecoveryItem] = useState<BankQueueItem | null>(null);
+  const [detailItem, setDetailItem] = useState<BankQueueItem | null>(null);
   const [selectedBankTab, setSelectedBankTab] = useState<BankCode | 'ALL'>('ALL');
   const [items, setItems] = useState<BankQueueItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -57,6 +62,10 @@ export default function PaymentQueuesPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
   const [total, setTotal] = useState<number | null>(null);
+  const [searchField, setSearchField] = useState<QueueSearchField>('all');
+  const [searchText, setSearchText] = useState('');
+  const [appliedSearch, setAppliedSearch] = useState<{ field: QueueSearchField; text: string }>({ field: 'all', text: '' });
+  const requestVersion = useRef(0);
 
   const filteredItems = useMemo(
     () => (selectedBankTab === 'ALL' ? items : items.filter((item) => item.bankCode === selectedBankTab)),
@@ -69,6 +78,7 @@ export default function PaymentQueuesPage() {
   };
 
   const loadQueueItems = useCallback(async (): Promise<BankQueueItem[]> => {
+    const version = ++requestVersion.current;
     setLoading(true);
     setError(null);
 
@@ -77,10 +87,15 @@ export default function PaymentQueuesPage() {
       if (selectedBankTab !== 'ALL') params.set('bankCode', selectedBankTab);
       params.set('page', String(page));
       params.set('pageSize', String(pageSize));
+      if (appliedSearch.text) {
+        params.set('searchField', appliedSearch.field);
+        params.set('search', appliedSearch.text);
+      }
 
       const url = `/api/v1/posted_payments?${params.toString()}`;
       const response = await fetch(url);
       const data = await response.json();
+      if (version !== requestVersion.current) return [];
 
       if (!response.ok || !data?.success) {
         throw new Error(data?.error || 'Could not load queue items');
@@ -91,17 +106,18 @@ export default function PaymentQueuesPage() {
       setTotal(typeof data.total === 'number' ? data.total : null);
       return nextItems;
     } catch (err: any) {
-      setError(err?.message || 'Unable to load queue items');
+      if (version === requestVersion.current) setError(err?.message || 'Unable to load queue items');
       return [];
     } finally {
-      setLoading(false);
+      if (version === requestVersion.current) setLoading(false);
     }
-  }, [selectedBankTab, page, pageSize]);
+  }, [selectedBankTab, page, pageSize, appliedSearch]);
 
   const { refresh: refreshQueueItems } = useAdaptiveQueuePolling(loadQueueItems, [
     selectedBankTab,
     page,
     pageSize,
+    appliedSearch,
   ]);
 
   const statusCounts = useMemo(() => {
@@ -160,6 +176,20 @@ export default function PaymentQueuesPage() {
           </div>
         </div>
 
+        <form onSubmit={event => { event.preventDefault(); setPage(1); setAppliedSearch({ field: searchField, text: searchText.trim() }); }} className="mt-6 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-end">
+          <label className="text-sm font-semibold text-slate-700">Search by
+            <select value={searchField} onChange={event => setSearchField(event.target.value as QueueSearchField)} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 sm:w-56">
+              {QUEUE_SEARCH_FIELDS.map(field => <option key={field.value} value={field.value}>{field.label}</option>)}
+            </select>
+          </label>
+          <label className="flex-1 text-sm font-semibold text-slate-700">Search payments
+            <input type="search" value={searchText} onChange={event => setSearchText(event.target.value)} maxLength={200} placeholder={searchField === 'transactionType' ? 'RTGS, DDACC, INT, SWIFT...' : searchField === 'vendor' ? 'Vendor ID or name...' : searchField === 'reference' ? 'Payment or bank reference...' : 'Enter search value...'} className="mt-1 block w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 font-normal" />
+          </label>
+          <button type="submit" className="rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800">Search</button>
+          <button type="button" onClick={() => { setSearchField('all'); setSearchText(''); setPage(1); setAppliedSearch({ field: 'all', text: '' }); }} className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-100">Clear</button>
+        </form>
+        {appliedSearch.text ? <p role="status" className="mt-3 text-sm text-slate-600">{total ?? 0} matching payments for {QUEUE_SEARCH_FIELDS.find(field => field.value === appliedSearch.field)?.label.toLowerCase()}: “{appliedSearch.text}”</p> : null}
+
         <div className="mt-6 grid gap-3 sm:grid-cols-4">
           {(['queued', 'pulled', 'processing', 'submitting', 'accepted', 'unknown', 'paid', 'success', 'failed', 'rejected', 'needs_review'] as const).map((status) => (
             <div key={status} className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
@@ -187,12 +217,13 @@ export default function PaymentQueuesPage() {
               <tr className="bg-slate-50 border-b border-slate-200/60">
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Reference / Description</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Bank Reference</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Vendor</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Amount</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Txn Type</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Attempts</th>
-                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Updated</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">Payment processed (UTC+2)</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Error</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Recovery</th>
               </tr>
@@ -200,31 +231,38 @@ export default function PaymentQueuesPage() {
             <tbody className="divide-y divide-slate-100">
               {error ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-rose-700">
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-rose-700">
                     {error}
                   </td>
                 </tr>
               ) : filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="px-5 py-12 text-center text-sm text-slate-500">
-                    {loading ? 'Loading queue items...' : 'No queue transactions found.'}
+                  <td colSpan={11} className="px-5 py-12 text-center text-sm text-slate-500">
+                    {loading ? 'Loading queue items...' : appliedSearch.text ? 'No payments match this search.' : 'No queue transactions found.'}
                   </td>
                 </tr>
               ) : (
                 filteredItems.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
+                  <tr key={item.id} onClick={() => setDetailItem(item)} className="cursor-pointer hover:bg-slate-50/50 transition-colors">
                     <td className="px-5 py-4 text-sm font-semibold text-slate-700">
                       {item.bankCode}
                       {getQueuePaymentSummary(item).isBulk ? <div className="mt-1 text-xs font-normal text-slate-500">Bulk batch</div> : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">
-                      <div className="font-mono font-semibold text-slate-800">{getQueuePaymentSummary(item).reference}</div>
+                      <button type="button" onClick={() => setDetailItem(item)} className="text-left font-mono font-semibold text-slate-800 underline decoration-slate-300 underline-offset-4">{getQueuePaymentSummary(item).reference}</button>
+
                       {getQueuePaymentSummary(item).description ? (
                         <div className="mt-1 max-w-[260px] whitespace-normal text-xs text-slate-500">
                           {getQueuePaymentSummary(item).description}
                         </div>
                       ) : null}
                       {getQueuePaymentSummary(item).batchReference ? <div className="mt-1 text-xs text-slate-500">Batch: {getQueuePaymentSummary(item).batchReference}</div> : null}
+                    </td>
+                    <td className="px-5 py-4 text-sm text-slate-700">
+                      {bankResponseReferences(item.response).filter(ref => ref.label.startsWith('Bank')).length
+                        ? bankResponseReferences(item.response).filter(ref => ref.label.startsWith('Bank')).map(ref => (
+                          <div key={`${ref.label}:${ref.value}`} className="mb-2"><div className="text-xs text-slate-500">{ref.label}</div><span className="select-all break-all font-mono font-semibold">{ref.value}</span></div>
+                        )) : <span className="text-xs text-slate-500">Not received</span>}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).vendor}</td>
                     <td className="px-5 py-4 text-sm text-slate-700">{getQueuePaymentSummary(item).amount.toFixed(2)} {getQueuePaymentSummary(item).currency}</td>
@@ -243,10 +281,11 @@ export default function PaymentQueuesPage() {
                       ) : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
-                    <td className="px-5 py-4 text-sm text-rose-700">{item.lastError || 'N/A'}</td>
-                    <td className="px-5 py-4 text-sm">
-                      {['ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">Recovery / history</button> : null}
+                    <td className="px-5 py-4 text-sm text-slate-700">{item.processedAt ? new Date(item.processedAt).toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'medium' }) : ['success', 'paid', 'failed', 'rejected', 'partially_completed'].includes(item.status) ? 'Not recorded' : 'Awaiting final status'}</td>
+                    <td className="px-5 py-4 text-sm"><TransactionHealth status={item.status} error={item.lastError} /></td>
+                    <td className="px-5 py-4 text-sm" onClick={event => event.stopPropagation()}>
+                      <button type="button" onClick={() => setDetailItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">View details</button>
+                      {['IZB', 'ZANACO', 'ZICB'].includes(item.bankCode) ? <button type="button" onClick={() => setRecoveryItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">{['failed', 'rejected'].includes(item.status) ? 'Correct details / recovery' : 'Recovery / history'}</button> : null}
                     </td>
                   </tr>
                 ))
@@ -263,8 +302,9 @@ export default function PaymentQueuesPage() {
         />
       </div>
       {recoveryItem ? <PaymentRecoveryDialog key={recoveryItem.id} item={recoveryItem}
-        canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
+        canEdit={hasPermission(PERMISSIONS.BANK_DETAILS_WRITE)} canRecover={hasPermission(PERMISSIONS.PAYMENTS_POST)} canRetry={hasPermission(PERMISSIONS.PAYMENTS_RETRY)}
         onClose={() => setRecoveryItem(null)} onChange={() => void refreshQueueItems()} /> : null}
+      {detailItem ? <TransactionDetailsDialog key={detailItem.id} item={detailItem} onClose={() => setDetailItem(null)} /> : null}
     </div>
   );
 }

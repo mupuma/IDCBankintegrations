@@ -26,6 +26,7 @@ import { getBankIntegration } from '@/app/lib/bankIntegrations';
 import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
 import { sourceProfile } from '@/app/lib/zicb/config';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
+import { isQueueSearchField, matchesQueueSearch } from '@/app/lib/queueSearch';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -333,6 +334,8 @@ async function requeueFailedReservedPayment(input: {
   sourceBankCode: string | null;
 }) {
   const { request, auth, payment, paymentId, bankCode, sourceBankCode } = input;
+  if (bankCode === 'IZB') return NextResponse.json({ success: false,
+    error: 'Use Retry cashbook on Bank Queue Processing for a failed cashbook notification. Do not requeue an IZB payment that may already have been processed by the bank.', recoveryRequired: true, paymentId }, { status: 409 });
   if (bankCode === 'ZANACO') return NextResponse.json({ success: false,
     error: 'Use the recovery controls on Bank Queue Processing to resume or correct this instruction. Posting it again cannot authorise a second bank submission.', recoveryRequired: true, paymentId }, { status: 409 });
   const paymentKey = createHash('sha256').update(paymentId).digest('hex');
@@ -562,6 +565,8 @@ async function postManyPayments(input: {
     },
     meta: {
       paymentIds: payments.map((row) => resolvePaymentId(row as { paymentId?: string }, '')),
+      payments: payments.map(row => ({ ...row, transactionType: effectiveType })),
+      sagePayments: payments.map(row => ({ paymentId: row.paymentId, transactionId: row.transactionId, sageBankCode: row.sageBankCode })),
       transactionType: effectiveType,
       sourceBank: sourceBankCode,
     },
@@ -698,6 +703,7 @@ function mapQueueRecordToItem(record: PaymentQueueRequest): BankQueueItem | null
     attempts: record.attempts,
     lastError: record.lastError ?? undefined,
     response,
+    processedAt: record.processedAt ? new Date(record.processedAt).toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };
@@ -729,6 +735,12 @@ export async function GET(request: NextRequest) {
     if (isAuthError(auth)) return auth;
   } else if (!sessionToken && !bankCode) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const search = (request.nextUrl.searchParams.get('search') || '').trim();
+  const searchField = request.nextUrl.searchParams.get('searchField') || 'all';
+  if (search.length > 200 || !isQueueSearchField(searchField)) {
+    return NextResponse.json({ success: false, error: 'Choose a valid search field and enter at most 200 characters.' }, { status: 400 });
   }
 
   await connectDatabase();
@@ -817,7 +829,8 @@ export async function GET(request: NextRequest) {
     // Persisted rows are authoritative because agents report results to the DB.
     mergedById.set(item.id, item);
   }
-  const mergedItems = Array.from(mergedById.values());
+  // Search the complete, deduplicated queue before counting and paging it.
+  const mergedItems = Array.from(mergedById.values()).filter(item => matchesQueueSearch(item, searchField, search));
 
   // sort by updatedAt descending for sensible paging order
   mergedItems.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());

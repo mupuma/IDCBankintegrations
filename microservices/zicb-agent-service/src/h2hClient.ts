@@ -1,6 +1,7 @@
 import { PATHS, validateBatch, submissionOutcome, statusOutcome, type Channel, type Batch, type Outcome } from '../../../shared/zicb-h2h';
 import { request as httpsRequest } from 'node:https';
 import { randomUUID } from 'node:crypto';
+const { redact } = require('../../../shared/http-logging') as { redact(value: unknown): unknown };
 
 export type Profile = { clientId: string; clientSecret: string; authUrl: string; internalUrl: string; rtgsUrl: string; ddaccUrl: string };
 type HttpResult = { status: number; body: any };
@@ -217,7 +218,7 @@ export class H2hClient {
     }
     try {
       const result = await this.authenticated(id, this.businessUrl(id, channel, 'send-money'), 'POST', batch);
-      return submissionOutcome(result.status, result.body);
+      return { ...submissionOutcome(result.status, result.body), details: { httpStatus: result.status, bankResponse: redact(result.body) } };
     } catch { return { state: 'unknown', error: 'Submission outcome unknown; reconcile the original reference before any resend' }; }
   }
   async reconcile(id: string, channel: Channel, batch: Batch): Promise<Outcome> {
@@ -228,9 +229,10 @@ export class H2hClient {
           : result.status === 403 ? 'ask ZICB to check status-query permissions and source IP allowlisting'
           : result.status === 404 ? 'confirm the status endpoint and original batch reference with ZICB; not-found does not authorise resubmission'
           : 'check the ZICB status service and agent HTTP logs';
-        return { state: 'unknown', error: `Bank status unavailable (HTTP ${result.status}); ${hint}; original reference retained` };
+        return { state: 'unknown', error: `Bank status unavailable (HTTP ${result.status}); ${hint}; original reference retained`,
+          details: { httpStatus: result.status, bankResponse: redact(result.body) } };
       }
-      return statusOutcome(result.body, batch, channel);
+      return { ...statusOutcome(result.body, batch, channel), details: { httpStatus: result.status, bankResponse: redact(result.body) } };
     } catch (error) {
       const detail = error instanceof H2hAuthenticationError ? error.message
         : authenticationConnectionError(error).replace(/Token request/g, 'Status request').replace(/authentication/g, 'bank status');

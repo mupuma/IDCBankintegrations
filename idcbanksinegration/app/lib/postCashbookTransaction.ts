@@ -64,11 +64,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     await logAuditEvent({
       userId: actor?.id ?? null,
       username: actor?.username ?? (isApiKeyAuth ? 'bank-agent' : null),
-      action: 'SAGE_CASHBOOK_FAILED',
+      action: 'BANK_NOTIFICATION_FAILED',
       resourceType: 'cashbook',
       resourceId: receipt.transactionId ? String(receipt.transactionId) : null,
       correlationId,
-      summary: `Sage cashbook posting failed for ${receipt.transactionId ?? 'unknown'}`.trim(),
+      summary: `Local bank notification recording failed for ${receipt.transactionId ?? 'unknown'}`.trim(),
       details: {
         transactionId: receipt.transactionId ?? null,
         bankCode: receipt.bankCode ?? null,
@@ -86,11 +86,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     await logAuditEvent({
       userId: actor?.id ?? null,
       username: actor?.username ?? (isApiKeyAuth ? 'bank-agent' : null),
-      action: 'CASHBOOK_POSTED',
+      action: 'BANK_NOTIFICATION_SAVED',
       resourceType: 'cashbook',
       resourceId: receipt.transactionId ? String(receipt.transactionId) : null,
       correlationId,
-      summary: `${actor?.username ?? 'bank-agent'} posted cashbook transaction ${receipt.transactionId ?? ''}`.trim(),
+      summary: `${actor?.username ?? 'bank-agent'} saved bank notification ${receipt.transactionId ?? ''}`.trim(),
       details: {
         transactionId: receipt.transactionId ?? null,
         bankCode: receipt.bankCode ?? null,
@@ -102,11 +102,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     await logAuditEvent({
       userId: actor?.id ?? null,
       username: actor?.username ?? (isApiKeyAuth ? 'bank-agent' : null),
-      action: 'SAGE_CASHBOOK_SUCCESS',
+      action: 'BANK_NOTIFICATION_RECORDED',
       resourceType: 'cashbook',
       resourceId: receipt.transactionId ? String(receipt.transactionId) : null,
       correlationId,
-      summary: `Sage cashbook posting succeeded for ${receipt.transactionId ?? 'unknown'}`.trim(),
+      summary: `Local bank notification recording succeeded for ${receipt.transactionId ?? 'unknown'}`.trim(),
       details: {
         transactionId: receipt.transactionId ?? null,
         bankCode: receipt.bankCode ?? null,
@@ -138,11 +138,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     await logAuditEvent({
       userId: actor?.id ?? null,
       username: actor?.username ?? (isApiKeyAuth ? 'bank-agent' : null),
-      action: 'SAGE_CASHBOOK_DUPLICATE',
+      action: 'BANK_NOTIFICATION_DUPLICATE',
       resourceType: 'cashbook',
       resourceId: receipt.transactionId ? String(receipt.transactionId) : null,
       correlationId,
-      summary: `Sage cashbook duplicate detected for ${receipt.transactionId ?? 'unknown'}`.trim(),
+      summary: `Local bank notification duplicate detected for ${receipt.transactionId ?? 'unknown'}`.trim(),
       details: {
         transactionId: receipt.transactionId ?? null,
         bankCode: receipt.bankCode ?? null,
@@ -156,11 +156,11 @@ export async function postCashbookTransaction(request: NextRequest) {
     await logAuditEvent({
       userId: actor?.id ?? null,
       username: actor?.username ?? (isApiKeyAuth ? 'bank-agent' : null),
-      action: 'SAGE_CASHBOOK_FAILED',
+      action: 'BANK_NOTIFICATION_FAILED',
       resourceType: 'cashbook',
       resourceId: receipt.transactionId ? String(receipt.transactionId) : null,
       correlationId,
-      summary: `Sage cashbook posting failed for ${receipt.transactionId ?? 'unknown'}`.trim(),
+      summary: `Local bank notification recording failed for ${receipt.transactionId ?? 'unknown'}`.trim(),
       details: {
         transactionId: receipt.transactionId ?? null,
         bankCode: receipt.bankCode ?? null,
