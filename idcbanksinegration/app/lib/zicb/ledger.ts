@@ -6,6 +6,7 @@ import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation, ZicbPrcnSeque
 import { buildBatch, channelFor, mergeOutcome, callbackErrors, type Batch, type Channel, type State, type Outcome } from '../../../../shared/zicb-h2h';
 import { sourceProfile, reconcileDelay } from './config';
 import { findExistingPaymentPost } from '../paymentPostGuard';
+import { processedAtWrite } from '../paymentProcessedAt';
 
 export type LedgerDocument = {
   outcomeRecordedAt?: string; outcomeRecordedStatus?: string;
@@ -57,10 +58,11 @@ export class LedgerError extends Error { constructor(message: string, public sta
 async function event(row: ZicbH2hPayment, kind: string, payload: unknown, transaction: Transaction, eventId = randomUUID() as string) {
   await ZicbH2hEvent.create({ eventId, queueId: row.queueId, kind, payload: JSON.stringify(payload) }, { transaction });
 }
-async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Transaction) {
+async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Transaction, receivedAt?: Date) {
   row.document = JSON.stringify(doc);
   await row.save({ transaction });
   await PaymentQueueRequest.update({
+    ...(receivedAt ? processedAtWrite(row.state, receivedAt, { notSent: doc.notSent }) : {}),
     status: row.state, attempts: doc.submissionAttempts, lastError: doc.error || null,
     responsePayload: JSON.stringify({ protocol: 'h2h-v1', reference: row.reference, prcn_number: row.prcn,
       channel: row.channel, bankRef: doc.bankRef, bankStatus: doc.rawStatus,
@@ -211,6 +213,7 @@ export async function claimH2hWork() {
 }
 
 export async function reportH2hWork(queueId: string, leaseToken: string, outcome: Outcome) {
+  const receivedAt = new Date();
   if (!['accepted', 'unknown', 'paid', 'failed', 'rejected', 'needs_review'].includes(outcome.state)) throw new LedgerError('Invalid H2H outcome');
   await connectDatabase();
   const db = await getSequelize();
@@ -243,11 +246,12 @@ export async function reportH2hWork(queueId: string, leaseToken: string, outcome
     row.nextRun = ['accepted', 'unknown'].includes(row.state) ? new Date(Date.now() + reconcileDelay())
       : null;
     await event(row, 'bank_report', outcome, transaction, reportId);
-    await persist(row, doc, transaction);
+    await persist(row, doc, transaction, receivedAt);
   });
 }
 
 export async function receiveH2hCallback(channel: Channel, body: any) {
+  const receivedAt = new Date();
   const errors = callbackErrors(body);
   if (errors.length) throw new LedgerError(errors.join('; '));
   await connectDatabase();
@@ -272,7 +276,7 @@ export async function receiveH2hCallback(channel: Channel, body: any) {
     // and must not cancel or cause a second accounting action.
     row.nextRun = null;
     await event(row, 'callback', body, transaction, id);
-    await persist(row, doc, transaction);
+    await persist(row, doc, transaction, receivedAt);
   });
 }
 

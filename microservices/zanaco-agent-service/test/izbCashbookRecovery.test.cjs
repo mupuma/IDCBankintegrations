@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { load, routeFixture } = require('./helpers/portal.cjs');
+const { load, routeFixture, applySqlUpdate } = require('./helpers/portal.cjs');
 const root = 'idcbanksinegration/app/';
 const contract = load(root + 'lib/cashbookContract.ts');
 const policy = load(root + 'lib/sageQueryPolicy.ts');
@@ -33,7 +33,7 @@ function fixture({ status = 'failed', bank = 'IZB', missing = false, duplicate =
   const queueModel = {
     findOne: async ({ where }) => where.queueId === queue.queueId ? queue : null,
     findAll: async options => { assert.equal(options.limit, undefined, 'old queue entries remain matchable'); return [queue]; },
-    update: async values => { Object.assign(queue, values); return [1]; },
+    update: async values => { applySqlUpdate(queue, values); return [1]; },
   };
   const processedModel = {
     findByPk: async id => processed.get(id),
@@ -120,6 +120,7 @@ test('bank notifications are stored locally without Sage connectivity or origina
   assert.equal(f.writes.length, 0);
   assert.equal(f.receipts[0].status, 'success');
   assert.equal(f.queue.status, 'success');
+  assert.ok(Number.isFinite(new Date(f.queue.processedAt).getTime()));
   const response = JSON.parse(f.queue.responsePayload);
   assert.deepEqual(response.bankNotification, f.notification);
   assert.equal(response.notificationStatus, 'success');
@@ -131,6 +132,16 @@ test('duplicate notifications do not create additional local receipts or Sage wr
   assert.equal((await f.core.processCashbookReceipt(f.notification)).alreadyProcessed, true);
   assert.equal(f.receipts.length, 1);
   assert.equal(f.writes.length, 0);
+});
+
+test('retrying a previously saved IZB notification uses its original receipt time and never a later edit time', async () => {
+  const f = fixture();
+  f.receipts[0].createdAt = new Date('2026-11-01T08:09:10.123Z');
+  await f.core.processCashbookReceipt(f.notification);
+  assert.equal(f.queue.processedAt.toISOString(), '2026-11-01T08:09:10.123Z');
+  f.queue.status = 'failed'; f.queue.updatedAt = new Date('2027-01-01T12:00:00Z');
+  await f.core.processCashbookReceipt(f.notification);
+  assert.equal(f.queue.processedAt.toISOString(), '2026-11-01T08:09:10.123Z');
 });
 
 test('legacy Sage writer cannot be called even through the H2H helper', async () => {

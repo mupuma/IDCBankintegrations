@@ -2,6 +2,7 @@ import { QueryTypes, Transaction } from 'sequelize';
 import { connectDatabase, getSequelize } from '@/app/lib/db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import type { BankCode, PaymentsResponse } from '@/app/models/dtos';
+import { processedAtWrite } from './paymentProcessedAt';
 
 export type ClaimedQueueItem = {
   queueId: string;
@@ -93,6 +94,7 @@ export async function reportBankQueueResult(
     attempts?: number;
   },
 ) {
+  const receivedAt = new Date();
   await connectDatabase();
 
   const sequelize = await getSequelize();
@@ -107,6 +109,7 @@ export async function reportBankQueueResult(
     }
 
     const statusUpdate: Record<string, unknown> = {
+      ...processedAtWrite(updates.status, receivedAt, updates.response),
       status: updates.status,
       lastError: updates.error ?? null,
       ...(updates.attempts !== undefined ? { attempts: updates.attempts } : {}),

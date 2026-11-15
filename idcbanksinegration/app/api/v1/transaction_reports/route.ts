@@ -43,10 +43,11 @@ export async function GET(request: NextRequest) {
     }
     const summary = createReportSummary(filters.groupBy);
     const items: ReportRow[] = [];
-    let total = 0, missingReferences = 0, dataQualityWarnings = 0, historicalDates = 0;
+    let total = 0, missingReferences = 0, dataQualityWarnings = 0, historicalDates = 0, missingProcessedDates = 0;
     function add(row: ReportRow) {
       summary.add(row);
       if (!row.bankReferences) missingReferences++;
+      if (!row.processedAt) missingProcessedDates++;
       if (row.dataQuality) dataQualityWarnings++;
       if (row.dateSource.includes('historical')) historicalDates++;
       if (total >= (page - 1) * pageSize && items.length < pageSize) items.push(row);
@@ -62,7 +63,7 @@ export async function GET(request: NextRequest) {
         headers: { ...privateHeaders, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="reconciliation-summary.csv"' },
       });
     }
-    return NextResponse.json({ success: true, items, total, page, pageSize, groups, filters, missingReferences, dataQualityWarnings, historicalDates,
+    return NextResponse.json({ success: true, items, total, page, pageSize, groups, filters, missingReferences, dataQualityWarnings, historicalDates, missingProcessedDates,
       generatedAt: new Date().toISOString(), timezone: 'Africa/Johannesburg' }, { headers: privateHeaders });
   } catch (error) {
     console.error('Transaction report generation failed', error instanceof Error ? error.message : 'Unknown failure');

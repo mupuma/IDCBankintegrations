@@ -10,13 +10,13 @@ export type ReportFilters = {
 export type SavedReportPayment = {
   id: number | string; queueId: string; paymentId: string; bankCode: string; sourceBank?: string | null;
   paymentPayload: string; responsePayload?: string | null; status: string; attempts: number;
-  lastError?: string | null; createdAt: Date | string; updatedAt: Date | string;
+  lastError?: string | null; createdAt: Date | string; updatedAt: Date | string; processedAt?: Date | string | null;
 };
 export type ReportRow = {
   rowId: string; queueId: string; paymentId: string; bank: string; sourceBank: string; sageBankCode: string;
   vendorId: string; beneficiary: string; account: string; debitAccount: string; amount: string; currency: string;
   transactionType: string; status: string; statusScope: string; bankStatus: string; bankReferences: string;
-  references: string; description: string; createdAt: string; processedAt: string; paymentDate: string;
+  references: string; description: string; createdAt: string; updatedAt: string; processedAt: string; paymentDate: string;
   reportDate: string; dateSource: string; error: string; attempts: number; dataQuality: string;
   payment: Record<string, any>; response: Record<string, any>; parentPaymentId: string; bulk: boolean;
 };
@@ -38,7 +38,7 @@ export function localReportDate(value: unknown): string {
   const part = (key: string) => parts.find(item => item.type === key)?.value;
   return `${part('year')}-${part('month')}-${part('day')}`;
 }
-function iso(value: unknown) { const date = new Date(text(value)); return Number.isFinite(date.getTime()) ? date.toISOString() : ''; }
+function iso(value: unknown) { const date = value instanceof Date ? value : new Date(text(value)); return Number.isFinite(date.getTime()) ? date.toISOString() : ''; }
 function validDate(value: string) { const date = new Date(`${value}T00:00:00Z`); return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value; }
 export function parseReportFilters(params: URLSearchParams): ReportFilters {
   const result: any = {};
@@ -70,8 +70,7 @@ export function reportRows(record: SavedReportPayment, filters: ReportFilters): 
   const children = bulk ? request.items : [payment];
   const refs = bankResponseReferences(response);
   const bankReferences = refs.filter(ref => ref.label.startsWith('Bank')).map(ref => ref.value).join(' | ');
-  const recorded = response.outcomeRecordedAt || response.processedAt || response.receivedAt || response.completedAt;
-  const processedAt = iso(recorded) || iso(record.updatedAt);
+  const processedAt = iso(record.processedAt);
   return children.map((child: unknown, index: number) => {
     const item = object(child), details = bulk ? item : { ...request, ...payment };
     const original = bulk ? object(meta.payments?.[index] || meta.sagePayments?.[index]) : payment;
@@ -79,7 +78,7 @@ export function reportRows(record: SavedReportPayment, filters: ReportFilters): 
     const validAmount = /^[+-]?\d+(?:\.\d*)?(?:e[+-]?\d+)?$/i.test(text(amount)) && amount !== null && amount !== undefined && text(amount) !== '' && Number.isFinite(Number(amount));
     const paymentDate = localReportDate(details.transactionDate || details.valueDate || request.valueDate);
     const dateSource = filters.dateBasis === 'created' ? 'Queued date' : filters.dateBasis === 'payment' ? 'Payment/value date'
-      : iso(recorded) && response.outcomeDateSource !== 'historical' ? 'Local bank outcome recorded' : 'Last update (historical fallback)';
+      : processedAt ? 'Fixed final-status receipt' : 'Final receipt time not recorded';
     const reportDate = filters.dateBasis === 'created' ? localReportDate(record.createdAt) : filters.dateBasis === 'payment' ? paymentDate : localReportDate(processedAt);
     const issues = [parsed.invalid ? 'Invalid saved payment JSON' : '', reply.invalid ? 'Invalid saved response JSON' : '', !validAmount ? 'Amount missing/invalid; excluded from monetary totals' : '', !reportDate ? 'Date missing/invalid' : '', bulk ? 'Status and bank references apply to the batch; individual settlement is not inferred' : ''].filter(Boolean);
     return {
@@ -95,7 +94,7 @@ export function reportRows(record: SavedReportPayment, filters: ReportFilters): 
       status: record.status, statusScope: bulk ? 'Batch' : 'Payment', bankStatus: text(response.bankStatus || response.bankStatusCode || response.rawStatus),
       bankReferences, references: [...refs.map(ref => `${ref.label}: ${ref.value}`), text(details.transactionId), text(details.transactionReference), text(details.externalTranRef)].filter(Boolean).join(' | '),
       description: text(details.remarks || details.description || details.paymentDetails || details.narration || request.description),
-      createdAt: iso(record.createdAt), processedAt, paymentDate, reportDate, dateSource,
+      createdAt: iso(record.createdAt), updatedAt: iso(record.updatedAt), processedAt, paymentDate, reportDate, dateSource,
       error: text(record.lastError || response.error), attempts: record.attempts,
       dataQuality: issues.join('; '), payment: bulk ? { ...details, originalPayment: original, batch: payment } : payment, response, bulk,
     };
@@ -149,7 +148,7 @@ export function createReportSummary(groupBy: ReportFilters['groupBy']) {
     rows: () => [...totals.values()].map(entry => ({ ...entry, amount: decimal(entry.amount) })).sort((a, b) => a.period.localeCompare(b.period) || a.bank.localeCompare(b.bank) || a.currency.localeCompare(b.currency) || a.status.localeCompare(b.status)),
   };
 }
-export const REPORT_CSV_COLUMNS = ['queueId', 'paymentId', 'parentPaymentId', 'bank', 'sourceBank', 'sageBankCode', 'vendorId', 'beneficiary', 'account', 'debitAccount', 'amount', 'currency', 'transactionType', 'status', 'statusScope', 'bankStatus', 'bankReferences', 'references', 'description', 'createdAt', 'processedAt', 'paymentDate', 'reportDate', 'dateSource', 'error', 'attempts', 'dataQuality', 'payment', 'response'] as const;
+export const REPORT_CSV_COLUMNS = ['queueId', 'paymentId', 'parentPaymentId', 'bank', 'sourceBank', 'sageBankCode', 'vendorId', 'beneficiary', 'account', 'debitAccount', 'amount', 'currency', 'transactionType', 'status', 'statusScope', 'bankStatus', 'bankReferences', 'references', 'description', 'createdAt', 'processedAt', 'updatedAt', 'paymentDate', 'reportDate', 'dateSource', 'error', 'attempts', 'dataQuality', 'payment', 'response'] as const;
 export function csvCell(value: unknown) {
   let content = value && typeof value === 'object' ? JSON.stringify(value) : String(value ?? '');
   if (/^[\s]*[=+@-]|^[\t\r\n]/.test(content)) content = `'${content}`;

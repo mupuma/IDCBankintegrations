@@ -22,6 +22,7 @@ interface PaymentQueueRequestAttributes {
   lockedBy?: string | null;
   lockedAt?: Date | null;
   claimedAt?: Date | null;
+  processedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -137,4 +138,8 @@ export class PaymentQueueRequest extends Model<PaymentQueueRequest, PaymentQueue
     allowNull: true,
   })
   declare claimedAt?: Date;
+
+  @AllowNull
+  @Column({ type: DataType.DATE(3), field: 'processed_at', allowNull: true })
+  declare processedAt?: Date | null;
 }

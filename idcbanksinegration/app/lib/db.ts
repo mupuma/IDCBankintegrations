@@ -70,6 +70,7 @@ import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
 import { syncSchemaAddOnly } from './schemaSync';
 import { widenPortalVendorStorage } from './portalVendorSchema';
+import { BACKFILL_PAYMENT_PROCESSED_AT_SQL } from './paymentProcessedAt';
 import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation, ZicbPrcnSequence } from '../models/internal/ZicbH2hPayment';
 
 dotenv.config();
@@ -144,6 +145,13 @@ async function ensureSchemaSynced(instance: Sequelize): Promise<void> {
   // Add missing portal tables/columns, then apply the specific widening fix.
   await syncSchemaAddOnly(instance, INTERNAL_MODELS);
   await widenPortalVendorStorage(instance);
+  try { await instance.query(BACKFILL_PAYMENT_PROCESSED_AT_SQL); }
+  catch (error) {
+    // Malformed historical metadata must not disable login or Sage reads.
+    // New callbacks still record their dedicated immutable timestamp.
+    console.warn('Historical payment receipt dates could not be backfilled; unknown dates remain unrecorded.',
+      { errorName: error instanceof Error ? error.name : 'UnknownError' });
+  }
   schemaSynced = true;
   console.log('Portal MySQL schema checks completed without data deletion');
 }

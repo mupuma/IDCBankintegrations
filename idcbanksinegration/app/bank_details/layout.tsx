@@ -8,7 +8,7 @@ export const metadata: Metadata = {
 
 export default function BankDetailsLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen bg-[#f8fafc] flex"> {/* Slightly softer blue-gray background */}
+    <div className="min-h-screen bg-[#f8fafc] text-slate-900 flex" style={{ colorScheme: 'light' }}> {/* Slightly softer blue-gray background */}
       <BankDetailsSidebar />
 
       {/* Main Content Area */}

@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
+const { load, applySqlUpdate } = require('../../zanaco-agent-service/test/helpers/portal.cjs');
 
 // Exercise the real ledger orchestration with a transactional in-memory adapter.
 // These tests do not claim to validate MySQL/SQL Server locking behavior.
@@ -49,9 +50,10 @@ function fixture() {
   };
   const mocks = {
     'sequelize': { Op: ops, Transaction: { ISOLATION_LEVELS: { READ_COMMITTED: 'READ COMMITTED' } } },
+    '../paymentProcessedAt': load('idcbanksinegration/app/lib/paymentProcessedAt.ts'),
     '../db': { connectDatabase: async () => {}, getSequelize: async () => db },
     '@/app/models/internal/ZicbH2hPayment': models,
-    '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: { create: async data => queue.set(data.queueId, data), update: async (data, options) => Object.assign(queue.get(options.where.queueId), data) } },
+    '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: { create: async data => queue.set(data.queueId, data), update: async (data, options) => applySqlUpdate(queue.get(options.where.queueId), data) } },
     '../paymentPostGuard': { findExistingPaymentPost: async () => null },
     './config': { sourceProfile: () => ({ profileId: 'test', currency: 'ZMW', regionCode: 'TEST', amountScale: 2, channels: ['RTGS', 'DDACC', 'INTERNAL'], cashbookAccount: '4000' }), reconcileDelay: () => 60000 },
   };
@@ -264,8 +266,10 @@ test('conflicting outcomes hold the payment for review and prevent accounting', 
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE'); const work = await f.ledger.claimH2hWork();
   const body = { reference: work.batch.reference, prcn_number: work.batch.transactions[0].prcn_number, status_code: 200, bankRef: 'BANK1' };
   await f.ledger.receiveH2hCallback('RTGS', body);
+  const firstProcessedAt = f.queue.get(work.queueId).processedAt.toISOString();
   await f.ledger.receiveH2hCallback('RTGS', { ...body, status_code: 400, bankRef: '' });
   assert.equal(f.payments.get(work.queueId).state, 'needs_review'); assert.equal(await f.ledger.claimH2hWork(), null);
+  assert.equal(f.queue.get(work.queueId).processedAt.toISOString(), firstProcessedAt);
 });
 test('legacy paid accounting retries are drained locally without invoking a writer', async () => {
   const f = fixture(); await f.ledger.enqueueH2h(f.payment, 'SOURCE');

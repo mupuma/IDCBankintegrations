@@ -223,7 +223,7 @@ export default function PaymentQueuesPage() {
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Txn Type</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Status</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Attempts</th>
-                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Updated</th>
+                <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-500">Payment processed (UTC+2)</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Error</th>
                 <th className="px-5 py-4 text-[10px] font-bold uppercase tracking-widest text-slate-400">Recovery</th>
               </tr>
@@ -281,7 +281,7 @@ export default function PaymentQueuesPage() {
                       ) : null}
                     </td>
                     <td className="px-5 py-4 text-sm text-slate-700">{item.attempts}</td>
-                    <td className="px-5 py-4 text-sm text-slate-700">{new Date(item.updatedAt).toLocaleString()}</td>
+                    <td className="px-5 py-4 text-sm text-slate-700">{item.processedAt ? new Date(item.processedAt).toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'medium' }) : ['success', 'paid', 'failed', 'rejected', 'partially_completed'].includes(item.status) ? 'Not recorded' : 'Awaiting final status'}</td>
                     <td className="px-5 py-4 text-sm"><TransactionHealth status={item.status} error={item.lastError} /></td>
                     <td className="px-5 py-4 text-sm" onClick={event => event.stopPropagation()}>
                       <button type="button" onClick={() => setDetailItem(item)} className="rounded-xl border border-slate-200 px-3 py-2 font-semibold text-slate-700 hover:bg-slate-100">View details</button>

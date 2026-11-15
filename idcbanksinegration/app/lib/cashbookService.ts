@@ -12,6 +12,7 @@ import { Cbbtm } from '@/app/models/sage_entities/Cbbtm';
 import { Cboptio } from '@/app/models/sage_entities/Cboptio';
 import { Arcus } from '@/app/models/sage_entities/Arcus';
 import type { EntryDetails, ReceiptRequest } from '@/app/models/dtos';
+import { processedAtWrite } from './paymentProcessedAt';
 
 const MAX_STATUS_MESSAGE_LENGTH = 255;
 const SAGE_BINARY_FIELD_LENGTH = 32;
@@ -733,6 +734,7 @@ async function markPaymentQueueFromCashbook(
   status: 'success' | 'failed',
   message: string,
   batchId?: string,
+  receivedAt: Date = new Date(),
 ) {
   const bankCode = String(receipt.bankCode || '').trim().toUpperCase();
   if (!bankCode) return;
@@ -777,6 +779,7 @@ async function markPaymentQueueFromCashbook(
 
     await PaymentQueueRequest.update(
       {
+        ...processedAtWrite(status, receivedAt),
         status,
         lastError: status === 'success' ? null : truncateStatusMessage(message),
         responsePayload,
@@ -801,6 +804,7 @@ async function finalizeLocalCashbookSuccess(
   receipt: ReceiptRequest,
   message: string,
   batchId?: string,
+  receivedAt: Date = new Date(),
 ) {
   const statusMessage = truncateStatusMessage(message);
   try {
@@ -815,7 +819,7 @@ async function finalizeLocalCashbookSuccess(
     console.error('Failed to update processed transaction after Sage success', error);
   }
 
-  await markPaymentQueueFromCashbook(receipt, 'success', statusMessage, batchId);
+  await markPaymentQueueFromCashbook(receipt, 'success', statusMessage, batchId, receivedAt);
 }
 
 export type CashbookProcessResult =
@@ -871,6 +875,7 @@ async function persistLocalCashbookReceipt(
 }
 
 export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<CashbookProcessResult> {
+  const receivedAt = new Date();
   // Always persist the bank payload locally before any Sage work.
   await connectDatabase();
 
@@ -878,10 +883,13 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   const existingReceipt = await CashbookReceipt.findOne({
     where: { transactionId: receipt.transactionId },
   });
+  // An operator retry reuses an already received notification. Its receipt
+  // creation time is the known local record, rather than the time of the retry.
+  const originalReceivedAt = existingReceipt?.createdAt || receivedAt;
   if (existingProcessed?.statusCode === 200) {
     const message = existingProcessed.statusMessage || 'Cashbook transaction already processed';
-    if (existingReceipt) await finalizeLocalCashbookSuccess(existingReceipt, receipt, message);
-    else await markPaymentQueueFromCashbook(receipt, 'success', message);
+    if (existingReceipt) await finalizeLocalCashbookSuccess(existingReceipt, receipt, message, undefined, originalReceivedAt);
+    else await markPaymentQueueFromCashbook(receipt, 'success', message, undefined, originalReceivedAt);
     return { success: false, alreadyProcessed: true };
   }
 
@@ -891,6 +899,8 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
         receipt,
         'success',
         existingReceipt.statusMessage || 'Cashbook transaction already processed',
+        undefined,
+        originalReceivedAt,
       );
     }
     return { success: false, alreadyProcessed: true, receiptId: existingReceipt.id };
@@ -904,7 +914,7 @@ export async function processCashbookReceipt(receipt: ReceiptRequest): Promise<C
   try {
     await updateProcessedTransaction(receipt, 200, message);
     await localReceipt.update({ status: 'success', statusMessage: message, processedDate: new Date() });
-    await markPaymentQueueFromCashbook(receipt, 'success', message);
+    await markPaymentQueueFromCashbook(receipt, 'success', message, undefined, originalReceivedAt);
     return { success: true, receiptId: localReceipt.id, batchId: '', status: 'success', message };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unable to save bank notification locally';

@@ -5,6 +5,7 @@ import { CashbookReceipt } from '@/app/models/internal/CashbookReceipt';
 import { AuditLog } from '@/app/models/internal/AuditLog';
 import { ProcessedTransaction } from '@/app/models/internal/Processed_transactions';
 import { izbBankReferenceError, type IzbBankReferenceError } from '../../../shared/izb-callback';
+import { processedAtWrite } from './paymentProcessedAt';
 
 export class IzbStatusError extends Error { constructor(message: string, public status = 400, public validation?: IzbBankReferenceError) { super(message); } }
 type Failure = { eventId: string; transactionId: string; queueId?: string; status: 'failed' | 'rejected'; errorCode: string; errorMessage: string; bankReference: string };
@@ -33,6 +34,7 @@ function identifiersOf(row: PaymentQueueRequest) {
 }
 
 export async function recordIzbPaymentFailure(body: unknown) {
+  const receivedAt = new Date().toISOString();
   const input = inputOf(body);
   await connectDatabase();
   const db = await getSequelize();
@@ -57,8 +59,7 @@ export async function recordIzbPaymentFailure(body: unknown) {
     const receipt = await CashbookReceipt.findOne({ where: { bankCode: 'IZB', transactionId: { [Op.in]: identifiersOf(row) } }, transaction, lock: transaction.LOCK.UPDATE });
     const processed = await ProcessedTransaction.findOne({ where: { bankCode: 'IZB', transactionId: { [Op.in]: identifiersOf(row) } }, transaction, lock: transaction.LOCK.UPDATE });
     if (receipt || processed) throw new IzbStatusError('A cashbook notification already exists; reconcile the conflicting bank outcome instead of replacing it', 409);
-    const receivedAt = new Date().toISOString();
-    await row.update({ status: 'failed', lastError: `${input.errorCode}: ${input.errorMessage}`,
+    await row.update({ ...processedAtWrite('failed', receivedAt), status: 'failed', lastError: `${input.errorCode}: ${input.errorMessage}`,
       responsePayload: JSON.stringify({ protocol: 'izb-bank-status-v1', bankCode: 'IZB', bankStatus: input.status,
         eventId: input.eventId, transactionId: input.transactionId, errorCode: input.errorCode, message: input.errorMessage, bankReference: input.bankReference, receivedAt }),
       lockedBy: null, lockedAt: null,

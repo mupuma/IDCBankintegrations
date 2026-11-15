@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const Module = require('node:module');
 const ts = require('typescript');
+const { load, applySqlUpdate } = require('./helpers/portal.cjs');
 
 function fixture(status) {
   const row = { status, bankCode: 'ZANACO', paymentPayload: '{}' };
@@ -11,10 +12,11 @@ function fixture(status) {
   let writes = 0;
   const mocks = {
     sequelize: { QueryTypes: {}, Transaction: {} },
+    './paymentProcessedAt': load('idcbanksinegration/app/lib/paymentProcessedAt.ts'),
     '@/app/lib/db': { connectDatabase: async () => {}, getSequelize: async () => ({ transaction: fn => fn(transaction) }) },
     '@/app/models/internal/PaymentQueueRequest': { PaymentQueueRequest: {
       findOne: async options => { assert.equal(options.transaction, transaction); assert.equal(options.lock, 'UPDATE'); return row; },
-      update: async (values, options) => { assert.equal(options.transaction, transaction); writes++; Object.assign(row, values); return [1]; },
+      update: async (values, options) => { assert.equal(options.transaction, transaction); writes++; applySqlUpdate(row, values); return [1]; },
     } },
   };
   const filename = path.resolve(__dirname, '../../../idcbanksinegration/app/lib/agentQueue.ts');
@@ -48,10 +50,18 @@ test('recorded outcome dates remain stable across reporting retries for daily re
   const f = fixture('accepted');
   await f.report('queue1', { status: 'success', response: { bankRef: 'BANK1' } });
   const first = JSON.parse(f.row.responsePayload).outcomeRecordedAt;
+  const fixedProcessedAt = f.row.processedAt.toISOString();
   assert.ok(Number.isFinite(Date.parse(first)));
   await f.report('queue1', { status: 'success', response: { bankRef: 'BANK1', replayed: true } });
   assert.equal(JSON.parse(f.row.responsePayload).outcomeRecordedAt, first);
   assert.equal(JSON.parse(f.row.responsePayload).replayed, true);
+  assert.equal(f.row.processedAt.toISOString(), fixedProcessedAt);
+});
+
+test('never-sent validation and authentication failures do not count as bank final-status receipts', async () => {
+  const f = fixture('processing');
+  await f.report('queue1', { status: 'failed', response: { recovery: { notSent: true } } });
+  assert.equal(f.row.processedAt, undefined);
 });
 
 test('replayed historical outcomes retain their original update date with a fallback label', async () => {

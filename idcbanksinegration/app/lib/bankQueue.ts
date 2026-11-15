@@ -3,6 +3,7 @@ import { sendPaymentToBank } from './banks';
 import { connectDatabase } from './db';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
+import { processedAtWrite, processedAtIso } from './paymentProcessedAt';
 
 export type QueueStatus = 'queued' | 'pulled' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
@@ -18,6 +19,7 @@ export interface BankQueueItem {
   response?: unknown;
   createdAt: string;
   updatedAt: string;
+  processedAt?: string | null;
 }
 
 const queue = new Map<string, BankQueueItem>();
@@ -144,6 +146,8 @@ export async function processQueueItem(queueId: string) {
   item.updatedAt = new Date().toISOString();
   queue.set(queueId, item);
   processing.delete(queueId);
+  // Submission/transport failures are not a final status received from a bank.
+  if (item.status === 'success') item.processedAt ??= item.updatedAt;
 
   await persistQueueRecord(item);
   terminalLog('queue.process.persisted', {
@@ -170,6 +174,7 @@ async function persistQueueRecord(item: BankQueueItem) {
     await connectDatabase();
     await PaymentQueueRequest.update(
       {
+        ...(item.processedAt ? processedAtWrite(item.status, item.processedAt) : {}),
         status: item.status,
         attempts: item.attempts,
         lastError: item.lastError ?? undefined,
@@ -235,6 +240,7 @@ export async function rehydrateAndProcessQueueRecord(record: PaymentQueueRequest
   item.attempts = record.attempts;
   item.status = 'queued';
   item.createdAt = record.createdAt.toISOString();
+  item.processedAt = processedAtIso(record.processedAt);
   item.updatedAt = new Date().toISOString();
 
   return processQueueItem(record.queueId);
@@ -278,6 +284,7 @@ export async function updateQueueItemStatus(
       item.attempts = updates.attempts;
     }
     item.updatedAt = updatedAt;
+    if (Object.keys(processedAtWrite(updates.status, updatedAt, updates.response)).length) item.processedAt ??= updatedAt;
     queue.set(queueId, item);
   }
 
@@ -285,6 +292,7 @@ export async function updateQueueItemStatus(
     await connectDatabase();
     await PaymentQueueRequest.update(
       {
+        ...processedAtWrite(updates.status, updatedAt, updates.response),
         status: updates.status ?? item?.status,
         attempts: updates.attempts ?? item?.attempts,
         lastError: updates.lastError ?? item?.lastError ?? undefined,

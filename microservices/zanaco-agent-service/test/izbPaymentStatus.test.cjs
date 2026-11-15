@@ -1,11 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { load } = require('./helpers/portal.cjs');
+const { load, applySqlUpdate } = require('./helpers/portal.cjs');
 
 function fixture() {
   const Op = { in: Symbol('in') };
   const event = { bankReference: 'IZB-BANK-001', eventId: 'IZB-EVENT-1', transactionId: 'IDC8A24F91C0', status: 'failed', errorCode: 'INVALID_ACCOUNT', errorMessage: 'Beneficiary account is invalid' };
-  const hydrate = value => Object.assign(value, { update: async function (values) { Object.assign(this, values); } });
+  const hydrate = value => Object.assign(value, { update: async function (values) { applySqlUpdate(this, values); } });
   const rows = [hydrate({ queueId: 'QUEUE-1', paymentId: event.transactionId, bankCode: 'IZB', status: 'pulled', paymentPayload: JSON.stringify({ paymentId: event.transactionId, amount: 5000 }), attempts: 1 })];
   const audits = [], receipts = [], processed = [];
   let tail = Promise.resolve(), failAudit = false;
@@ -56,6 +56,7 @@ test('IZB bank failure updates the original payment and error, without creating 
   const result = await f.record(f.event);
   assert.equal(result.status, 'failed'); assert.equal(result.duplicate, false);
   assert.equal(f.rows[0].status, 'failed');
+  assert.ok(Number.isFinite(new Date(f.rows[0].processedAt).getTime()));
   assert.equal(f.rows[0].lastError, 'INVALID_ACCOUNT: Beneficiary account is invalid');
   assert.equal(f.rows[0].paymentPayload, before); assert.equal(f.rows[0].attempts, 1);
   assert.equal(JSON.parse(f.rows[0].responsePayload).protocol, 'izb-bank-status-v1');

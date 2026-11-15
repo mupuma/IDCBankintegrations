@@ -703,6 +703,7 @@ function mapQueueRecordToItem(record: PaymentQueueRequest): BankQueueItem | null
     attempts: record.attempts,
     lastError: record.lastError ?? undefined,
     response,
+    processedAt: record.processedAt ? new Date(record.processedAt).toISOString() : null,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

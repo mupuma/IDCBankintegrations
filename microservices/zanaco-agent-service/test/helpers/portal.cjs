@@ -10,7 +10,8 @@ function load(relative, mocks = {}) {
   module.filename = filename;
   module.paths = Module._nodeModulePaths(path.dirname(filename));
   const original = module.require.bind(module);
-  module.require = id => Object.hasOwn(mocks, id) ? mocks[id] : original(id);
+  module.require = id => Object.hasOwn(mocks, id) ? mocks[id]
+    : ['./paymentProcessedAt', '../paymentProcessedAt'].includes(id) ? load('idcbanksinegration/app/lib/paymentProcessedAt.ts') : original(id);
   module._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText, filename);
@@ -56,4 +57,10 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
     get: query => route.GET({ nextUrl: new URL(`http://portal/api/v1/posted_payments?${query}`), cookies: { get: () => ({ value: 'session' }) }, headers: { get: () => null } }) };
 }
 
-module.exports = { load, builders, routeFixture };
+function applySqlUpdate(row, values) {
+  const next = { ...values };
+  if (next.processedAt?.fn === 'COALESCE') next.processedAt = row.processedAt ?? new Date(next.processedAt.args[1].replace(' ', 'T') + 'Z');
+  Object.assign(row, next);
+  return row;
+}
+module.exports = { load, builders, routeFixture, applySqlUpdate };

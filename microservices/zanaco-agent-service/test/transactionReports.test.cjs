@@ -6,7 +6,7 @@ const reports = load('idcbanksinegration/app/lib/transactionReports.ts', { './ba
 const permissions = load('idcbanksinegration/app/lib/permissions.ts');
 const filters = values => reports.parseReportFilters(new URLSearchParams(values));
 const record = (id = 1, overrides = {}) => ({ id, queueId: `QUEUE-${id}`, paymentId: `IDC-${id}`, bankCode: 'IZB', sourceBank: '77050',
-  status: 'success', attempts: 1, createdAt: '2026-11-12T12:00:00Z', updatedAt: '2026-11-13T22:00:00Z',
+  status: 'success', attempts: 1, processedAt: '2026-11-13T21:59:59Z', createdAt: '2026-11-12T12:00:00Z', updatedAt: '2026-11-13T22:00:00Z',
   paymentPayload: JSON.stringify({ paymentId: `IDC-${id}`, vendorId: 'V-001', accountName: 'Supplier', accountNumber: '001234', amount: '123.45', currency: 'ZMW', transactionType: 'RTGS', transactionDate: '2026-11-12' }),
   responsePayload: JSON.stringify({ processedAt: '2026-11-13T21:59:59Z', bankNotification: { bankResponse: { bankReference: 'IZB-BANK-123' } } }), ...overrides });
 
@@ -16,18 +16,32 @@ test('only administrators and operators can view reconciliation reports', () => 
   for (const role of [ROLES.BANK_DETAILS_MAKER, ROLES.VIEWER, 'UNKNOWN']) assert.equal(has(role, P.REPORTS_READ), false);
 });
 
-test('report dates use UTC+2, inclusive dates, explicit date bases and labelled historical fallbacks', () => {
+test('report dates use UTC+2, inclusive dates, explicit date bases and missing receipt dates without guessing', () => {
   assert.equal(reports.localReportDate('2026-12-31T22:00:00Z'), '2027-01-01');
   const f = filters({ from: '2026-11-13', to: '2026-11-13' }), row = reports.reportRows(record(), f)[0];
   assert.equal(row.reportDate, '2026-11-13'); assert.equal(reports.matchesReport(row, f), true);
   assert.equal(reports.matchesReport(row, filters({ from: '2026-11-14' })), false);
-  const historical = reports.reportRows(record(1, { responsePayload: '{}' }), filters({}))[0];
-  assert.equal(historical.reportDate, '2026-11-14'); assert.match(historical.dateSource, /historical fallback/);
+  const historical = reports.reportRows(record(1, { responsePayload: '{}', processedAt: null }), filters({}))[0];
+  assert.equal(historical.reportDate, ''); assert.equal(historical.processedAt, ''); assert.match(historical.dateSource, /not recorded/);
   const paymentDate = reports.reportRows(record(), filters({ dateBasis: 'payment' }))[0];
   assert.equal(paymentDate.reportDate, '2026-11-12');
   assert.throws(() => filters({ from: '2026-02-30' }));
   assert.throws(() => filters({ from: '2026-12-01', to: '2026-11-01' }));
   assert.throws(() => filters({ minAmount: '200', maxAmount: '100' }));
+});
+
+test('later edits and replacement response timestamps never move the fixed processed date or its reporting period', () => {
+  const saved = record(), before = reports.reportRows(saved, filters({}))[0];
+  const later = reports.reportRows({ ...saved, updatedAt: '2027-01-31T23:59:59Z', responsePayload: JSON.stringify({
+    outcomeRecordedAt: '2027-01-31T23:59:59Z', processedAt: '2027-02-01T00:00:00Z',
+  }) }, filters({}))[0];
+  assert.equal(later.processedAt, before.processedAt); assert.equal(later.reportDate, before.reportDate);
+  assert.notEqual(later.updatedAt, before.updatedAt);
+  const missing = reports.reportRows({ ...saved, processedAt: null }, filters({}))[0];
+  assert.equal(missing.processedAt, '', 'response metadata is not used as a mutable fallback');
+  assert.equal(reports.matchesReport(missing, filters({})), true, 'undated historical records remain in all-date reports');
+  assert.ok(reports.REPORT_CSV_COLUMNS.includes('processedAt'));
+  assert.ok(reports.REPORT_CSV_COLUMNS.includes('updatedAt'));
 });
 
 test('detailed filters cover accounts, vendors, amounts, nested bank references, currency and status', () => {
