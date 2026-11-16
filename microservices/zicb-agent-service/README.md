@@ -1,5 +1,7 @@
 # ZICB Agent Service
 
+Copy [`.env.example`](.env.example) to `.env` and fill the required values. See the [three-bank deployment guide](../../idcbanksinegration/docs/bank-environment-deployment.md) for portal/agent key matching and deployment steps.
+
 The ZICB agent service runs the PayBill H2H v1 integration only.
 
 Payments are submitted through the portal's ZICB H2H ledger. The agent:

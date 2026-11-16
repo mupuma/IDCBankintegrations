@@ -1,5 +1,7 @@
 # Zanaco Agent Service
 
+Copy [`.env.example`](.env.example) to `.env` and fill the required values. See the [three-bank deployment guide](../../idcbanksinegration/docs/bank-environment-deployment.md) for portal/agent key matching and deployment steps.
+
 Worker/API service for Zanaco Web Services (ZWS) payments.
 
 ## Supported ZWS Capabilities

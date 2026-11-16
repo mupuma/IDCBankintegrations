@@ -1,3 +1,5 @@
+For master deployment examples covering the portal, IZB, ZICB H2H and Zanaco, see [Bank environment deployment](./docs/bank-environment-deployment.md).
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
 For Zanaco and ZICB recovery controls, deployment migration and operator instructions, see [Payment recovery](./PAYMENT_RECOVERY.md).

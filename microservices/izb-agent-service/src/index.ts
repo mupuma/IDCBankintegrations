@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
 //import { paymentQueue } from './queue';
 import { initDatabase } from './db';
 //import type { PaymentJobPayload, PaymentsResponse } from './types';
@@ -8,7 +8,6 @@ import { initDatabase } from './db';
 
 
 
-dotenv.config();
 require('../../../shared/http-logging').installHttpLogging('izb-agent');
 initDatabase();
 
