@@ -1,6 +1,7 @@
 CREATE TABLE IF NOT EXISTS source_accounts (
   id BIGINT AUTO_INCREMENT PRIMARY KEY,
   bank VARCHAR(8) NOT NULL,
+  processing_bank VARCHAR(12) NULL,
   name VARCHAR(120) NULL,
   account_number VARCHAR(50) NULL,
   branch_code VARCHAR(20) NULL,

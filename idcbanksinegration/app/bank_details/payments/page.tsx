@@ -9,6 +9,7 @@ import { bankResponseReferences } from '@/app/lib/bankResponseDetails';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
+import { sourceAccountsForBank, sourceSelectionError } from '@/app/lib/sourceAccountSelection';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { BANK_CODES } from '@/app/lib/enabledBanks';
 import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPaymentSelection } from '@/app/lib/banks/payloadBuilders';
@@ -479,8 +480,8 @@ export default function PaymentQueueDashboard() {
   const [selectedQueues, setSelectedQueues] = useState<Record<string, BankCode | ''>>({});
   const [transactionOverrides, setTransactionOverrides] = useState<Record<string, PaymentsResponse['transactionType']>>({});
   const [selectedPaymentIds, setSelectedPaymentIds] = useState<Record<string, boolean>>({});
-  const [bulkBank, setBulkBank] = useState<BankCode | ''>('ZICB');
-  const [bulkTransactionType, setBulkTransactionType] = useState<PaymentsResponse['transactionType']>('RTGS');
+  const [bulkBank, setBulkBank] = useState<BankCode | ''>('');
+  const [bulkTransactionType, setBulkTransactionType] = useState<PaymentsResponse['transactionType'] | ''>('');
   const [bulkSource, setBulkSource] = useState('');
   const [bulkSubmitting, setBulkSubmitting] = useState(false);
   const [queueStatuses, setQueueStatuses] = useState<Record<string, QueueStatusRecord>>({});
@@ -640,7 +641,8 @@ export default function PaymentQueueDashboard() {
       })) as EnrichedPayment[];
 
       setPayments(rows);
-      setSelectedQueues(Object.fromEntries(rows.map(payment => [payment.paymentId, 'ZICB' as BankCode])));
+      setSelectedQueues({});
+      setSelectedSources({});
       setTransactionOverrides({});
       setSelectedPaymentIds({});
       setValidationResults({});
@@ -670,14 +672,8 @@ export default function PaymentQueueDashboard() {
 
   const handleQueueChange = (paymentId: string, value: BankCode | '') => {
     setSelectedQueues((prev) => ({ ...prev, [paymentId]: value }));
-    if (value) {
-      const payment = payments.find((row) => row.paymentId === paymentId);
-      const currentType = transactionOverrides[paymentId] ?? payment?.transactionType;
-      const allowedTypes = BANK_TRANSACTION_TYPES[value] ?? TRANSACTION_TYPES;
-      if (currentType && !allowedTypes.includes(currentType)) {
-        setTransactionOverrides((prev) => ({ ...prev, [paymentId]: allowedTypes[0] }));
-      }
-    }
+    setSelectedSources(prev => ({ ...prev, [paymentId]: '' }));
+    setTransactionOverrides(prev => { const next = { ...prev }; delete next[paymentId]; return next; });
     setValidationResults((prev) => {
       const next = { ...prev };
       delete next[paymentId];
@@ -727,6 +723,11 @@ export default function PaymentQueueDashboard() {
       setMessage('Choose a bank to apply to the selected payments.');
       return;
     }
+    const sourceError = sourceSelectionError(sourceBanks.find(source => source.bank === bulkSource), bulkBank);
+    if (sourceError || !bulkTransactionType) {
+      setMessage(sourceError || 'Select a transaction type after choosing a source account.');
+      return;
+    }
     if (!BANK_TRANSACTION_TYPES[bulkBank].includes(bulkTransactionType)) {
       setMessage(`${bulkTransactionType} is not supported for ${bulkBank}.`);
       return;
@@ -759,14 +760,7 @@ export default function PaymentQueueDashboard() {
 
   const handleSourceChange = (paymentId: string, value: string) => {
     setSelectedSources((prev) => ({ ...prev, [paymentId]: value }));
-    // auto-select target queue when source bank matches known BANK_CODES
-    try {
-      const src = sourceBanks.find((s:any) => (s.bank || '').toString().toUpperCase() === value.toString().toUpperCase());
-      const code = (src?.bank || '').toString().toUpperCase();
-      if (code && (BANK_CODES as string[]).includes(code)) {
-        setSelectedQueues((prev) => ({ ...prev, [paymentId]: code as BankCode }));
-      }
-    } catch {}
+    setTransactionOverrides(prev => { const next = { ...prev }; delete next[paymentId]; return next; });
     setValidationResults((prev) => {
       const next = { ...prev };
       delete next[paymentId];
@@ -778,6 +772,12 @@ export default function PaymentQueueDashboard() {
     const bankCode = selectedQueues[payment.paymentId];
     if (!bankCode) {
       setMessage('Choose a queue before validating a payment.');
+      return;
+    }
+
+    const sourceError = sourceSelectionError(selectedSourceFor(payment.paymentId), bankCode);
+    if (sourceError || !transactionOverrides[payment.paymentId]) {
+      setMessage(sourceError || 'Select a transaction type after choosing a source account.');
       return;
     }
 
@@ -807,6 +807,12 @@ export default function PaymentQueueDashboard() {
     const existingPost = postedPayments[payment.paymentId];
     if (existingPost && preventsPosting(existingPost.status, existingPost.bankCode)) {
       setMessage(`Payment already posted to ${existingPost.bankCode}. Each payment can only be sent to one bank.`);
+      return;
+    }
+
+    const sourceError = sourceSelectionError(selectedSourceFor(payment.paymentId), bankCode);
+    if (sourceError || !transactionOverrides[payment.paymentId]) {
+      setMessage(sourceError || 'Select a transaction type after choosing a source account.');
       return;
     }
 
@@ -928,6 +934,12 @@ export default function PaymentQueueDashboard() {
       const existingPost = postedPayments[payment.paymentId];
       if (existingPost && preventsPosting(existingPost.status, existingPost.bankCode)) {
         validationErrors.push(`${payment.transactionReference || payment.paymentId}: already posted to ${existingPost.bankCode}`);
+        continue;
+      }
+
+      const sourceError = sourceSelectionError(selectedSourceFor(payment.paymentId), bankCode);
+      if (sourceError || !transactionOverrides[payment.paymentId]) {
+        validationErrors.push(`${payment.transactionReference || payment.paymentId}: ${sourceError || 'select a transaction type'}`);
         continue;
       }
 
@@ -1128,9 +1140,8 @@ export default function PaymentQueueDashboard() {
               onChange={(event) => {
                 const nextBank = event.target.value as BankCode | '';
                 setBulkBank(nextBank);
-                if (nextBank && !BANK_TRANSACTION_TYPES[nextBank].includes(bulkTransactionType)) {
-                  setBulkTransactionType(BANK_TRANSACTION_TYPES[nextBank][0]);
-                }
+                setBulkSource('');
+                setBulkTransactionType('');
               }}
               className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
             >
@@ -1141,37 +1152,39 @@ export default function PaymentQueueDashboard() {
             </select>
           </label>
           <label className="space-y-2 text-sm text-slate-600">
-            Transaction type
+            Source account
             <select
-              value={bulkTransactionType}
-              onChange={(event) => setBulkTransactionType(event.target.value as PaymentsResponse['transactionType'])}
+              value={bulkSource}
+              onChange={(event) => { setBulkSource(event.target.value); setBulkTransactionType(''); }}
               disabled={!bulkBank}
-              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:opacity-60"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
             >
-              {bulkAllowedTypes.map((type) => (
-                <option key={type} value={type}>{transactionTypeLabel(bulkBank, type)}</option>
+              <option value="">Select source account</option>
+              {sourceAccountsForBank(sourceBanks, bulkBank).map((b) => (
+                <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>
+                  {b.bank} - {b.name || 'Unnamed'} {b.accountNumber ? `(${b.accountNumber})` : ''}
+                </option>
               ))}
             </select>
           </label>
           <label className="space-y-2 text-sm text-slate-600">
-            Source account
+            Transaction type
             <select
-              value={bulkSource}
-              onChange={(event) => setBulkSource(event.target.value)}
-              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
+              value={bulkTransactionType}
+              onChange={(event) => setBulkTransactionType(event.target.value as PaymentsResponse['transactionType'])}
+              disabled={!bulkBank || !bulkSource}
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:opacity-60"
             >
-              <option value="">No bulk source</option>
-              {sourceBanks.map((b) => (
-                <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>
-                  {b.bank} - {b.name || 'Unnamed'}
-                </option>
+              <option value="">Select transaction type</option>
+              {bulkAllowedTypes.map((type) => (
+                <option key={type} value={type}>{transactionTypeLabel(bulkBank, type)}</option>
               ))}
             </select>
           </label>
           <button
             type="button"
             onClick={applyBulkSettings}
-            disabled={!selectedPayments.length || !bulkBank}
+            disabled={!selectedPayments.length || !bulkBank || !bulkSource || !bulkTransactionType}
             className="inline-flex items-center justify-center rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
           >
             Apply
@@ -1295,14 +1308,27 @@ export default function PaymentQueueDashboard() {
                         </div>
                       </td>
                       <td className="px-6 py-4 text-sm text-slate-600">
+                        <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mb-2">Bank</label>
+                        <select
+                          value={selectedBank}
+                          onChange={(event) => handleQueueChange(payment.paymentId, event.target.value as BankCode)}
+                          disabled={isAlreadyPosted}
+                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <option value="">Select bank</option>
+                          {BANK_CODES.map((code) => (
+                            <option key={code} value={code}>{code}</option>
+                          ))}
+                        </select>
                         <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mb-2">Source account</label>
                         <select
                           value={selectedSources[payment.paymentId] || ''}
                           onChange={(event) => handleSourceChange(payment.paymentId, event.target.value)}
+                          disabled={!selectedBank || isAlreadyPosted}
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
                         >
                           <option value="">Select source</option>
-                          {sourceBanks.map((b) => (
+                          {sourceAccountsForBank(sourceBanks, selectedBank).map((b) => (
                             <option key={`${b.bank}-${b.accountNumber || ''}`} value={b.bank}>
                               {b.bank} — {b.name || 'Unnamed'}
                               {b.accountNumber ? ` (${b.accountNumber})` : ' (no account)'}
@@ -1310,6 +1336,7 @@ export default function PaymentQueueDashboard() {
                             </option>
                           ))}
                         </select>
+                        {selectedBank && sourceAccountsForBank(sourceBanks, selectedBank).length === 0 ? <p className="mt-2 text-xs text-amber-800">No source accounts are assigned to {selectedBank}. Assign a processing bank in <a href="/bank_details/source_accounts" className="underline">Source Accounts</a>.</p> : null}
                         {(() => {
                           const selected = sourceBanks.find(
                             (b: { bank?: string; detailsComplete?: boolean }) =>
@@ -1326,21 +1353,10 @@ export default function PaymentQueueDashboard() {
                           );
                         })()}
 
-                        <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mt-4 mb-2">Target queue</label>
+                        <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mt-4 mb-2">Transaction type</label>
                         <select
-                          value={selectedBank}
-                          onChange={(event) => handleQueueChange(payment.paymentId, event.target.value as BankCode)}
-                          disabled={isAlreadyPosted}
-                          className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          <option value="">Select queue</option>
-                          {BANK_CODES.map((code) => (
-                            <option key={code} value={code}>{code}</option>
-                          ))}
-                        </select>
-                        <label className="block text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-400 mt-4 mb-2">Txn type override</label>
-                        <select
-                          value={selectedType}
+                          value={transactionOverrides[payment.paymentId] || ''}
+                          disabled={!selectedBank || !selectedSources[payment.paymentId] || isAlreadyPosted}
                           onChange={(event) => {
                             const selected = event.target.value as PaymentsResponse['transactionType'];
                             setTransactionOverrides((prev) => ({ ...prev, [payment.paymentId]: selected }));
@@ -1352,6 +1368,7 @@ export default function PaymentQueueDashboard() {
                           }}
                           className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-200"
                         >
+                          <option value="">Select transaction type</option>
                           {(selectedBank ? BANK_TRANSACTION_TYPES[selectedBank] : TRANSACTION_TYPES).map((type) => (
                             <option key={type} value={type}>{transactionTypeLabel(selectedBank, type)}</option>
                           ))}

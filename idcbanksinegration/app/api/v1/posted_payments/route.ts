@@ -19,6 +19,7 @@ import { connectDatabase, getSequelize } from '../../../lib/db';
 import { createHash } from 'node:crypto';
 import { PaymentDispatchReservation } from '@/app/models/internal/ZicbH2hPayment';
 import { PaymentQueueRequest } from '../../../models/internal/PaymentQueueRequest';
+import { sourceSelectionError } from '@/app/lib/sourceAccountSelection';
 import { resolveSourceBank } from '@/app/lib/sourceAccounts';
 import { buildAlreadyPostedMessage, findExistingPaymentPost, resolvePaymentId } from '../../../lib/paymentPostGuard';
 import { buildZanacoPayload, validateZanacoPayload, validateZanacoBulkPayload } from '../../../lib/banks/payloadBuilders';
@@ -55,6 +56,12 @@ export async function POST(request: NextRequest) {
       { success: false, error: `bankCode must be one of ${BANK_CODES.join(', ')}` },
       { status: 400 },
     );
+  }
+
+  const selectedSource = sourceBankCode ? await resolveSourceBank(sourceBankCode) : null;
+  const sourceError = sourceSelectionError(selectedSource, bankCode);
+  if (sourceError) {
+    return NextResponse.json({ success: false, error: sourceError }, { status: 400 });
   }
 
   if (payments) {

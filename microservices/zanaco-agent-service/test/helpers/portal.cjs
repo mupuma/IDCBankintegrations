@@ -20,7 +20,7 @@ function load(relative, mocks = {}) {
 }
 const builders = load('idcbanksinegration/app/lib/banks/payloadBuilders.ts');
 
-function routeFixture({ source = { accountNumber: '1234567890123', transit: '001', name: 'IDC' }, retry = false, savedRecords = [], memoryItems = [] } = {}) {
+function routeFixture({ source = { bank: 'SOURCE1', processingBank: 'ZANACO', accountNumber: '1234567890123', transit: '001', name: 'IDC' }, retry = false, savedRecords = [], memoryItems = [] } = {}) {
   const records = [], updates = [];
   const queueRecord = { queueId: 'old-queue', bankCode: 'ZANACO', status: 'failed' };
   let reservations = 0;
@@ -45,6 +45,7 @@ function routeFixture({ source = { accountNumber: '1234567890123', transit: '001
       findAll: async ({ where = {} } = {}) => savedRecords.filter(row => Object.entries(where).every(([key, value]) => row[key] === value)),
       update: async record => { updates.push(record); return [1]; },
     } },
+    '@/app/lib/sourceAccountSelection': load('idcbanksinegration/app/lib/sourceAccountSelection.ts'),
     '@/app/lib/sourceAccounts': { resolveSourceBank: async () => source },
     '../../../lib/paymentPostGuard': { findExistingPaymentPost: async () => null, resolvePaymentId: (payment, fallback) => payment.paymentId || fallback },
     '../../../lib/banks/payloadBuilders': builders,

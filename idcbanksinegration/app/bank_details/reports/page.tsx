@@ -9,6 +9,7 @@ import { PERMISSIONS } from '@/app/lib/permissions';
 import { BANK_CODES } from '@/app/lib/enabledBanks';
 import { REPORT_STATUSES, type ReportRow } from '@/app/lib/transactionReports';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
+import styles from './reports.module.css';
 
 type Summary = { period: string; bank: string; currency: string; status: string; count: number; amount: string; missingAmounts: number };
 type Report = { items: ReportRow[]; groups: Summary[]; total: number; missingReferences: number; dataQualityWarnings: number; historicalDates: number; missingProcessedDates: number; generatedAt: string };
@@ -60,7 +61,7 @@ export default function TransactionReportsPage() {
   if (userLoading) return <p className="p-8 text-slate-700">Loading permissions…</p>;
   if (!allowed) return <p role="alert" className="p-8 text-slate-700">Transaction reports are available to Payment Operators and Administrators.</p>;
 
-  return <div className="space-y-6 text-slate-900 [color-scheme:light]">
+  return <div className={`${styles.report} space-y-6 text-slate-900 [color-scheme:light]`}>
     <div><h1 className="text-3xl font-bold text-slate-900">Transaction reconciliation reports</h1>
       <p className="mt-2 text-sm text-slate-600">Review bank outcomes by day, month or year. All dates use Africa/Johannesburg (UTC+2). Totals are separated by bank, currency and status.</p>
       <p className="mt-2 text-sm text-slate-600">Completed payments are shown by default. Select all statuses to include pending, failed, uncertain and never-sent instructions. Payment processed is the fixed time the portal first received a final status. Later updates do not change it. Older records without a saved receipt time are marked Not recorded. All dates includes undated records.</p>
@@ -84,18 +85,18 @@ export default function TransactionReportsPage() {
         </div>
       </details>
       <div className="mt-5 flex flex-wrap gap-3">
-        <button type="submit" disabled={loading || downloading} className="rounded-xl bg-slate-900 px-5 py-2.5 font-semibold text-white disabled:opacity-50">Apply filters</button>
-        <button type="button" onClick={() => { setDraft(initial); setApplied(initial); setPage(1); setVersion(v => v + 1); }} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:text-slate-400">Reset filters</button>
-        <button type="button" disabled={loading || downloading} onClick={() => setVersion(v => v + 1)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:text-slate-400">Refresh</button>
-        <button type="button" disabled={!data || loading || downloading} onClick={() => void download('csv')} className="rounded-xl border border-blue-300 bg-blue-50 px-4 py-2 font-semibold text-blue-800 disabled:opacity-50">{downloading ? 'Exporting…' : 'Export all matching transactions (CSV)'}</button>
-        <button type="button" disabled={!data || loading || downloading} onClick={() => void download('summary_csv')} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Export period totals</button>
+        <button type="submit" data-report-action="primary" disabled={loading || downloading} className="rounded-xl bg-slate-900 px-5 py-2.5 font-semibold text-white disabled:opacity-50">Apply filters</button>
+        <button type="button" data-report-action="secondary" onClick={() => { setDraft(initial); setApplied(initial); setPage(1); setVersion(v => v + 1); }} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:text-slate-400">Reset filters</button>
+        <button type="button" data-report-action="secondary" disabled={loading || downloading} onClick={() => setVersion(v => v + 1)} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:text-slate-400">Refresh</button>
+        <button type="button" data-report-action="export" disabled={!data || loading || downloading} onClick={() => void download('csv')} className="rounded-xl border border-blue-300 bg-blue-50 px-4 py-2 font-semibold text-blue-800 disabled:opacity-50">{downloading ? 'Exporting…' : 'Export all matching transactions (CSV)'}</button>
+        <button type="button" data-report-action="secondary" disabled={!data || loading || downloading} onClick={() => void download('summary_csv')} className="rounded-xl border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50">Export period totals</button>
       </div>
       <p className="mt-3 text-xs text-slate-600">Exports use the applied filters and include all matching pages. Transaction CSV includes full saved payment and response details. Bulk rows retain their batch status; individual settlement is not inferred.</p>
     </form>
     {error ? <p role="alert" className="rounded-xl bg-rose-50 p-4 text-rose-800">{error}</p> : null}
     {loading ? <p role="status">Scanning saved transactions…</p> : null}
     {data ? <>
-      <div className="grid gap-3 sm:grid-cols-4">{[['Matching transactions / bulk items', data.total], ['Missing bank references', data.missingReferences], ['Missing processed timestamps', data.missingProcessedDates], ['Rows with reconciliation notes', data.dataQualityWarnings]].map(([label, count]) => <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs text-slate-600">{label}</p><p className="mt-2 text-2xl font-bold tabular-nums text-slate-900">{count}</p></div>)}</div>
+      <div className="grid gap-3 sm:grid-cols-4">{[['Matching transactions / bulk items', data.total], ['Missing bank references', data.missingReferences], ['Missing processed timestamps', data.missingProcessedDates], ['Rows with reconciliation notes', data.dataQualityWarnings]].map(([label, count]) => <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs text-slate-600">{label}</p><p data-report-stat-value className="mt-2 text-2xl font-bold tabular-nums text-slate-900">{count}</p></div>)}</div>
       <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-bold text-slate-900">Period totals</h2><div className="mt-3 max-h-96 overflow-auto"><table className="w-full"><thead className="sticky top-0 bg-slate-100 text-slate-700"><tr>{['Period', 'Bank', 'Currency', 'Status', 'Count', 'Amount', 'Missing amounts'].map(label => <th key={label} className={cellClass}>{label}</th>)}</tr></thead><tbody>{data.groups.map(group => <tr key={`${group.period}:${group.bank}:${group.currency}:${group.status}`}>{[group.period, group.bank, group.currency, group.status, group.count, group.amount, group.missingAmounts].map((value, i) => <td key={i} className={cellClass}>{value}</td>)}</tr>)}</tbody></table></div></section>
       <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><h2 className="p-5 text-lg font-bold text-slate-900">Transactions</h2><div className="overflow-x-auto"><table className="w-full"><thead className="sticky top-0 bg-slate-100 text-slate-700"><tr>{['Report date / source', 'Payment processed (UTC+2)', 'Bank / source account', 'Payment', 'Vendor / beneficiary', 'Account', 'Amount', 'Type', 'Status', 'Bank references', 'Notes / error'].map(label => <th key={label} className={cellClass}>{label}</th>)}</tr></thead><tbody>
         {data.items.map(row => <tr key={row.rowId} className="cursor-pointer hover:bg-slate-50" onClick={() => showDetails(row)}>
