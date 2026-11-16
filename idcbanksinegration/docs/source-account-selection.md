@@ -3,8 +3,11 @@
 Payments are selected in this order: processing bank, source account, transaction type.
 This applies to individual payments and bulk settings. Changing the bank clears the
 source account and transaction type; changing the account clears the transaction type.
-Use **Validate selected** above the payment list to check all selected payments,
-including selections on other pages. The summary counts ready payments and payments
+Use **Validate selected** above the payment list to apply complete bulk bank,
+source account and transaction type choices and check all selected payments,
+including selections on other pages. A separate Apply click is not required.
+Leave the bulk controls blank to validate existing per-row choices; partially
+completed bulk controls prompt for the missing settings. The summary counts ready payments and payments
 that need attention; each row shows its validation issues. This does not queue or
 send payments.
 

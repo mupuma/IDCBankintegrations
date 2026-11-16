@@ -717,20 +717,20 @@ export default function PaymentQueueDashboard() {
   const applyBulkSettings = () => {
     if (!selectedPayments.length) {
       setMessage('Select at least one payment first.');
-      return;
+      return false;
     }
     if (!bulkBank) {
       setMessage('Choose a bank to apply to the selected payments.');
-      return;
+      return false;
     }
     const sourceError = sourceSelectionError(sourceBanks.find(source => source.bank === bulkSource), bulkBank);
     if (sourceError || !bulkTransactionType) {
       setMessage(sourceError || 'Select a transaction type after choosing a source account.');
-      return;
+      return false;
     }
     if (!BANK_TRANSACTION_TYPES[bulkBank].includes(bulkTransactionType)) {
       setMessage(`${bulkTransactionType} is not supported for ${bulkBank}.`);
-      return;
+      return false;
     }
 
     setSelectedQueues((prev) => {
@@ -756,6 +756,7 @@ export default function PaymentQueueDashboard() {
       return next;
     });
     setMessage(`Applied ${bulkBank} ${transactionTypeLabel(bulkBank, bulkTransactionType)} settings to ${selectedPayments.length} selected payment${selectedPayments.length === 1 ? '' : 's'}.`);
+    return true;
   };
 
   const handleSourceChange = (paymentId: string, value: string) => {
@@ -768,24 +769,28 @@ export default function PaymentQueueDashboard() {
     });
   };
 
-  const validateSelectedPayment = (payment: EnrichedPayment): ValidationResult => {
-    const bankCode = selectedQueues[payment.paymentId];
+  const validateSelectedPayment = (payment: EnrichedPayment, selection?: {
+    bankCode: BankCode; sourceCode: string; transactionType: PaymentsResponse['transactionType'];
+  }): ValidationResult => {
+    const bankCode = selection?.bankCode ?? selectedQueues[payment.paymentId];
     if (!bankCode) return { valid: false, errors: ['Select a bank before validating this payment.'] };
     const posted = postedPayments[payment.paymentId];
     if (posted && preventsPosting(posted.status, posted.bankCode)) {
       return { valid: false, errors: [`Payment already posted to ${posted.bankCode}.`] };
     }
-    const sourceError = sourceSelectionError(selectedSourceFor(payment.paymentId), bankCode);
+    const sourceCode = selection?.sourceCode ?? selectedSources[payment.paymentId] ?? '';
+    const source = sourceBanks.find(item => String(item.bank || '').toUpperCase() === sourceCode.toUpperCase());
+    const sourceError = sourceSelectionError(source, bankCode);
     if (sourceError) return { valid: false, errors: [sourceError] };
-    const effectiveType = transactionOverrides[payment.paymentId];
+    const effectiveType = selection?.transactionType ?? transactionOverrides[payment.paymentId];
     if (!effectiveType) return { valid: false, errors: ['Select a transaction type after choosing a source account.'] };
     if (!isTransactionTypeAllowed(payment, bankCode, effectiveType)) {
       return { valid: false, errors: [`${effectiveType} is not supported for ${bankCode}.`] };
     }
     const effectivePayment = { ...payment, transactionType: effectiveType };
     return bankCode === 'ZANACO'
-      ? validateZanacoSelection(effectivePayment, effectiveType)
-      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
+      ? validateZanacoPaymentSelection(effectivePayment, effectiveType, source)
+      : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[sourceCode]?.amountScale ?? 2);
   };
 
   const handleValidate = (payment: EnrichedPayment) => {
@@ -799,11 +804,21 @@ export default function PaymentQueueDashboard() {
       setMessage('Select at least one payment to validate.');
       return;
     }
+    const selection = bulkBank && bulkSource && bulkTransactionType
+      ? { bankCode: bulkBank, sourceCode: bulkSource, transactionType: bulkTransactionType }
+      : undefined;
+    if ((bulkBank || bulkSource || bulkTransactionType) && !selection) {
+      setMessage('Complete the bulk settings: choose a bank, then its source account, then a transaction type.');
+      return;
+    }
+    // Validate the supplied selection immediately; React state updates from Apply
+    // are not available until the next render.
+    if (selection && !applyBulkSettings()) return;
     const results: Record<string, ValidationResult> = {};
     const issues: string[] = [];
     let ready = 0;
     for (const payment of selectedPayments) {
-      const result = validateSelectedPayment(payment);
+      const result = validateSelectedPayment(payment, selection);
       results[payment.paymentId] = result;
       if (result.valid) ready += 1;
       else issues.push(`${payment.transactionReference || payment.paymentId}: ${result.errors.join('; ')}`);
@@ -1225,7 +1240,7 @@ export default function PaymentQueueDashboard() {
             {bulkSubmitting ? 'Sending...' : `Send ${selectedPayments.length || ''}`.trim()}
           </button>
         </div>
-        <p className="mt-3 text-xs text-slate-600">Apply bank, source account and transaction type settings first, then validate selected payments across all pages. Validation shows issues on each payment without sending it.</p>
+        <p className="mt-3 text-xs text-slate-600">Choose bulk bank, source account and transaction type, then click Validate selected to apply and check them across all selected pages. Leave bulk settings blank to validate existing row selections. Validation shows issues on each payment without sending it.</p>
         {bulkBank === 'IZB' ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
             <div className="mb-1 font-semibold">IZB transaction type rules</div>

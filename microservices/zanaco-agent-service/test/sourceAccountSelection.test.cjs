@@ -216,3 +216,32 @@ test('bulk validation button is disabled until payments are selected', () => {
   const button = f.buttons().find(b => Array.isArray(b.props.children) && b.props.children[0] === 'Validate selected (');
   assert.equal(button.props.disabled, true);
 });
+
+test('bulk validation applies top-level settings without a separate Apply click or stale-state errors', () => {
+  const f = paymentPageFixture();
+  f.render();
+  f.states[5] = { 'PAY-1': true };
+  f.states[6] = 'ZICB';
+  f.states[8] = '77050';
+  f.states[7] = 'RTGS';
+  const button = f.buttons().find(b => Array.isArray(b.props.children) && b.props.children[0] === 'Validate selected (');
+  button.props.onClick();
+  assert.equal(f.states[3]['PAY-1'], 'ZICB');
+  assert.equal(f.states[15]['PAY-1'], '77050');
+  assert.equal(f.states[4]['PAY-1'], 'RTGS');
+  const errors = f.states[18]['PAY-1'].errors.join('; ');
+  assert.doesNotMatch(errors, /Select a bank|Select a source account|Select a transaction type/);
+  assert.match(errors, /accountNumber/, 'real beneficiary validation still runs');
+});
+
+test('incomplete bulk settings prompt for the missing choices without assigning or validating stale row settings', () => {
+  const f = paymentPageFixture();
+  f.render();
+  f.states[5] = { 'PAY-1': true };
+  f.states[6] = 'ZICB';
+  const button = f.buttons().find(b => Array.isArray(b.props.children) && b.props.children[0] === 'Validate selected (');
+  button.props.onClick();
+  assert.match(f.states[20], /Complete the bulk settings/);
+  assert.deepEqual(f.states[18], {});
+  assert.deepEqual(f.states[3], {});
+});
