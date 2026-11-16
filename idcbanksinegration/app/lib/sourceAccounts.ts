@@ -1,3 +1,4 @@
+import { processingBankFor } from './sourceAccountSelection';
 import { connectDatabase } from '@/app/lib/db';
 import { connectSageDatabase } from '@/app/lib/sageDb';
 import { SourceAccount } from '@/app/models/internal/SourceAccount';
@@ -5,6 +6,7 @@ import { Bkacct } from '@/app/models/sage_entities/Bkacct';
 
 export type SourceBankRecord = {
   bank: string;
+  processingBank?: string | null;
   name: string | null;
   accountNumber: string | null;
   addr1?: string | null;
@@ -62,6 +64,7 @@ function mapSageRow(row: Record<string, unknown>) {
 function mapLocalRow(row: SourceAccount) {
   return {
     bank: normalize(row.bank),
+    processingBank: normalize(row.processingBank) || null,
     name: normalize(row.name) || null,
     accountNumber: normalize(row.accountNumber) || null,
     branchCode: normalize(row.branchCode) || null,
@@ -96,6 +99,7 @@ export function mergeSourceRecords(
 
   const record: SourceBankRecord = {
     bank,
+    processingBank: processingBankFor({ bank, processingBank: local?.processingBank }),
     name,
     accountNumber,
     transit,
@@ -111,7 +115,7 @@ export function mergeSourceRecords(
     phone: pickValue(local?.phone, sage?.phone) || null,
     fax: sage?.fax ?? null,
     idacct: sage?.idacct ?? null,
-    inactive: sage?.inactive ?? null,
+    inactive: local?.isActive === false ? 1 : sage?.inactive ?? null,
     hasLocalDetails: hasLocalPaymentDetails(local),
     detailsComplete: isDetailsComplete({ accountNumber, transit, name }),
   };
@@ -144,7 +148,7 @@ export async function resolveSourceBank(bankCode?: string | null) {
   try {
     await connectDatabase();
     const local = await SourceAccount.findOne({ where: { bank: code } });
-    if (local && local.isActive !== false) {
+    if (local) {
       localRow = mapLocalRow(local);
     }
   } catch (err) {
@@ -162,7 +166,6 @@ export async function listSourceBanks() {
     await connectDatabase();
     const locals = await SourceAccount.findAll({ order: [['bank', 'ASC']] });
     for (const row of locals) {
-      if (row.isActive === false) continue;
       const mapped = mapLocalRow(row);
       if (mapped.bank) localByBank.set(mapped.bank.toUpperCase(), mapped);
     }
@@ -207,6 +210,7 @@ export function serializeSourceAccount(row: SourceAccount) {
   return {
     id: row.id,
     bank: mapped.bank,
+    processingBank: processingBankFor(mapped),
     name: mapped.name,
     accountNumber: mapped.accountNumber,
     branchCode: mapped.branchCode,

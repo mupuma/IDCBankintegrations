@@ -11,6 +11,7 @@ import {
 interface SourceAccountAttributes {
   id: number;
   bank: string;
+  processingBank?: string | null;
   name?: string | null;
   accountNumber?: string | null;
   branchCode?: string | null;
@@ -50,6 +51,10 @@ export class SourceAccount extends Model<SourceAccount, SourceAccountCreationAtt
     unique: true,
   })
   declare bank: string;
+
+  @AllowNull
+  @Column({ type: DataType.STRING(12), field: 'processing_bank', allowNull: true })
+  declare processingBank?: string | null;
 
   @AllowNull
   @Column({

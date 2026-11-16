@@ -5,6 +5,8 @@ import { logAuditEvent } from '@/app/lib/auditLog';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import { isAuthError, requirePermission } from '@/app/lib/rbac';
 import { listSourceBanks, serializeSourceAccount } from '@/app/lib/sourceAccounts';
+import type { BankCode } from '@/app/models/dtos';
+import { BANK_CODES } from '@/app/lib/banks';
 import { SourceAccount } from '@/app/models/internal/SourceAccount';
 
 function normalizeBankCode(value: unknown) {
@@ -34,6 +36,10 @@ export async function POST(request: NextRequest) {
   if (isAuthError(auth)) return auth;
 
   const body = await request.json();
+  const processingBank = String(body?.processingBank ?? '').trim().toUpperCase();
+  if (!BANK_CODES.includes(processingBank as BankCode)) {
+    return NextResponse.json({ success: false, error: `Select a processing bank: ${BANK_CODES.join(', ')}.` }, { status: 400 });
+  }
   const bank = normalizeBankCode(body?.bank);
 
   if (!bank) {
@@ -52,6 +58,7 @@ export async function POST(request: NextRequest) {
 
   const row = await SourceAccount.create({
     bank,
+    processingBank,
     name: normalizeOptionalString(body?.name),
     accountNumber: normalizeOptionalString(body?.accountNumber),
     branchCode: normalizeOptionalString(body?.branchCode),
@@ -68,7 +75,7 @@ export async function POST(request: NextRequest) {
     resourceType: 'source_account',
     resourceId: bank,
     summary: `${auth.username} created source account details for ${bank}`,
-    details: { bank },
+    details: { bank, processingBank },
     request,
   });
 

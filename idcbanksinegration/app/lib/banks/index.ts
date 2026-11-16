@@ -2,7 +2,7 @@ import type { PaymentsResponse } from '../../models/dtos';
 import { sendZanacoPayment } from './zanaco';
 
 export type BankCode = 'IZB' | 'ZANACO' | 'ZICB';
-export const BANK_CODES: BankCode[] = ['IZB', 'ZANACO', 'ZICB'];
+export { BANK_CODES } from '../enabledBanks';
 
 export type BankQueueResult = {
   success: boolean;

@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
+import { BANK_CODES } from '@/app/lib/enabledBanks';
+import { processingBankFor } from '@/app/lib/sourceAccountSelection';
 
 interface SourceBankRow {
   bank: string;
+  processingBank?: string | null;
   name: string | null;
   accountNumber: string | null;
   transit: string | null;
@@ -17,6 +20,7 @@ interface SourceBankRow {
 interface LocalSourceAccount {
   id: number;
   bank: string;
+  processingBank?: string | null;
   name: string | null;
   accountNumber: string | null;
   branchCode: string | null;
@@ -27,6 +31,7 @@ interface LocalSourceAccount {
 }
 
 interface EditForm {
+  processingBank: string;
   name: string;
   accountNumber: string;
   branchCode: string;
@@ -37,6 +42,7 @@ interface EditForm {
 }
 
 const emptyForm = (): EditForm => ({
+  processingBank: '',
   name: '',
   accountNumber: '',
   branchCode: '',
@@ -105,7 +111,7 @@ export default function SourceAccountsPage() {
     const query = search.trim().toLowerCase();
     if (!query) return rows;
     return rows.filter((row) =>
-      [row.bank, row.name, row.accountNumber, row.transit]
+      [row.bank, row.processingBank, row.name, row.accountNumber, row.transit]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(query)),
     );
@@ -116,6 +122,7 @@ export default function SourceAccountsPage() {
   async function openEdit(row: SourceBankRow) {
     setEditingBank(row.bank);
     setForm({
+      processingBank: processingBankFor(row),
       name: row.name || '',
       accountNumber: row.accountNumber || '',
       branchCode: row.transit || '',
@@ -136,6 +143,7 @@ export default function SourceAccountsPage() {
       if (response.ok && data?.local) {
         const local = data.local as LocalSourceAccount;
         setForm({
+          processingBank: processingBankFor(local),
           name: local.name || row.name || '',
           accountNumber: local.accountNumber || row.accountNumber || '',
           branchCode: local.branchCode || row.transit || '',
@@ -346,7 +354,7 @@ export default function SourceAccountsPage() {
               ) : (
                 filteredRows.map((row) => (
                   <tr key={row.bank} className="hover:bg-slate-50/70">
-                    <td className="px-6 py-4 text-sm font-semibold text-slate-900">{row.bank}</td>
+                    <td className="px-6 py-4 text-sm font-semibold text-slate-900">{row.bank}<span className="mt-1 block text-xs font-normal text-slate-600">{row.processingBank || 'Processing bank not assigned'}</span></td>
                     <td className="px-6 py-4 text-sm text-slate-600">{row.name || '—'}</td>
                     <td className="px-6 py-4 font-mono text-sm text-slate-600">{row.accountNumber || '—'}</td>
                     <td className="px-6 py-4 font-mono text-sm text-slate-600">{row.transit || '—'}</td>
@@ -383,10 +391,18 @@ export default function SourceAccountsPage() {
             </div>
 
             <form onSubmit={showCreate ? handleCreate : handleSave} className="space-y-4 px-6 py-5">
+              <label className="block text-sm font-semibold text-slate-700">
+                Processing bank
+                <select required value={form.processingBank} onChange={event => setForm(prev => ({ ...prev, processingBank: event.target.value }))} className="mt-2 w-full rounded-2xl border border-slate-300 bg-white px-3 py-2 text-slate-900">
+                  <option value="">Select bank</option>
+                  {BANK_CODES.map(bank => <option key={bank} value={bank}>{bank}</option>)}
+                </select>
+                <span className="mt-1 block text-xs font-normal">Multiple source account codes can belong to the same bank.</span>
+              </label>
               {showCreate ? (
                 <div>
                   <label className="mb-2 block text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400">
-                    Bank code
+                    Source account code (Sage)
                   </label>
                   <input
                     value={newBank}

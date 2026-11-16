@@ -5,6 +5,8 @@ import { logAuditEvent } from '@/app/lib/auditLog';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import { isAuthError, requirePermission } from '@/app/lib/rbac';
 import { listSourceBanks, resolveSourceBank, serializeSourceAccount } from '@/app/lib/sourceAccounts';
+import type { BankCode } from '@/app/models/dtos';
+import { BANK_CODES } from '@/app/lib/banks';
 import { SourceAccount } from '@/app/models/internal/SourceAccount';
 
 function normalizeBankCode(value: string) {
@@ -49,13 +51,19 @@ export async function PUT(
 
   const bank = normalizeBankCode((await params).bank);
   const body = await request.json();
+  const processingBank = String(body?.processingBank ?? '').trim().toUpperCase();
+  if (!BANK_CODES.includes(processingBank as BankCode)) {
+    return NextResponse.json({ success: false, error: `Select a processing bank: ${BANK_CODES.join(', ')}.` }, { status: 400 });
+  }
 
   await connectDatabase();
 
   let row = await SourceAccount.findOne({ where: { bank } });
+  const before = row ? serializeSourceAccount(row) : null;
   if (!row) {
     row = await SourceAccount.create({
       bank,
+      processingBank,
       name: normalizeOptionalString(body?.name),
       accountNumber: normalizeOptionalString(body?.accountNumber),
       branchCode: normalizeOptionalString(body?.branchCode),
@@ -66,6 +74,7 @@ export async function PUT(
     });
   } else {
     await row.update({
+      processingBank,
       name: normalizeOptionalString(body?.name),
       accountNumber: normalizeOptionalString(body?.accountNumber),
       branchCode: normalizeOptionalString(body?.branchCode),
@@ -83,7 +92,7 @@ export async function PUT(
     resourceType: 'source_account',
     resourceId: bank,
     summary: `${auth.username} updated source account details for ${bank}`,
-    details: { bank },
+    details: { bank, processingBank, before, after: serializeSourceAccount(row) },
     request,
   });
 

@@ -1,0 +1,57 @@
+.report {
+  color-scheme: light;
+  color: #0f172a;
+  background-color: #f8fafc;
+  --foreground: #0f172a;
+  --background: #f8fafc;
+}
+
+.report input:not([type='checkbox']):not([type='radio']):not([type='range'])::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.report label,
+.report summary {
+  color: #334155;
+}
+
+.report h1,
+.report h2,
+.report [data-report-stat-value] {
+  color: #0f172a;
+}
+
+.report th {
+  color: #334155;
+  background-color: #f1f5f9;
+}
+
+.report td {
+  color: #1e293b;
+}
+
+.report [data-report-action] {
+  color: #334155;
+  background-color: #ffffff;
+  border-color: #cbd5e1;
+}
+
+.report [data-report-action='primary'] {
+  color: #ffffff;
+  background-color: #0f172a;
+}
+
+.report [data-report-action='export'] {
+  color: #1e40af;
+  background-color: #eff6ff;
+  border-color: #93c5fd;
+}
+
+.report [data-report-action]:disabled {
+  color: #475569;
+  background-color: #f1f5f9;
+  border-color: #cbd5e1;
+  opacity: 1;
+  cursor: not-allowed;
+}
