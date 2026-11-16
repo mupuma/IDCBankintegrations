@@ -1,6 +1,15 @@
 export function sourceProfile(sourceBank: string) {
   // No default region or debit account: these mappings must be agreed with ZICB.
-  const profiles = JSON.parse(process.env.ZICB_H2H_SOURCE_PROFILES || '{}');
+  let profiles;
+  try {
+    profiles = JSON.parse(process.env.ZICB_H2H_SOURCE_PROFILES || '{}');
+  } catch {
+    // Never echo configuration contents or raw parser excerpts into responses/logs.
+    throw new Error('Invalid JSON in portal ZICB_H2H_SOURCE_PROFILES. Use a JSON object with double-quoted property names, a colon after each name and no trailing commas. Correct the portal environment setting and restart the portal.');
+  }
+  if (!profiles || typeof profiles !== 'object' || Array.isArray(profiles)) {
+    throw new Error('Portal ZICB_H2H_SOURCE_PROFILES must be a JSON object keyed by source account code. Correct the portal environment setting and restart the portal.');
+  }
   const profile = profiles[sourceBank.toUpperCase()];
   if (!profile || typeof profile.regionCode !== 'string' || !profile.regionCode.trim() || !profile.profileId || !profile.currency) {
     throw new Error(`ZICB H2H is not configured for source account ${sourceBank.toUpperCase()}. Configure its bank-approved profile ID, region code and currency in ZICB_H2H_SOURCE_PROFILES.`);
