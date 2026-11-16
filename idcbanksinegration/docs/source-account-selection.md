@@ -3,6 +3,11 @@
 Payments are selected in this order: processing bank, source account, transaction type.
 This applies to individual payments and bulk settings. Changing the bank clears the
 source account and transaction type; changing the account clears the transaction type.
+Use **Validate selected** above the payment list to check all selected payments,
+including selections on other pages. The summary counts ready payments and payments
+that need attention; each row shows its validation issues. This does not queue or
+send payments.
+
 The posting API checks that the selected source account belongs to that bank before
 creating either an individual or bulk queue request.
 

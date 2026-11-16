@@ -124,6 +124,7 @@ function paymentPageFixture() {
     return [...(node.type === type ? [node] : []), ...elements(node.props?.children, type)];
   }
   return { states, render: () => { index = 0; return elements(mod.exports.default(), 'select'); },
+    buttons: () => { index = 0; return elements(mod.exports.default(), 'button'); },
     options: select => elements(select, 'option').map(option => option.props.value) };
 }
 
@@ -172,4 +173,46 @@ test('bulk selection filters source accounts and clears both dependent controls 
   assert.deepEqual(f.options(selects[1]), ['', '88001']);
   assert.equal(selects[2].props.value, '');
   assert.equal(selects[2].props.disabled, true);
+});
+
+test('bulk validation checks selections across pages, retains every result and never sends requests', () => {
+  const f = paymentPageFixture();
+  f.render();
+  const rows = Array.from({ length: 75 }, (_, i) => ({
+    paymentId: `PAY-${i}`, vendorId: 'VENDOR-1', amount: 100, currency: 'ZMW', transactionType: 'RTGS',
+    transactionDate: '2026-11-16', transactionReference: `REF-${i}`, accountName: 'Supplier',
+    accountNumber: '123456789', bankName: 'Beneficiary Bank', branchCode: '001', sortCode: '001001',
+    swiftCode: 'ZICBZMLU', bankDetailsFound: true,
+  }));
+  f.states[2] = rows;
+  f.states[3] = Object.fromEntries(rows.map(row => [row.paymentId, 'ZICB']));
+  f.states[4] = Object.fromEntries(rows.map(row => [row.paymentId, 'RTGS']));
+  f.states[5] = Object.fromEntries(rows.map(row => [row.paymentId, true]));
+  f.states[15] = Object.fromEntries(rows.map(row => [row.paymentId, '77050']));
+  delete f.states[3]['PAY-70'];
+  f.states[15]['PAY-71'] = '88001';
+  delete f.states[4]['PAY-72'];
+  f.states[2][73] = { ...rows[73], accountNumber: '' };
+  f.states[5]['PAY-74'] = false;
+  const button = f.buttons().find(b => Array.isArray(b.props.children) && b.props.children[0] === 'Validate selected (');
+  assert.ok(button);
+  assert.equal(button.props.disabled, false);
+  const originalFetch = global.fetch;
+  global.fetch = () => { throw new Error('Validation must not send a request'); };
+  try { button.props.onClick(); } finally { global.fetch = originalFetch; }
+  const results = f.states[18];
+  assert.equal(Object.keys(results).length, 74, 'all selected rows, including other pages, get results');
+  assert.equal(results['PAY-69'].valid, true);
+  assert.match(results['PAY-70'].errors.join(), /Select a bank/);
+  assert.match(results['PAY-71'].errors.join(), /does not belong/);
+  assert.match(results['PAY-72'].errors.join(), /transaction type/);
+  assert.match(results['PAY-73'].errors.join(), /accountNumber/);
+  assert.equal(results['PAY-74'], undefined);
+  assert.match(f.states[20], /Validated 74 selected payments: 70 ready, 4 need attention/);
+});
+
+test('bulk validation button is disabled until payments are selected', () => {
+  const f = paymentPageFixture();
+  const button = f.buttons().find(b => Array.isArray(b.props.children) && b.props.children[0] === 'Validate selected (');
+  assert.equal(button.props.disabled, true);
 });
