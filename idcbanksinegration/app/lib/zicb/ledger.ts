@@ -51,7 +51,7 @@ async function nextPrcn(transaction: Transaction): Promise<string> {
   if (counter.lastValue >= 99999) throw new LedgerError('Annual PRCN sequence exhausted; no payment was queued');
   counter.lastValue += 1;
   await counter.save({ transaction });
-  return `IDC-${year}-${String(counter.lastValue).padStart(5, '0')}`;
+  return `INF-${year}-${String(counter.lastValue).padStart(5, '0')}`;
 }
 export class LedgerError extends Error { constructor(message: string, public status = 400) { super(message); } }
 

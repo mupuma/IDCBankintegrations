@@ -153,7 +153,7 @@ test('annual PRCN counter allocates unique sequential references for concurrent 
   const year = Number(new Intl.DateTimeFormat('en', { year: 'numeric', timeZone: 'Africa/Johannesburg' }).format(new Date()));
   f.sequences.set(year - 1, { lastValue: 99999 });
   const results = await Promise.all(Array.from({ length: 5 }, (_, index) => f.ledger.enqueueH2h({ ...f.payment, paymentId: `PAY-${index}` }, 'SOURCE')));
-  assert.deepEqual(results.map(result => result.prcn_number), Array.from({ length: 5 }, (_, index) => `IDC-${year}-${String(index + 1).padStart(5, '0')}`));
+  assert.deepEqual(results.map(result => result.prcn_number), Array.from({ length: 5 }, (_, index) => `INF-${year}-${String(index + 1).padStart(5, '0')}`));
   assert.equal(f.sequences.get(year).lastValue, 5);
   f.sequences.get(year).lastValue = 99999;
   await assert.rejects(() => f.ledger.enqueueH2h({ ...f.payment, paymentId: 'EXHAUSTED' }, 'SOURCE'), /sequence exhausted/);
@@ -164,6 +164,12 @@ test('annual PRCN counter allocates unique sequential references for concurrent 
 test('confirmed never-sent recovery requeues the original reference and refuses active or paid instructions', async () => {
   const f = fixture();
   await f.ledger.enqueueH2h(f.payment, 'SOURCE');
+  // Instructions persisted before the prefix change keep their bank identity.
+  const legacy = [...f.payments.values()][0];
+  legacy.prcn = 'IDC-2025-00042';
+  const document = JSON.parse(legacy.document);
+  document.batch.transactions[0].prcn_number = legacy.prcn;
+  legacy.document = JSON.stringify(document);
   const work = await f.ledger.claimH2hWork();
   const transaction = { LOCK: { UPDATE: 'UPDATE' } };
   const row = f.payments.get(work.queueId);
@@ -174,6 +180,7 @@ test('confirmed never-sent recovery requeues the original reference and refuses 
   assert.equal(row.state, 'queued');
   const next = await f.ledger.claimH2hWork();
   assert.equal(next.action, 'submit');
+  assert.equal(next.batch.transactions[0].prcn_number, 'IDC-2025-00042');
   assert.deepEqual(next.batch, work.batch);
   assert.equal(next.queueId, work.queueId);
   assert.ok([...f.events.values()].some(event => event.kind === 'operator_repost_not_sent'));
@@ -186,7 +193,7 @@ test('concurrent submissions reserve one payment and commit one canonical queue 
   const results = await Promise.allSettled([f.ledger.enqueueH2h(f.payment, 'SOURCE'), f.ledger.enqueueH2h(f.payment, 'SOURCE')]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(f.payments.size, 1); assert.equal(f.queue.size, 1); assert.equal(f.reservations.size, 1);
-  assert.match([...f.payments.values()][0].prcn, /^IDC-\d{4}-00001$/);
+  assert.match([...f.payments.values()][0].prcn, /^INF-\d{4}-00001$/);
   assert.equal(JSON.parse([...f.queue.values()][0].paymentPayload).h2hProtocol, 'h2h-v1');
 });
 
@@ -226,7 +233,7 @@ test('corrected H2H attempts get new bank and accounting identities while preser
   assert.equal(JSON.stringify(f.payments.get(original.queueId)), before);
   const row = f.payments.get(next), doc = JSON.parse(row.document);
   assert.notEqual(row.reference, original.reference); assert.notEqual(row.prcn, original.prcn_number);
-  assert.match(row.prcn, /^IDC-\d{4}-00002$/);
+  assert.match(row.prcn, /^INF-\d{4}-00002$/);
   assert.equal(doc.payment.paymentId, f.payment.paymentId); assert.equal(doc.payment.amount, f.payment.amount);
   assert.equal(doc.recoveryOf, original.queueId);
 });
