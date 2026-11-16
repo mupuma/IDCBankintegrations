@@ -768,30 +768,49 @@ export default function PaymentQueueDashboard() {
     });
   };
 
-  const handleValidate = (payment: EnrichedPayment) => {
+  const validateSelectedPayment = (payment: EnrichedPayment): ValidationResult => {
     const bankCode = selectedQueues[payment.paymentId];
-    if (!bankCode) {
-      setMessage('Choose a queue before validating a payment.');
-      return;
+    if (!bankCode) return { valid: false, errors: ['Select a bank before validating this payment.'] };
+    const posted = postedPayments[payment.paymentId];
+    if (posted && preventsPosting(posted.status, posted.bankCode)) {
+      return { valid: false, errors: [`Payment already posted to ${posted.bankCode}.`] };
     }
-
     const sourceError = sourceSelectionError(selectedSourceFor(payment.paymentId), bankCode);
-    if (sourceError || !transactionOverrides[payment.paymentId]) {
-      setMessage(sourceError || 'Select a transaction type after choosing a source account.');
-      return;
+    if (sourceError) return { valid: false, errors: [sourceError] };
+    const effectiveType = transactionOverrides[payment.paymentId];
+    if (!effectiveType) return { valid: false, errors: ['Select a transaction type after choosing a source account.'] };
+    if (!isTransactionTypeAllowed(payment, bankCode, effectiveType)) {
+      return { valid: false, errors: [`${effectiveType} is not supported for ${bankCode}.`] };
     }
-
-    const effectiveType = getEffectiveTransactionType(payment, transactionOverrides);
     const effectivePayment = { ...payment, transactionType: effectiveType };
-    const result = bankCode === 'ZANACO'
+    return bankCode === 'ZANACO'
       ? validateZanacoSelection(effectivePayment, effectiveType)
       : validatePayment(effectivePayment, bankCode, effectiveType, h2hConfig.enabled, h2hConfig.profiles[selectedSources[payment.paymentId]]?.amountScale ?? 2);
-    setValidationResults((prev) => ({ ...prev, [payment.paymentId]: result }));
-    setMessage(
-      result.valid
-        ? 'Payload is valid for selected queue.'
-        : `Validation found ${result.errors.length} issue${result.errors.length === 1 ? '' : 's'}: ${result.errors.join('; ')}`
-    );
+  };
+
+  const handleValidate = (payment: EnrichedPayment) => {
+    const result = validateSelectedPayment(payment);
+    setValidationResults(prev => ({ ...prev, [payment.paymentId]: result }));
+    setMessage(result.valid ? 'Payload is valid for selected queue.' : `Validation found ${result.errors.length} issue${result.errors.length === 1 ? '' : 's'}: ${result.errors.join('; ')}`);
+  };
+
+  const handleBulkValidate = () => {
+    if (!selectedPayments.length) {
+      setMessage('Select at least one payment to validate.');
+      return;
+    }
+    const results: Record<string, ValidationResult> = {};
+    const issues: string[] = [];
+    let ready = 0;
+    for (const payment of selectedPayments) {
+      const result = validateSelectedPayment(payment);
+      results[payment.paymentId] = result;
+      if (result.valid) ready += 1;
+      else issues.push(`${payment.transactionReference || payment.paymentId}: ${result.errors.join('; ')}`);
+    }
+    setValidationResults(prev => ({ ...prev, ...results }));
+    setMessage(`Validated ${selectedPayments.length} selected payments: ${ready} ready, ${issues.length} need attention.`
+      + (issues.length ? ` ${issues.slice(0, 3).join(' | ')}${issues.length > 3 ? ` and ${issues.length - 3} more. See each payment's validation details.` : ''}` : ''));
   };
 
   const handlePush = async (payment: EnrichedPayment) => {
@@ -1132,7 +1151,7 @@ export default function PaymentQueueDashboard() {
           </div>
         ) : null}
 
-        <div className="mt-6 grid gap-3 border-t border-slate-100 pt-6 lg:grid-cols-[1fr_1fr_1fr_auto_auto]">
+        <div className="mt-6 grid gap-3 border-t border-slate-100 pt-6 lg:grid-cols-3 xl:grid-cols-[1fr_1fr_1fr_auto_auto_auto]">
           <label className="space-y-2 text-sm text-slate-600">
             Bank
             <select
@@ -1191,6 +1210,14 @@ export default function PaymentQueueDashboard() {
           </button>
           <button
             type="button"
+            onClick={handleBulkValidate}
+            disabled={!selectedPayments.length || loading || bulkSubmitting}
+            className="inline-flex items-center justify-center rounded-2xl border border-blue-300 bg-blue-50 px-5 py-3 text-sm font-semibold text-blue-800 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Validate selected ({selectedPayments.length})
+          </button>
+          <button
+            type="button"
             onClick={handleBulkPush}
             disabled={!canPost || !selectedPayments.length || bulkSubmitting}
             className="inline-flex items-center justify-center rounded-2xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:opacity-50"
@@ -1198,6 +1225,7 @@ export default function PaymentQueueDashboard() {
             {bulkSubmitting ? 'Sending...' : `Send ${selectedPayments.length || ''}`.trim()}
           </button>
         </div>
+        <p className="mt-3 text-xs text-slate-600">Apply bank, source account and transaction type settings first, then validate selected payments across all pages. Validation shows issues on each payment without sending it.</p>
         {bulkBank === 'IZB' ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
             <div className="mb-1 font-semibold">IZB transaction type rules</div>
