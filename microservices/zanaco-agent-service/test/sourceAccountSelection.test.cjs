@@ -111,6 +111,8 @@ function paymentPageFixture() {
     '@/app/lib/useAdaptiveQueuePolling': { useAdaptiveQueuePolling: () => ({ refresh: async () => {} }) },
     '@/app/lib/bankResponseDetails': { bankResponseReferences: () => [] },
     '@/app/components/TransactionHealth': { __esModule: true, default: () => null },
+    '@/app/components/Pagination': { __esModule: true, default: () => null },
+    '@/app/lib/formatAmount': { formatAmount: (value, currency) => `${value} ${currency ?? ''}`.trim() },
     '@/app/lib/enabledBanks': { BANK_CODES: ['ZICB', 'IZB', 'ZANACO'] },
     '@/app/lib/banks/payloadBuilders': {},
   };
