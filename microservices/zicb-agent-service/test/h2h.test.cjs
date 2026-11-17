@@ -427,3 +427,53 @@ test('agent validates bank callback and forwards it to the portal ledger', async
   assert.deepEqual(forwarded, { channel: 'RTGS', payload: body });
   assert.equal((await handleBankCallback({ path: '/callback', channel: 'RTGS', auth: false }, {}, body, { callback: async () => {} })).status, 401);
 });
+
+
+test('portal network and malformed JSON errors identify the stage without leaking transport details', async () => {
+  const portal = new HttpWorkPortal('http://portal.test', 'private-key', async () => {
+    throw Object.assign(new Error('private-key private-host'), { cause: { code: 'ENOTFOUND' } });
+  });
+  await assert.rejects(portal.claim(), error => {
+    assert.match(error.message, /Portal request failed \(ENOTFOUND\)/);
+    assert.match(error.message, /APP_API_URL/);
+    assert.doesNotMatch(error.message, /private-key|private-host/);
+    return true;
+  });
+  const invalid = new HttpWorkPortal('http://portal.test', 'private-key', async () => new Response('not-json', { status: 200 }));
+  await assert.rejects(invalid.claim(), /HTTP 200 with invalid or incomplete JSON/);
+});
+
+test('submission network failure retains unknown status, safe cause and reconciliation guidance', async () => {
+  let sends = 0;
+  const bank = new H2hClient({ test: profile }, async url => {
+    if (url.includes('client-credentials')) return token();
+    sends++;
+    throw Object.assign(new Error('private-key private-host'), { cause: { code: 'ECONNRESET' } });
+  });
+  const result = await bank.submit('test', 'RTGS', batch(), 2);
+  assert.equal(result.state, 'unknown');
+  assert.equal(result.notSent, undefined);
+  assert.match(result.error, /Payment submission failed \(ECONNRESET\)/);
+  assert.match(result.error, /Reconcile the original reference/);
+  assert.doesNotMatch(result.error, /private-key|private-host/);
+  assert.equal(sends, 1);
+});
+
+test('bank validation metadata survives agent wrapping and final failure includes a readable error', async () => {
+  const info = [{ field: 'receiver_account_number', message: 'Invalid account' }];
+  const bank = new H2hClient({ test: profile }, async url => url.includes('client-credentials') ? token()
+    : json(422, { error: 'items_failed_validation', message: 'Payment details invalid', info, h2h_tracking_number: 'TRACK-1' }));
+  const result = await bank.submit('test', 'RTGS', batch(), 2);
+  assert.equal(result.state, 'rejected');
+  assert.equal(result.details.errorCode, 'items_failed_validation');
+  assert.match(contract.submissionOutcome(422, { error: 'items_failed_validation' }).error, /items_failed_validation.*HTTP 422/);
+  assert.deepEqual(result.details.items, info);
+  assert.equal(result.details.trackingNumber, 'TRACK-1');
+  assert.equal(result.details.httpStatus, 422);
+  const submitted = batch();
+  const expected = submitted.transactions[0];
+  const outcome = contract.statusOutcome({ ext_batch_ref_no: submitted.reference,
+    transactions: [{ ...expected, currency: expected.receiver_currency, status: 'failed', is_still_processing: false }] }, submitted, 'RTGS');
+  assert.equal(outcome.state, 'failed');
+  assert.match(outcome.error, /Bank reported payment failure \(failed\)/);
+});

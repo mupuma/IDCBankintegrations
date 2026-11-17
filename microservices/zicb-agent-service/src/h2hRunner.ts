@@ -1,4 +1,4 @@
-import { H2hClient } from './h2hClient';
+import { H2hClient, authenticationConnectionError } from './h2hClient';
 import type { Batch, Channel, Outcome } from '../../../shared/zicb-h2h';
 
 export type H2hWork = { queueId: string; leaseToken: string; action: 'submit' | 'reconcile' | 'accounting'; profileId: string; channel: Channel; batch: Batch; amountScale: number };
@@ -30,10 +30,16 @@ export class HttpWorkPortal implements WorkPortal {
     if (!base || !key) throw new Error('APP_API_URL and ZICB_H2H_AGENT_KEY are required');
   }
   private async request(path: string, method: string, body?: unknown) {
-    const response = await this.transport(`${this.base.replace(/\/$/, '')}/api/v1/zicb/h2h/${path}`, {
+    let response: Response;
+    try {
+      response = await this.transport(`${this.base.replace(/\/$/, '')}/api/v1/zicb/h2h/${path}`, {
       method, headers: { 'Content-Type': 'application/json', 'x-zicb-agent-key': this.key },
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(120000), redirect: 'error',
     });
+    } catch (error) {
+      const cause = authenticationConnectionError(error).replace(/Token request/g, 'Portal request').replace(/authentication/g, 'portal').replace(/ZICB/g, 'portal');
+      throw new Error(`H2H portal ${path}: ${cause}; check APP_API_URL and portal connectivity from the agent host`);
+    }
     if (!response.ok) {
       const hint = response.status === 401 ? '; configure the same ZICB_H2H_AGENT_KEY in the portal and agent and restart both'
         : response.status === 404 ? '; check APP_API_URL points to the H2H portal deployment'
@@ -41,7 +47,8 @@ export class HttpWorkPortal implements WorkPortal {
         : '; inspect the portal work logs for the database or processing error';
       throw new Error(`H2H portal ${path} failed (HTTP ${response.status})${hint}`);
     }
-    return response.json() as Promise<any>;
+    try { return await response.json(); }
+    catch { throw new Error(`H2H portal ${path} returned HTTP ${response.status} with invalid or incomplete JSON; check APP_API_URL and the portal/proxy response`); }
   }
   async claim() { return (await this.request('work', 'POST')).item as H2hWork | null; }
   async report(work: H2hWork, outcome: Outcome) { await this.request('work', 'PATCH', { queueId: work.queueId, leaseToken: work.leaseToken, outcome }); }
