@@ -109,7 +109,7 @@ function validateBatch(channel, batch, scale = 2) {
 function submissionOutcome(httpStatus, body) {
   if (httpStatus === 202 && body && body.error === null && body.status === 201) return { state: 'accepted' };
   const code = typeof body?.error === 'string' ? body.error : '';
-  const error = typeof body?.message === 'string' ? body.message : typeof body?.error_description === 'string' ? body.error_description : `Unexpected bank response (HTTP ${httpStatus})`;
+  const error = typeof body?.message === 'string' ? body.message : typeof body?.error_description === 'string' ? body.error_description : code ? `Bank returned ${code} (HTTP ${httpStatus})` : `Unexpected bank response (HTTP ${httpStatus})`;
   const details = { errorCode: code, items: body?.info, trackingNumber: body?.h2h_tracking_number };
   if (['duplicate_reference', 'duplicate_invoice_items'].includes(code)) return { state: 'unknown', error, details };
   if ([400, 401, 403, 422].includes(httpStatus) && ['invalid_client', 'invalid_token', 'permission_error', 'profile_permission_error', 'duplicate_prcn_numbers_in_request', 'items_failed_validation', 'validation_error'].includes(code)) return { state: 'rejected', error, details };
@@ -125,7 +125,7 @@ function itemOutcome(item, channel) {
   if (item.is_still_processing !== false) return { state: 'needs_review', rawStatus, error: 'Missing bank finality flag' };
   const bankRef = text(item.bank_reference || item.bank_callback_reference);
   if (PAID.has(rawStatus) && bankRef) return { state: 'paid', bankRef, rawStatus };
-  if (FAILED.has(rawStatus)) return { state: 'failed', rawStatus };
+  if (FAILED.has(rawStatus)) return { state: 'failed', rawStatus, error: `Bank reported payment failure (${rawStatus}); review the saved bank response for rejection details before correcting the payment` };
   return { state: 'needs_review', rawStatus, error: 'Unknown or unconfirmed bank outcome' };
 }
 function statusOutcome(body, batch, channel) {

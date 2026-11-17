@@ -7,7 +7,7 @@ export type Profile = { clientId: string; clientSecret: string; authUrl: string;
 type HttpResult = { status: number; body: any };
 class H2hAuthenticationError extends Error {}
 
-function authenticationConnectionError(error: unknown): string {
+export function authenticationConnectionError(error: unknown): string {
   // Never return raw fetch messages, URLs, response bodies or credentials.
   const hints: Record<string, string> = {
     ENOTFOUND: 'check the authentication hostname and DNS', EAI_AGAIN: 'check DNS availability',
@@ -218,8 +218,12 @@ export class H2hClient {
     }
     try {
       const result = await this.authenticated(id, this.businessUrl(id, channel, 'send-money'), 'POST', batch);
-      return { ...submissionOutcome(result.status, result.body), details: { httpStatus: result.status, bankResponse: redact(result.body) } };
-    } catch { return { state: 'unknown', error: 'Submission outcome unknown; reconcile the original reference before any resend' }; }
+      const outcome = submissionOutcome(result.status, result.body);
+      return { ...outcome, details: { ...(redact(outcome.details) as Record<string, unknown>), httpStatus: result.status, bankResponse: redact(result.body) } };
+    } catch (error) {
+      const cause = authenticationConnectionError(error).replace(/Token request/g, 'Payment submission').replace(/authentication/g, 'bank submission');
+      return { state: 'unknown', error: `${cause}; submission outcome unknown. Reconcile the original reference before any resend` };
+    }
   }
   async reconcile(id: string, channel: Channel, batch: Batch): Promise<Outcome> {
     try {
@@ -232,7 +236,8 @@ export class H2hClient {
         return { state: 'unknown', error: `Bank status unavailable (HTTP ${result.status}); ${hint}; original reference retained`,
           details: { httpStatus: result.status, bankResponse: redact(result.body) } };
       }
-      return { ...statusOutcome(result.body, batch, channel), details: { httpStatus: result.status, bankResponse: redact(result.body) } };
+      const outcome = statusOutcome(result.body, batch, channel);
+      return { ...outcome, details: { ...(redact(outcome.details) as Record<string, unknown>), httpStatus: result.status, bankResponse: redact(result.body) } };
     } catch (error) {
       const detail = error instanceof H2hAuthenticationError ? error.message
         : authenticationConnectionError(error).replace(/Token request/g, 'Status request').replace(/authentication/g, 'bank status');

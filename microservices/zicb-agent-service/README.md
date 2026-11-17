@@ -106,3 +106,18 @@ Older generic error records alone do not prove their underlying cause.
 Share the API contract with ZICB from:
 
 [ZICB_H2H_API_DOCUMENTATION.md](./ZICB_H2H_API_DOCUMENTATION.md)
+
+
+## Error diagnostics
+
+Errors distinguish portal connectivity, bank token acquisition, payment submission
+and status queries. Network failures include an allowlisted cause (DNS, refused
+connection, timeout or TLS) and the setting/service to check. Raw transport errors,
+URLs and credentials are not echoed into these messages. Portal invalid-JSON
+responses identify the HTTP status and deployment/proxy configuration to inspect.
+Bank validation codes, item details and tracking numbers are retained alongside
+the HTTP status and redacted bank response in transaction details. When the bank
+returns only a failure status, the portal displays that status and directs the
+operator to the saved response; it cannot invent a more specific rejection reason.
+Submission connection failures remain unknown and reconcile the original
+reference. Better diagnostics do not grant permission to resend a payment.
