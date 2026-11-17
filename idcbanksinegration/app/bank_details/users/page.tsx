@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { ROLES, ROLE_LABELS, type Role } from '@/app/lib/permissions';
+import Modal from '@/app/components/Modal';
 
 interface PortalUserRow {
   id: number;
@@ -12,19 +13,22 @@ interface PortalUserRow {
 }
 
 const ROLE_OPTIONS = Object.values(ROLES);
+const fieldClass = 'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100';
 
 export default function UsersPage() {
   const [users, setUsers] = useState<PortalUserRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<Role>(ROLES.OPERATOR);
 
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingUser, setEditingUser] = useState<PortalUserRow | null>(null);
   const [editRole, setEditRole] = useState<Role>(ROLES.OPERATOR);
   const [editPassword, setEditPassword] = useState('');
 
@@ -47,60 +51,105 @@ export default function UsersPage() {
     void loadUsers();
   }, [loadUsers]);
 
-  async function handleCreate(event: React.FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setMessage(null);
-
-    const response = await fetch('/api/v1/users', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        username: newUsername,
-        password: newPassword,
-        role: newRole,
-      }),
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data?.error || 'Failed to create user');
-      return;
-    }
-
-    setMessage(`User ${newUsername} created.`);
+  function openCreate() {
     setNewUsername('');
     setNewPassword('');
     setNewRole(ROLES.OPERATOR);
-    setShowCreate(false);
-    void loadUsers();
+    setFormError(null);
+    setShowCreate(true);
   }
 
-  async function handleUpdate(user: PortalUserRow) {
-    setError(null);
+  function closeCreate() {
+    if (saving) return;
+    setShowCreate(false);
+    setNewPassword('');
+    setFormError(null);
+  }
+
+  function openEdit(user: PortalUserRow) {
+    setEditingUser(user);
+    setEditRole(user.role);
+    setEditPassword('');
+    setFormError(null);
+  }
+
+  function closeEdit() {
+    if (saving) return;
+    setEditingUser(null);
+    setEditPassword('');
+    setFormError(null);
+  }
+
+  async function handleCreate(event: React.FormEvent) {
+    event.preventDefault();
+    setFormError(null);
     setMessage(null);
+    setSaving(true);
+    try {
+      const response = await fetch('/api/v1/users', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: newUsername,
+          password: newPassword,
+          role: newRole,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        setFormError(data?.error || 'Failed to create user');
+        return;
+      }
+
+      setMessage(`User ${newUsername} created.`);
+      setNewUsername('');
+      setNewPassword('');
+      setNewRole(ROLES.OPERATOR);
+      setShowCreate(false);
+      void loadUsers();
+    } catch {
+      setFormError('Failed to create user');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleUpdate(event: React.FormEvent) {
+    event.preventDefault();
+    const user = editingUser;
+    if (!user) return;
+    setFormError(null);
+    setMessage(null);
+    setSaving(true);
 
     const body: Record<string, unknown> = { role: editRole, isActive: user.isActive };
     if (editPassword.trim()) body.password = editPassword;
 
-    const response = await fetch(`/api/v1/users/${user.id}`, {
-      method: 'PUT',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+    try {
+      const response = await fetch(`/api/v1/users/${user.id}`, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
 
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data?.error || 'Failed to update user');
-      return;
+      const data = await response.json();
+      if (!response.ok) {
+        setFormError(data?.error || 'Failed to update user');
+        return;
+      }
+
+      setMessage(`User ${user.username} updated.`);
+      setEditingUser(null);
+      setEditPassword('');
+      void loadUsers();
+    } catch {
+      setFormError('Failed to update user');
+    } finally {
+      setSaving(false);
     }
-
-    setMessage(`User ${user.username} updated.`);
-    setEditingId(null);
-    setEditPassword('');
-    void loadUsers();
   }
 
   async function toggleActive(user: PortalUserRow) {
@@ -124,26 +173,32 @@ export default function UsersPage() {
     void loadUsers();
   }
 
-  async function handleDelete(user: PortalUserRow) {
-    if (!window.confirm(`Delete user ${user.username}? This cannot be undone.`)) return;
+  const formErrorBox = formError ? (
+    <div role="alert" className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+      {formError}
+    </div>
+  ) : null;
 
-    setError(null);
-    setMessage(null);
+  const roleSelect = (value: Role, onChange: (role: Role) => void) => (
+    <select value={value} onChange={(event) => onChange(event.target.value as Role)} className={fieldClass}>
+      {ROLE_OPTIONS.map((role) => (
+        <option key={role} value={role}>
+          {ROLE_LABELS[role]}
+        </option>
+      ))}
+    </select>
+  );
 
-    const response = await fetch(`/api/v1/users/${user.id}`, {
-      method: 'DELETE',
-      credentials: 'include',
-    });
-
-    const data = await response.json();
-    if (!response.ok) {
-      setError(data?.error || 'Failed to delete user');
-      return;
-    }
-
-    setMessage(`User ${user.username} deleted.`);
-    void loadUsers();
-  }
+  const cancelButton = (onClick: () => void) => (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={saving}
+      className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-50"
+    >
+      Cancel
+    </button>
+  );
 
   return (
     <div>
@@ -156,10 +211,10 @@ export default function UsersPage() {
         </div>
         <button
           type="button"
-          onClick={() => setShowCreate((value) => !value)}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+          onClick={openCreate}
+          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
         >
-          {showCreate ? 'Cancel' : 'Add user'}
+          Add user
         </button>
       </div>
 
@@ -183,64 +238,12 @@ export default function UsersPage() {
         </div>
       ) : null}
       {message ? (
-        <div className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+        <div role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
           {message}
         </div>
       ) : null}
 
-      {showCreate ? (
-        <form
-          onSubmit={handleCreate}
-          className="mb-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm"
-        >
-          <h2 className="mb-4 text-sm font-bold uppercase tracking-wide text-slate-500">
-            New user
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-slate-700">Username</span>
-              <input
-                value={newUsername}
-                onChange={(event) => setNewUsername(event.target.value)}
-                required
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-slate-700">Password</span>
-              <input
-                type="password"
-                value={newPassword}
-                onChange={(event) => setNewPassword(event.target.value)}
-                required
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
-              />
-            </label>
-            <label className="block text-sm">
-              <span className="mb-1 block font-medium text-slate-700">Role</span>
-              <select
-                value={newRole}
-                onChange={(event) => setNewRole(event.target.value as Role)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 outline-none focus:border-blue-500"
-              >
-                {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {ROLE_LABELS[role]}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <button
-            type="submit"
-            className="mt-4 rounded-lg bg-[#f26522] px-4 py-2 text-sm font-semibold text-white hover:bg-[#e05a1c]"
-          >
-            Create user
-          </button>
-        </form>
-      ) : null}
-
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
         <table className="min-w-full divide-y divide-slate-200 text-sm">
           <thead className="bg-slate-50">
             <tr>
@@ -267,23 +270,7 @@ export default function UsersPage() {
               users.map((user) => (
                 <tr key={user.id} className="hover:bg-slate-50/80">
                   <td className="px-4 py-3 font-medium text-slate-900">{user.username}</td>
-                  <td className="px-4 py-3">
-                    {editingId === user.id ? (
-                      <select
-                        value={editRole}
-                        onChange={(event) => setEditRole(event.target.value as Role)}
-                        className="rounded-lg border border-slate-200 px-2 py-1 text-sm"
-                      >
-                        {ROLE_OPTIONS.map((role) => (
-                          <option key={role} value={role}>
-                            {ROLE_LABELS[role]}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="text-slate-700">{user.roleLabel}</span>
-                    )}
-                  </td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{user.roleLabel}</td>
                   <td className="px-4 py-3">
                     <span
                       className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -296,63 +283,21 @@ export default function UsersPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex flex-wrap justify-end gap-2">
-                      {editingId === user.id ? (
-                        <>
-                          <input
-                            type="password"
-                            value={editPassword}
-                            onChange={(event) => setEditPassword(event.target.value)}
-                            placeholder="New password (optional)"
-                            className="rounded-lg border border-slate-200 px-2 py-1 text-xs"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void handleUpdate(user)}
-                            className="rounded-lg bg-blue-600 px-3 py-1 text-xs font-semibold text-white"
-                          >
-                            Save
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(null);
-                              setEditPassword('');
-                            }}
-                            className="rounded-lg px-3 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                          >
-                            Cancel
-                          </button>
-                        </>
-                      ) : (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(user.id);
-                              setEditRole(user.role);
-                              setEditPassword('');
-                            }}
-                            className="rounded-lg px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void toggleActive(user)}
-                            className="rounded-lg px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
-                          >
-                            {user.isActive ? 'Deactivate' : 'Activate'}
-                          </button>
-                          {/* <button
-                            type="button"
-                            onClick={() => void handleDelete(user)}
-                            className="rounded-lg px-3 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
-                          >
-                            Delete
-                          </button> */}
-                        </>
-                      )}
+                    <div className="flex justify-end gap-2 whitespace-nowrap">
+                      <button
+                        type="button"
+                        onClick={() => openEdit(user)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-50"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void toggleActive(user)}
+                        className="rounded-lg px-3 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                      >
+                        {user.isActive ? 'Deactivate' : 'Activate'}
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -361,6 +306,93 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      <Modal
+        open={showCreate}
+        title="Add user"
+        description="Create a portal user and choose their role."
+        onClose={closeCreate}
+        footer={
+          <>
+            {cancelButton(closeCreate)}
+            <button
+              type="submit"
+              form="create-user-form"
+              disabled={saving}
+              className="rounded-lg bg-[#f26522] px-4 py-2 text-sm font-semibold text-white hover:bg-[#e05a1c] disabled:opacity-50"
+            >
+              {saving ? 'Creating…' : 'Create user'}
+            </button>
+          </>
+        }
+      >
+        <form id="create-user-form" onSubmit={handleCreate} className="space-y-4">
+          {formErrorBox}
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">Username</span>
+            <input
+              value={newUsername}
+              onChange={(event) => setNewUsername(event.target.value)}
+              required
+              autoComplete="off"
+              className={fieldClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">Password</span>
+            <input
+              type="password"
+              value={newPassword}
+              onChange={(event) => setNewPassword(event.target.value)}
+              required
+              autoComplete="new-password"
+              className={fieldClass}
+            />
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">Role</span>
+            {roleSelect(newRole, setNewRole)}
+          </label>
+        </form>
+      </Modal>
+
+      <Modal
+        open={editingUser !== null}
+        title={editingUser ? `Edit ${editingUser.username}` : 'Edit user'}
+        description="Change the role, or set a new password. Leave the password blank to keep the current one."
+        onClose={closeEdit}
+        footer={
+          <>
+            {cancelButton(closeEdit)}
+            <button
+              type="submit"
+              form="edit-user-form"
+              disabled={saving}
+              className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save changes'}
+            </button>
+          </>
+        }
+      >
+        <form id="edit-user-form" onSubmit={handleUpdate} className="space-y-4">
+          {formErrorBox}
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">Role</span>
+            {roleSelect(editRole, setEditRole)}
+          </label>
+          <label className="block text-sm">
+            <span className="mb-1 block font-medium text-slate-700">New password (optional)</span>
+            <input
+              type="password"
+              value={editPassword}
+              onChange={(event) => setEditPassword(event.target.value)}
+              autoComplete="new-password"
+              className={fieldClass}
+            />
+          </label>
+        </form>
+      </Modal>
     </div>
   );
 }

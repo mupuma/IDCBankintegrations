@@ -5,6 +5,7 @@ import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
+import Pagination from '@/app/components/Pagination';
 
 // --- Types & Interfaces ---
 
@@ -359,7 +360,7 @@ function BankFormModal({ open, onClose, onSubmit, initialData, vendorOptions }: 
             type="button"
             onClick={handleFormSubmit}
             disabled={!formData.vendorid || !formData.accname || (!isEditMode && vendorOptions.length === 0)}
-            className="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-xl text-sm hover:bg-blue-700 disabled:opacity-50 disabled:pointer-events-none transition-all shadow-md shadow-blue-100 outline-none"
+            className="px-5 py-2.5 bg-slate-900 text-white font-semibold rounded-xl text-sm hover:bg-slate-800 disabled:opacity-50 disabled:pointer-events-none transition-all shadow-sm outline-none"
           >
             {initialData ? 'Save Changes' : 'Create Account'}
           </button>
@@ -673,10 +674,6 @@ export default function BankManagementPage() {
     }
   };
 
-  const startItem = banks.length > 0 ? page * rowsPerPage + 1 : 0;
-  const endItem = Math.min((page + 1) * rowsPerPage, totalItems);
-  const hasNext = (page + 1) * rowsPerPage < totalItems;
-
   return (
     <>
       {/* Toast Notification */}
@@ -743,7 +740,7 @@ export default function BankManagementPage() {
             />
             {canWrite && (<button
               onClick={() => { setEditingBank(null); setOpenForm(true); }}
-              className="px-5 py-2.5 bg-blue-600 text-white text-sm font-bold rounded-xl hover:bg-blue-700 flex items-center justify-center gap-2 transition-all shadow-md shadow-blue-100 whitespace-nowrap outline-none active:scale-98"
+              className="px-5 py-2.5 bg-slate-900 text-white text-sm font-bold rounded-xl hover:bg-slate-800 flex items-center justify-center gap-2 transition-all shadow-sm whitespace-nowrap outline-none active:scale-98"
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M12 4v16m8-8H4" />
@@ -765,11 +762,11 @@ export default function BankManagementPage() {
 
       {/* Table */}
       {loadWarning ? <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{loadWarning}</p> : null}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
-        <div className="overflow-x-auto">
+      <div data-table-card className="scroll-mt-20 bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden lg:scroll-mt-4">
+        <div data-table-scroll className="max-h-[70vh] overflow-auto">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200/60">
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgb(226_232_240)]">
+              <tr className="bg-slate-50">
                 {['Vendor', 'Account Identity Data', 'Banking Infrastructure', 'Branch Location', 'Contact Details', ''].map((head, index) => (
                   <th key={index} className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                     {head}
@@ -866,45 +863,22 @@ export default function BankManagementPage() {
           </table>
         </div>
 
-        {/* Pagination */}
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span className="text-xs font-semibold text-slate-500">
-            {banks.length > 0 ? (
-              `Showing ${startItem} – ${endItem} of ${totalItems} vendors`
-            ) : (
-              loadError ? 'Bank records unavailable' : 'No records found'
-            )}
-          </span>
-          {sageVendorCount !== null ? <span className="text-xs text-slate-500">Sage vendor master: {sageVendorCount}</span> : null}
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Per Page:</span>
-              <select 
-                value={rowsPerPage} 
-                onChange={(e) => { setRowsPerPage(Number(e.target.value)); setPage(0); }}
-                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                {[5, 10, 25, 50].map(size => <option key={size} value={size}>{size}</option>)}
-              </select>
-            </div>
-            <div className="flex gap-1">
-              <button
-                disabled={page === 0 || loading}
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              </button>
-              <button
-                disabled={!hasNext || loading}
-                onClick={() => setPage(p => p + 1)}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-              </button>
-            </div>
+        {/* Pagination: the API uses 0-based pages; the shared component is 1-based. */}
+        {loadError || sageVendorCount !== null ? (
+          <div className="flex flex-wrap gap-x-6 gap-y-1 border-t border-slate-100 bg-slate-50 px-6 py-2 text-xs text-slate-500">
+            {loadError ? <span className="font-semibold text-rose-700">Bank records unavailable</span> : null}
+            {sageVendorCount !== null ? <span>Sage vendor master: {sageVendorCount}</span> : null}
           </div>
-        </div>
+        ) : null}
+        <Pagination
+          page={page + 1}
+          pageSize={rowsPerPage}
+          total={totalItems}
+          itemLabel="vendors"
+          disabled={loading}
+          onPageChange={(p) => setPage(p - 1)}
+          onPageSizeChange={(size) => { setRowsPerPage(size); setPage(0); }}
+        />
       </div>
 
       {/* Modals - FIX 3: These are now defined before being used */}

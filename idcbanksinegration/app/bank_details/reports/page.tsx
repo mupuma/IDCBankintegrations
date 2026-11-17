@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import TransactionHealth from '@/app/components/TransactionHealth';
 import Pagination from '@/app/components/Pagination';
+import StatusBadge from '@/app/components/StatusBadge';
+import { formatAmount } from '@/app/lib/formatAmount';
 import TransactionDetailsDialog from '@/app/components/TransactionDetailsDialog';
 import { usePortalUser } from '@/app/lib/usePortalUser';
 import { PERMISSIONS } from '@/app/lib/permissions';
@@ -29,12 +31,12 @@ export default function TransactionReportsPage() {
   useEffect(() => {
     if (!allowed) return;
     const controller = new AbortController();
-    setLoading(true); setError(''); setData(null);
+    setLoading(true); setError('');
     const params = new URLSearchParams({ ...applied, page: String(page), pageSize: String(pageSize) });
     fetch(`/api/v1/transaction_reports?${params}`, { signal: controller.signal, cache: 'no-store' })
       .then(async response => { const body = await response.json(); if (!response.ok) throw new Error(body.error || 'Unable to load reports'); return body; })
       .then(body => { if (!controller.signal.aborted) setData(body); })
-      .catch(err => { if (!controller.signal.aborted) setError(err.message); })
+      .catch(err => { if (!controller.signal.aborted) { setError(err.message); setData(null); } })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [allowed, applied, page, pageSize, version]);
@@ -97,20 +99,26 @@ export default function TransactionReportsPage() {
     {loading ? <p role="status">Scanning saved transactions…</p> : null}
     {data ? <>
       <div className="grid gap-3 sm:grid-cols-4">{[['Matching transactions / bulk items', data.total], ['Missing bank references', data.missingReferences], ['Missing processed timestamps', data.missingProcessedDates], ['Rows with reconciliation notes', data.dataQualityWarnings]].map(([label, count]) => <div key={label} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><p className="text-xs text-slate-600">{label}</p><p data-report-stat-value className="mt-2 text-2xl font-bold tabular-nums text-slate-900">{count}</p></div>)}</div>
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-bold text-slate-900">Period totals</h2><div className="mt-3 max-h-96 overflow-auto"><table className="w-full"><thead className="sticky top-0 bg-slate-100 text-slate-700"><tr>{['Period', 'Bank', 'Currency', 'Status', 'Count', 'Amount', 'Missing amounts'].map(label => <th key={label} className={cellClass}>{label}</th>)}</tr></thead><tbody>{data.groups.map(group => <tr key={`${group.period}:${group.bank}:${group.currency}:${group.status}`}>{[group.period, group.bank, group.currency, group.status, group.count, group.amount, group.missingAmounts].map((value, i) => <td key={i} className={cellClass}>{value}</td>)}</tr>)}</tbody></table></div></section>
-      <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"><h2 className="p-5 text-lg font-bold text-slate-900">Transactions</h2><div className="overflow-x-auto"><table className="w-full"><thead className="sticky top-0 bg-slate-100 text-slate-700"><tr>{['Report date / source', 'Payment processed (UTC+2)', 'Bank / source account', 'Payment', 'Vendor / beneficiary', 'Account', 'Amount', 'Type', 'Status', 'Bank references', 'Notes / error'].map(label => <th key={label} className={cellClass}>{label}</th>)}</tr></thead><tbody>
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm"><h2 className="text-lg font-bold text-slate-900">Period totals</h2><div className="mt-3 max-h-96 overflow-auto"><table className="w-full"><thead className="sticky top-0 z-10 bg-slate-100 text-slate-700"><tr>{['Period', 'Bank', 'Currency', 'Status', 'Count', 'Amount', 'Missing amounts'].map(label => <th key={label} className={`${cellClass} ${label === 'Amount' || label === 'Count' || label === 'Missing amounts' ? '!text-right' : ''}`}>{label}</th>)}</tr></thead><tbody>{data.groups.map(group => <tr key={`${group.period}:${group.bank}:${group.currency}:${group.status}`}>
+          <td className={cellClass}>{group.period}</td><td className={cellClass}>{group.bank}</td><td className={cellClass}>{group.currency}</td>
+          <td className={cellClass}><StatusBadge status={group.status} /></td>
+          <td className={`${cellClass} !text-right tabular-nums`}>{group.count.toLocaleString('en-GB')}</td>
+          <td className={`${cellClass} !text-right font-semibold tabular-nums`}>{formatAmount(group.amount)}</td>
+          <td className={`${cellClass} !text-right tabular-nums`}>{group.missingAmounts}</td>
+        </tr>)}</tbody></table></div></section>
+      <section data-table-card className={`scroll-mt-20 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:scroll-mt-4 ${loading ? 'opacity-60' : ''}`} aria-busy={loading}><h2 className="p-5 text-lg font-bold text-slate-900">Transactions</h2><div data-table-scroll className="max-h-[70vh] overflow-auto border-t border-slate-200"><table className="w-full"><thead className="sticky top-0 z-10 bg-slate-100 text-slate-700"><tr>{['Report date / source', 'Payment processed (UTC+2)', 'Bank / source account', 'Payment', 'Vendor / beneficiary', 'Account', 'Amount', 'Type', 'Status', 'Bank references', 'Notes / error'].map(label => <th key={label} className={label === 'Amount' ? `${cellClass} !text-right` : cellClass}>{label}</th>)}</tr></thead><tbody>
         {data.items.map(row => <tr key={row.rowId} className="cursor-pointer hover:bg-slate-50" onClick={() => showDetails(row)}>
           <td className={cellClass}>{row.reportDate || 'Undated'}<div className="text-xs text-slate-600">{row.dateSource}</div></td>
           <td className={cellClass}>{row.processedAt ? new Date(row.processedAt).toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg', dateStyle: 'medium', timeStyle: 'medium' }) : 'Not recorded'}</td>
           <td className={cellClass}>{row.bank}<div className="text-xs">{row.sourceBank}</div></td>
           <td className={cellClass}><button type="button" className="font-mono font-semibold text-blue-700 underline decoration-blue-200 underline-offset-4 hover:text-blue-900 focus-visible:outline-2 focus-visible:outline-blue-600" onClick={() => showDetails(row)}>{row.paymentId}</button></td>
           <td className={cellClass}>{row.vendorId}<div>{row.beneficiary}</div></td><td className={`${cellClass} font-mono`}>{row.account}</td>
-          <td className={cellClass}>{row.amount || 'Missing'} {row.currency}</td><td className={cellClass}>{row.transactionType}</td>
-          <td className={cellClass}>{row.status}<div className="text-xs text-slate-600">{row.statusScope}</div></td><td className={`${cellClass} select-all font-mono`}>{row.bankReferences || 'Not received'}</td>
+          <td className={`${cellClass} !text-right font-semibold tabular-nums`}>{row.amount ? formatAmount(row.amount, row.currency) : `Missing ${row.currency}`.trim()}</td><td className={cellClass}>{row.transactionType}</td>
+          <td className={cellClass}><StatusBadge status={row.status} /><div className="mt-1 text-xs text-slate-600">{row.statusScope}</div></td><td className={`${cellClass} select-all font-mono`}>{row.bankReferences || 'Not received'}</td>
           <td className={`${cellClass} max-w-sm !whitespace-normal text-xs`}>{row.dataQuality}<div className="mt-1"><TransactionHealth status={row.status} error={row.error} /></div></td>
         </tr>)}
         {!data.total ? <tr><td colSpan={11} className="p-8 text-center text-slate-500">No transactions match these filters. Try all dates or all statuses.</td></tr> : null}
-      </tbody></table></div><Pagination page={page} pageSize={pageSize} total={data.total} onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1); }} /></section>
+      </tbody></table></div><Pagination page={page} pageSize={pageSize} total={data.total} itemLabel="transactions" disabled={loading} onPageChange={setPage} onPageSizeChange={size => { setPageSize(size); setPage(1); }} /></section>
       <p className="text-xs text-slate-600">Generated {new Date(data.generatedAt).toLocaleString('en-GB', { timeZone: 'Africa/Johannesburg' })} (UTC+2). Counts include saved attempts and individual bulk items. Missing amounts remain visible and are excluded from monetary totals.</p>
     </> : null}
     {detail ? <TransactionDetailsDialog item={detail} onClose={() => setDetail(null)} /> : null}

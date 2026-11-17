@@ -282,7 +282,7 @@ export default function SourceAccountsPage() {
               setForm(emptyForm());
               setNewBank('');
             }}
-            className="rounded-2xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-700"
+            className="rounded-2xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
           >
             Add Source Account
           </button>
@@ -498,7 +498,7 @@ export default function SourceAccountsPage() {
                 <button
                   type="submit"
                   disabled={saving}
-                  className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                  className="rounded-2xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
                 >
                   {saving ? 'Saving...' : 'Save details'}
                 </button>

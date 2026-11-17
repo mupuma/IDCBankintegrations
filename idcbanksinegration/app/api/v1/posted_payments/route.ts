@@ -851,9 +851,12 @@ export async function GET(request: NextRequest) {
     const pageSize = Math.max(1, Math.min(500, parseInt(pageSizeParam || '50', 10)));
     const total = mergedItems.length;
     const start = (page - 1) * pageSize;
+    // Count every status over the full filtered list (not just this page) for the dashboard cards.
+    const statusCounts: Record<string, number> = {};
+    for (const item of mergedItems) statusCounts[item.status] = (statusCounts[item.status] ?? 0) + 1;
     const items = mergedItems.slice(start, start + pageSize);
 
-    return NextResponse.json({ success: true, items, total, page, pageSize });
+    return NextResponse.json({ success: true, items, total, page, pageSize, statusCounts });
   }
 
   return NextResponse.json({ success: true, items: mergedItems });
