@@ -38,6 +38,7 @@ function safeUrl(value) {
 function bodyText(buffer, headers, url, truncated) {
   const contentType = String(headers['content-type'] || '');
   if (/\/(?:auth|login|logout|token|credentials|reset-password)(?:\/|\?|$)/i.test(url)) return '[authentication body omitted]';
+  if (/\/internal-ft\/name-lookup(?:\?|$)/i.test(url)) return '[account lookup body omitted]';
   if (headers['content-encoding'] && headers['content-encoding'] !== 'identity') return `[encoded body omitted: ${headers['content-encoding']}]`;
   if (contentType && !/json|text|xml|javascript|x-www-form-urlencoded/i.test(contentType)) return `[non-text body omitted: ${contentType}]`;
   if (buffer.length === 0) return '[empty body]';

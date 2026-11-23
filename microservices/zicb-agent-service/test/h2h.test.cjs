@@ -190,6 +190,46 @@ const profile = { clientId: 'test-id', clientSecret: 'test-secret', authUrl: 'ht
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 const token = () => json(200, { access_token: 'test-token', token_type: 'Bearer', expires_in: 5400 });
 const accepted = () => json(202, { error: null, status: 201, message: 'Pending processing' });
+test('Internal FT verifies the beneficiary before sending and uses the bank branch code', async () => {
+  const accountNumber = '0012345678901';
+  const instruction = contract.buildBatch({ ...payment, transactionType: 'INT', accountNumber }, options);
+  const calls = [];
+  const bank = new H2hClient({ test: profile }, async (url, init) => {
+    if (url.includes('/auth/')) return token();
+    calls.push([new URL(url).pathname, JSON.parse(init.body)]);
+    if (url.endsWith('/name-lookup')) {
+      return json(200, { status: 'SUCCESS', error: null, message: { account_number: accountNumber, branch_code: '004', account_status: 'O', no_credit: 'N' } });
+    }
+    return accepted();
+  });
+  assert.equal((await bank.submit('test', 'INTERNAL', instruction, 2)).state, 'accepted');
+  assert.deepEqual(calls, [
+    ['/h2h/internal-ft/name-lookup', { account_no: accountNumber, branch_code: '003' }],
+    ['/h2h/internal-ft/send-money', { ...instruction, transactions: [{ ...instruction.transactions[0], branch_code: '004' }] }],
+  ]);
+  assert.equal(instruction.transactions[0].branch_code, '003');
+});
+
+test('Internal FT blocks submission on an invalid account or unavailable verification', async () => {
+  const accountNumber = '0012345678901';
+  const instruction = contract.buildBatch({ ...payment, transactionType: 'INT', accountNumber }, options);
+  for (const [code, reason, guidance] of [
+    ['account_number_invalid', 'validation', /13-digit.*Bank Details/],
+    ['service_unavailable', 'lookup', /Retry verification/],
+  ]) {
+    const bank = new H2hClient({ test: profile }, async url => {
+      if (url.includes('/auth/')) return token();
+      assert.ok(url.endsWith('/name-lookup'));
+      return json(422, { status: 'ERROR', error: code });
+    });
+    const outcome = await bank.submit('test', 'INTERNAL', instruction, 2);
+    assert.equal(outcome.state, 'rejected');
+    assert.equal(outcome.notSent, true);
+    assert.equal(outcome.notSentReason, reason);
+    assert.match(outcome.error, guidance);
+  }
+});
+
 const work = { queueId: 'q1', leaseToken: 'lease1', action: 'submit', profileId: 'test', channel: 'RTGS', batch: batch(), amountScale: 2 };
 
 test('authentication configuration failures explain the profile mismatch without submitting a payment', async () => {

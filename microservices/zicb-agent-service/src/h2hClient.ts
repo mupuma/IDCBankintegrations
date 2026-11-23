@@ -78,7 +78,8 @@ export class H2hClient {
     const started = Date.now();
     const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
     const systemHttpLogging = Boolean((globalThis as any)[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
-    const httpDiagnostics = !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+    const accountLookup = metadata.endpoint.endsWith('/name-lookup');
+    const httpDiagnostics = !accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
     const exchangeId = randomUUID();
     const headerLines = (headers: Headers) => Array.from(headers.entries()).map(([name, value]) =>
       `${name}: ${/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? '[REDACTED]' : value}`);
@@ -94,7 +95,7 @@ export class H2hClient {
     const received = (result: HttpResult, rawBody: string, requestId?: string | null, responseHeaders: string[] = [], statusLine = `HTTP ${result.status}`) => {
       this.log('bank_response', { ...metadata, httpStatus: result.status, durationMs: Date.now() - started,
         requestId, bankError: result.body?.error, bankStatus: result.body?.status,
-        bankMessage: result.body?.message ?? result.body?.error_description,
+        bankMessage: accountLookup ? undefined : result.body?.message ?? result.body?.error_description,
         responseFormat: result.body === null ? 'empty_or_non_json' : 'json' });
       if (httpDiagnostics) {
         console.info([
@@ -104,7 +105,7 @@ export class H2hClient {
           `${label} END RESPONSE`,
         ].join('\n'));
       }
-      if (!systemHttpLogging && process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
+      if (!accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_RAW_RESPONSES === 'true' && !metadata.endpoint.includes('/auth/')) {
         // Explicit diagnostic mode: preserve the exact decoded bank response text.
         // Do not pass through summary redaction/truncation or log token endpoints.
         console.info(JSON.stringify({ timestamp: new Date().toISOString(), service: 'zicb-h2h-agent',
@@ -208,6 +209,33 @@ export class H2hClient {
     const base = channel === 'INTERNAL' ? p.internalUrl : channel === 'RTGS' ? p.rtgsUrl : p.ddaccUrl;
     return this.url(base, `${PATHS[channel]}/${operation}`);
   }
+  private async verifyInternalBeneficiaries(id: string, batch: Batch): Promise<Batch | string> {
+    const transactions = [];
+    for (const item of batch.transactions) {
+      const accountNumber = String(item.account_number).trim();
+      const correction = `Payment ${item.prcn_number}: Confirm the beneficiary’s 13-digit ZICB account number and branch in Bank Details, correct the details, then submit a new attempt.`;
+      const result = await this.lookup(id, 'INTERNAL', 'name-lookup', {
+        account_no: accountNumber, branch_code: String(item.branch_code).trim(),
+      });
+      if (result.body?.error === 'account_number_invalid') return correction;
+      if (result.body?.error === 'permission_error') {
+        throw new Error('Ask ZICB to enable Internal FT name lookup for this profile');
+      }
+      if (result.status !== 200 || result.body?.status !== 'SUCCESS' || result.body?.error) {
+        throw new Error(`ZICB could not verify the account (HTTP ${result.status}). Confirm the account number and branch with the beneficiary if the lookup continues to fail`);
+      }
+      const account = result.body.message;
+      if (typeof account?.account_number !== 'string') throw new Error('ZICB returned no verified account number');
+      if (account.account_number !== accountNumber) return correction;
+      const branchCode = typeof account.branch_code === 'string' ? account.branch_code.trim() : '';
+      if (!branchCode) throw new Error('ZICB returned no beneficiary branch code. Ask ZICB to verify the account’s branch');
+      if (account.no_credit === 'Y' || account.status_frozen === 'Y' || (account.account_status && account.account_status !== 'O')) {
+        return `Payment ${item.prcn_number}: ZICB reports that the beneficiary account cannot receive this transfer. Ask the beneficiary for an open ZICB account that can receive credits, then update Bank Details and submit a new attempt.`;
+      }
+      transactions.push({ ...item, account_number: accountNumber, branch_code: branchCode });
+    }
+    return { ...batch, transactions };
+  }
   async submit(id: string, channel: Channel, batch: Batch, scale: number): Promise<Outcome> {
     const errors = validateBatch(channel, batch, scale);
     if (errors.length) return { state: 'rejected', notSent: true, notSentReason: 'validation', error: errors.join('; ') };
@@ -215,6 +243,16 @@ export class H2hClient {
     try { await this.token(id); } catch (error) {
       const detail = error instanceof H2hAuthenticationError ? error.message : 'Unexpected token acquisition failure; check the agent profile and authentication service';
       return { state: 'rejected', notSent: true, notSentReason: 'authentication', error: `H2H authentication/configuration failed before submission: ${detail}` };
+    }
+    if (channel === 'INTERNAL') {
+      try {
+        const verified = await this.verifyInternalBeneficiaries(id, batch);
+        if (typeof verified === 'string') return { state: 'rejected', notSent: true, notSentReason: 'validation', error: verified };
+        batch = verified;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'Check the connection to ZICB';
+        return { state: 'rejected', notSent: true, notSentReason: 'lookup', error: `ZICB account verification failed before submission. ${detail}. Retry verification once resolved.` };
+      }
     }
     try {
       const result = await this.authenticated(id, this.businessUrl(id, channel, 'send-money'), 'POST', batch);

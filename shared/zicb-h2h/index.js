@@ -48,7 +48,7 @@ function paymentErrors(payment, scale = 2) {
   if (!text(payment.accountNumber)) errors.push('Beneficiary account number is required');
   if (!text(payment.remarks || payment.transactionReference)) errors.push('Transaction remarks are required');
   if (channel === 'INTERNAL') {
-    if (!/^\d{13}$/.test(text(payment.accountNumber))) errors.push('Internal FT account number must be 13 digits');
+    if (!/^\d{13}$/.test(text(payment.accountNumber))) errors.push('Correct the beneficiary account number in Bank Details. A ZICB Internal FT account number must contain 13 digits.');
     if (!text(payment.branchCode)) errors.push('Internal FT branch code is required');
   } else {
     for (const field of ['swiftCode', 'sortCode', 'accountName']) if (!text(payment[field])) errors.push(`${field} is required`);
@@ -97,7 +97,7 @@ function validateBatch(channel, batch, scale = 2) {
     if (![0, 1].includes(item.is_retry) || !Number.isInteger(item.retry_count) || item.retry_count < 0 || item.retry_count > 10 || (item.is_retry === 0) !== (item.retry_count === 0)) errors.push(`${prefix}: invalid retry metadata`);
     const fields = channel === 'INTERNAL' ? ['account_number', 'branch_code', 'transaction_remarks'] : ['receiver_bic', 'receiver_currency', 'receiver_sort_code', 'receiver_account_number', 'receiver_acc_name', 'transaction_value_date', 'transaction_remarks'];
     for (const field of fields) if (!text(item[field])) errors.push(`${prefix}.${field} is required`);
-    if (channel === 'INTERNAL' && !/^\d{13}$/.test(text(item.account_number))) errors.push(`${prefix}: account_number must be 13 digits`);
+    if (channel === 'INTERNAL' && !/^\d{13}$/.test(text(item.account_number))) errors.push(`${prefix}: Correct the beneficiary account number in Bank Details. A ZICB Internal FT account number must contain 13 digits.`);
     if (channel !== 'INTERNAL') {
       if (!validDate(item.transaction_value_date)) errors.push(`${prefix}: invalid value date`);
       if (!/^[A-Z]{3}$/.test(text(item.receiver_currency))) errors.push(`${prefix}: invalid currency`);
