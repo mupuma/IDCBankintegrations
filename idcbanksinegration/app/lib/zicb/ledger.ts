@@ -16,7 +16,7 @@ export type LedgerDocument = {
   accountingId: string; cashbookAccount?: string; accountingAttempts: number;
   submissionAttempts: number; submittedAt?: string; bankRef?: string; rawStatus?: string;
   error?: string; accountingError?: string; lastAction?: 'submit' | 'reconcile' | 'accounting';
-  notSent?: boolean; notSentReason?: 'authentication' | 'validation'; confirmedRejected?: boolean; recoveryCheck?: boolean; recoveryOf?: string;
+  notSent?: boolean; notSentReason?: 'authentication' | 'lookup' | 'validation'; confirmedRejected?: boolean; recoveryCheck?: boolean; recoveryOf?: string;
 };
 export function documentOf(row: ZicbH2hPayment): LedgerDocument { return JSON.parse(row.document); }
 function recordOutcomeDate(row: ZicbH2hPayment, doc: LedgerDocument) {
@@ -68,7 +68,7 @@ async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Tr
       channel: row.channel, bankRef: doc.bankRef, bankStatus: doc.rawStatus,
       accountingStatus: 'not_required', bankReport: doc.bankReport, bankCallback: doc.bankCallback,
       outcomeRecordedAt: doc.outcomeRecordedAt,
-      recovery: { protocol: 'zicb-recovery-v1', notSent: Boolean(doc.notSent), retryable: doc.notSentReason === 'authentication', confirmedRejected: Boolean(doc.confirmedRejected) } }),
+      recovery: { protocol: 'zicb-recovery-v1', notSent: Boolean(doc.notSent), retryable: ['authentication', 'lookup'].includes(doc.notSentReason || ''), confirmedRejected: Boolean(doc.confirmedRejected) } }),
   } as any, { where: { queueId: row.queueId }, transaction });
 }
 
@@ -120,7 +120,7 @@ export async function recoverH2hInstruction(queueId: string, action: 'check_stat
     doc.recoveryCheck = false;
     doc.error = undefined;
   } else if (action === 'retry_connection') {
-    if (row.state !== 'rejected' || !doc.notSent || doc.notSentReason !== 'authentication') throw new LedgerError('This instruction has no recorded proof that authentication failed before submission', 409);
+    if (row.state !== 'rejected' || !doc.notSent || !['authentication', 'lookup'].includes(doc.notSentReason || '')) throw new LedgerError('This instruction has no recorded proof that authentication or account verification failed before submission', 409);
     row.state = 'queued';
   } else if (action === 'retry_accounting') {
     throw new LedgerError('Sage posting is disabled; bank results are stored locally', 409);

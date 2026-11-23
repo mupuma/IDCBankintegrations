@@ -27,7 +27,7 @@ async function latestCorrection(queueId: string, transaction?: Transaction) {
 function evidenceOf(row: PaymentQueueRequest, h2h?: ZicbH2hPayment | null) {
   if (row.bankCode === 'ZICB' && h2h) {
     const doc = documentOf(h2h);
-    return { protocol: 'zicb-recovery-v1', notSent: doc.notSent, retryable: doc.notSentReason === 'authentication', confirmedRejected: doc.confirmedRejected };
+    return { protocol: 'zicb-recovery-v1', notSent: doc.notSent, retryable: ['authentication', 'lookup'].includes(doc.notSentReason || ''), confirmedRejected: doc.confirmedRejected };
   }
   const evidence = parse(row.responsePayload).recovery as RecoveryEvidence | undefined;
   if (row.bankCode === 'IZB') {
