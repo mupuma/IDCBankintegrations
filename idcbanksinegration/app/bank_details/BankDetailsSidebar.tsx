@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { PERMISSIONS, ROLE_LABELS, normalizeRole, type Permission } from '@/app/lib/permissions';
@@ -87,15 +88,19 @@ const adminNavItems: NavItem[] = [
 function NavLink({
   item,
   pathname,
+  onNavigate,
 }: {
   item: NavItem;
   pathname: string;
+  onNavigate: () => void;
 }) {
   const isActive = pathname === item.href;
 
   return (
     <Link
       href={item.href}
+      onClick={onNavigate}
+      aria-current={isActive ? 'page' : undefined}
       className={`group relative flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition-all duration-200 ${
         isActive
           ? 'bg-blue-50 text-blue-700'
@@ -119,6 +124,26 @@ export default function BankDetailsSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, loading, hasPermission } = usePortalUser();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeMenu = () => setMenuOpen(false);
+
+  // Mobile drawer: focus the close button when opened, close on Escape,
+  // and return focus to the menu button when closed.
+  useEffect(() => {
+    if (!menuOpen) return;
+    closeButtonRef.current?.focus();
+    const menuButton = menuButtonRef.current;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      menuButton?.focus();
+    };
+  }, [menuOpen]);
 
   const canAccess = (permission: Permission) =>
     loading || hasPermission(permission);
@@ -143,8 +168,42 @@ export default function BankDetailsSidebar() {
   };
 
   return (
-    <aside className="fixed left-0 top-0 z-50 flex h-screen w-72 flex-col border-r border-slate-200 bg-white">
-      <div className="border-b border-slate-50 p-6">
+    <>
+    {/* Top bar below the lg breakpoint */}
+    <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-slate-200 bg-white px-4 lg:hidden">
+      <button
+        ref={menuButtonRef}
+        type="button"
+        onClick={() => setMenuOpen(true)}
+        aria-label="Open navigation menu"
+        aria-expanded={menuOpen}
+        aria-controls="portal-sidebar"
+        className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-700 outline-none hover:bg-slate-50 focus-visible:ring-2 focus-visible:ring-blue-600"
+      >
+        <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+      </button>
+      <img src="/infratel.png" alt="Infratel Logo" className="h-8 w-auto object-contain" />
+      <span className="truncate text-[10px] font-bold uppercase tracking-widest text-slate-400">Payments Portal</span>
+    </header>
+
+    {menuOpen ? (
+      <div className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden" aria-hidden="true" onClick={closeMenu} />
+    ) : null}
+
+    <aside
+      id="portal-sidebar"
+      className={`fixed left-0 top-0 z-50 flex h-screen w-72 max-w-[85vw] flex-col border-r border-slate-200 bg-white transition-transform duration-200 lg:max-w-none lg:translate-x-0 lg:shadow-none ${menuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'}`}
+    >
+      <div className="relative border-b border-slate-50 p-6">
+        <button
+          ref={closeButtonRef}
+          type="button"
+          onClick={closeMenu}
+          aria-label="Close navigation menu"
+          className="absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-lg text-slate-500 outline-none hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-blue-600 lg:hidden"
+        >
+          <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeWidth={2} d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
         <div className="flex items-center gap-3">
           <div>
             <h2 className="text-sm font-bold leading-tight text-slate-900">
@@ -162,7 +221,7 @@ export default function BankDetailsSidebar() {
           Core Operations
         </p>
         {visibleCore.map((item) => (
-          <NavLink key={item.href} item={item} pathname={pathname} />
+          <NavLink key={item.href} item={item} pathname={pathname} onNavigate={closeMenu} />
         ))}
 
         {visibleAdmin.length > 0 ? (
@@ -171,7 +230,7 @@ export default function BankDetailsSidebar() {
               Administration
             </p>
             {visibleAdmin.map((item) => (
-              <NavLink key={item.href} item={item} pathname={pathname} />
+              <NavLink key={item.href} item={item} pathname={pathname} onNavigate={closeMenu} />
             ))}
           </>
         ) : null}
@@ -206,5 +265,6 @@ export default function BankDetailsSidebar() {
         </button>
       </div>
     </aside>
+    </>
   );
 }

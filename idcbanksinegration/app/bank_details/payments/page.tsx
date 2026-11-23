@@ -12,6 +12,8 @@ import type { PaymentsResponse, BankCode } from '@/app/models/dtos';
 import { sourceAccountsForBank, sourceSelectionError } from '@/app/lib/sourceAccountSelection';
 import type { BankQueueItem } from '@/app/lib/bankQueue';
 import { BANK_CODES } from '@/app/lib/enabledBanks';
+import Pagination from '@/app/components/Pagination';
+import { formatAmount } from '@/app/lib/formatAmount';
 import { buildIzbPayload, buildZanacoPayload, buildZicbPayload, validateZanacoPaymentSelection } from '@/app/lib/banks/payloadBuilders';
 
 const TRANSACTION_TYPES: PaymentsResponse['transactionType'][] = ['RTGS', 'DDACCT', 'INT'];
@@ -1225,6 +1227,17 @@ export default function PaymentQueueDashboard() {
             {bulkSubmitting ? 'Sending...' : `Send ${selectedPayments.length || ''}`.trim()}
           </button>
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3 text-sm" role="status">
+          <span className="font-semibold text-slate-700"><span className="tabular-nums">{selectedPayments.length}</span> selected across all pages</span>
+          <button
+            type="button"
+            onClick={() => setSelectedPaymentIds({})}
+            disabled={!selectedPayments.length}
+            className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+          >
+            Clear selection
+          </button>
+        </div>
         <p className="mt-3 text-xs text-slate-600">Apply bank, source account and transaction type settings first, then validate selected payments across all pages. Validation shows issues on each payment without sending it.</p>
         {bulkBank === 'IZB' ? (
           <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-xs text-amber-800">
@@ -1238,16 +1251,18 @@ export default function PaymentQueueDashboard() {
         ) : null}
       </div>
 
-      <div className="mt-8 bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">
-        <div className="overflow-x-auto">
+      <div data-table-card className="mt-8 scroll-mt-20 bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden lg:scroll-mt-4">
+        <div data-table-scroll className="max-h-[70vh] overflow-auto">
           <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200/60">
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgb(226_232_240)]">
+              <tr className="bg-slate-50">
                 <th className="px-6 py-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest">
                   <input
                     type="checkbox"
                     checked={pagedPayments.length > 0 && pagedPayments.every((payment) => selectedPaymentIds[payment.paymentId])}
                     onChange={(event) => togglePageSelection(event.target.checked)}
+                    aria-label="Select all on this page"
+                    title="Select all on this page"
                     className="h-4 w-4 rounded border-slate-300"
                   />
                 </th>
@@ -1310,12 +1325,12 @@ export default function PaymentQueueDashboard() {
                         <div className="text-[11px] text-slate-500 mt-1">Date: {formatDate(payment.transactionDate)}</div>
                       </td>
                       <td className="px-6 py-4 max-w-[220px]">
-                        <div className="text-sm font-bold text-slate-800 truncate">{payment.amount.toFixed(2)} {payment.currency}</div>
+                        <div className="text-sm font-bold tabular-nums text-slate-800 truncate">{formatAmount(payment.amount, payment.currency)}</div>
                         {paymentCurrency !== 'ZMW' ? (
                           <div className="mt-1 text-xs text-slate-500">
                             ZMW equivalent:{' '}
                             <span className="font-mono font-semibold text-slate-700">
-                              {paymentZmwEquivalent === null ? 'missing rate' : paymentZmwEquivalent.toFixed(2)}
+                              {paymentZmwEquivalent === null ? 'missing rate' : formatAmount(paymentZmwEquivalent)}
                             </span>
                           </div>
                         ) : null}
@@ -1492,39 +1507,14 @@ export default function PaymentQueueDashboard() {
           </table>
         </div>
 
-        <div className="px-6 py-4 bg-slate-50 border-t border-slate-200/60 flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span className="text-xs font-semibold text-slate-500">
-            Showing {visiblePayments.length > 0 ? (effectivePage - 1) * pageSize + 1 : 0} – {Math.min(effectivePage * pageSize, visiblePayments.length)} of {visiblePayments.length} payment records
-          </span>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">Per Page:</span>
-              <select
-                value={pageSize}
-                onChange={(event) => { setPageSize(Number(event.target.value)); setCurrentPage(1); }}
-                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500/20"
-              >
-                {[10, 25, 50, 100].map(size => <option key={size} value={size}>{size}</option>)}
-              </select>
-            </div>
-            <div className="flex gap-1">
-              <button
-                disabled={effectivePage <= 1}
-                onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg>
-              </button>
-              <button
-                disabled={effectivePage >= totalPages}
-                onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
-                className="p-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 disabled:pointer-events-none hover:bg-slate-50 transition-all outline-none"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
-              </button>
-            </div>
-          </div>
-        </div>
+        <Pagination
+          page={effectivePage}
+          pageSize={pageSize}
+          total={visiblePayments.length}
+          itemLabel="payments"
+          onPageChange={setCurrentPage}
+          onPageSizeChange={(size) => { setPageSize(size); setCurrentPage(1); }}
+        />
       </div>
 
       {/* <div className="mt-8 bg-white rounded-xl shadow-sm border border-slate-200/80 overflow-hidden">

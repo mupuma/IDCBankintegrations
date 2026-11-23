@@ -73,7 +73,7 @@ export async function connectVendorBankDatabase(forceRefresh = false) {
       let master: { sageVendorCount?: number; addedCount?: number } = {};
       try { master = await syncSageVendorMaster(); }
       catch (error) { warnings.push(importWarning(error)); }
-      return { ...master, warning: warnings.length ? warnings.join(' ') : undefined };
+      return { ...master, warning: warnings.length ? [...new Set(warnings)].join(' ') : undefined };
     })().finally(() => { running = false; checkedAt = Date.now(); });
   }
   return await imported;

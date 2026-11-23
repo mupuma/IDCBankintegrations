@@ -135,10 +135,10 @@ export default function AuditLogsPage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-        <div className="overflow-x-auto">
+      <div data-table-card className="scroll-mt-20 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm lg:scroll-mt-4">
+        <div data-table-scroll className="max-h-[70vh] overflow-auto">
           <table className="min-w-full divide-y divide-slate-200 text-sm">
-            <thead className="bg-slate-50">
+            <thead className="sticky top-0 z-10 bg-slate-50 shadow-[0_1px_0_0_rgb(226_232_240)]">
               <tr>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">When</th>
                 <th className="px-4 py-3 text-left font-semibold text-slate-600">User</th>
@@ -207,13 +207,11 @@ export default function AuditLogsPage() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="mt-6">
         <Pagination
           page={page}
           pageSize={pageSize}
           total={total}
+          itemLabel="audit entries"
           onPageChange={setPage}
           onPageSizeChange={(size) => {
             setPageSize(size);
