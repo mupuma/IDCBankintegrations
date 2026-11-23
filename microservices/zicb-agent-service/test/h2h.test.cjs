@@ -230,6 +230,32 @@ test('Internal FT blocks submission on an invalid account or unavailable verific
   }
 });
 
+test('Internal FT logs a correlated name lookup without beneficiary data', async () => {
+  const accountNumber = '0012345678901';
+  const instruction = contract.buildBatch({ ...payment, transactionType: 'INT', accountNumber }, options);
+  const bank = new H2hClient({ test: profile }, async url => url.includes('/auth/') ? token()
+    : json(200, { status: 'SUCCESS', message: { account_number: accountNumber, fullname: 'Private Beneficiary' } }));
+  const logs = [];
+  const originalInfo = console.info;
+  console.info = line => logs.push(line);
+  try {
+    await bank.submit('test', 'INTERNAL', instruction, 2);
+  } finally {
+    console.info = originalInfo;
+  }
+  const lookupEvents = logs.map(line => JSON.parse(line)).filter(event => event.endpoint === '/h2h/internal-ft/name-lookup');
+  const [request, response] = lookupEvents;
+  assert.equal(request.event, 'bank_request');
+  assert.equal(request.method, 'POST');
+  assert.equal(request.reference, instruction.reference);
+  assert.equal(request.prcn, instruction.transactions[0].prcn_number);
+  assert.ok(request.exchangeId);
+  assert.equal(response.event, 'bank_response');
+  assert.equal(response.exchangeId, request.exchangeId);
+  assert.equal(response.httpStatus, 200);
+  assert.doesNotMatch(logs.join('\n'), /0012345678901|Private Beneficiary|test-token/);
+});
+
 const work = { queueId: 'q1', leaseToken: 'lease1', action: 'submit', profileId: 'test', channel: 'RTGS', batch: batch(), amountScale: 2 };
 
 test('authentication configuration failures explain the profile mismatch without submitting a payment', async () => {
