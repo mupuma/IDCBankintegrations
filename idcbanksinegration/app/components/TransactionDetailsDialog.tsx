@@ -129,8 +129,22 @@ export default function TransactionDetailsDialog({ item, onClose }: { item: Bank
               <Detail label="Processing attempts" value={item.attempts} />
               <Detail label="Bank status" value={String(response.bankStatus || response.rawStatus || response.bankStatusCode || '')} />
               <div className="sm:col-span-2"><Detail label="Queue reference" value={item.id} mono /></div>
-              {payment.recoveryOf ? <div className="sm:col-span-2"><Detail label="Previous attempt" value={String(payment.recoveryOf)} mono /></div> : null}
-            </dl></Section>
+              {payment.recoveryOf && !item.previousAttempts?.length ? <div className="sm:col-span-2"><Detail label="Previous attempt" value={String(payment.recoveryOf)} mono /></div> : null}
+            </dl>
+              {item.previousAttempts?.length ? <div className="mt-5 border-t border-slate-200 pt-4">
+                <h4 className="text-sm font-semibold text-slate-900">Previous attempts</h4>
+                <ol className="mt-3 space-y-3">
+                  {item.previousAttempts.map(attempt => <li key={attempt.id} className="rounded-lg bg-slate-50 p-3">
+                    <dl className="grid gap-2 sm:grid-cols-2">
+                      <Detail label="Status" value={<span className="capitalize">{attempt.status.replace(/_/g, ' ')}</span>} />
+                      <Detail label={attempt.processedAt ? 'Processed' : 'Last updated'} value={dateLabel(attempt.processedAt ?? attempt.updatedAt)} />
+                      {attempt.lastError ? <div className="sm:col-span-2"><Detail label="Reason" value={attempt.lastError} /></div> : null}
+                      <div className="sm:col-span-2"><Detail label="Queue reference" value={attempt.id} mono /></div>
+                    </dl>
+                  </li>)}
+                </ol>
+              </div> : null}
+            </Section>
             <Section title="Contact and address"><dl className="grid gap-4 sm:grid-cols-2">
               <Detail label="Email" value={payment.email || original.email} />
               <Detail label="Phone number" value={payment.phoneNumber || original.phoneNumber} />

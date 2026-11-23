@@ -7,6 +7,8 @@ import { processedAtWrite, processedAtIso } from './paymentProcessedAt';
 
 export type QueueStatus = 'queued' | 'pulled' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
+export type PreviousPaymentAttempt = Pick<BankQueueItem, 'id' | 'status' | 'lastError' | 'processedAt' | 'updatedAt'>;
+
 export interface BankQueueItem {
   id: string;
   paymentId: string;
@@ -20,6 +22,7 @@ export interface BankQueueItem {
   createdAt: string;
   updatedAt: string;
   processedAt?: string | null;
+  previousAttempts?: PreviousPaymentAttempt[];
 }
 
 const queue = new Map<string, BankQueueItem>();

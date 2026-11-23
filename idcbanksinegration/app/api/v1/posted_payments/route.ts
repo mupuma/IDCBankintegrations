@@ -28,6 +28,7 @@ import { enqueueH2h, LedgerError } from '@/app/lib/zicb/ledger';
 import { sourceProfile } from '@/app/lib/zicb/config';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 import { isQueueSearchField, matchesQueueSearch } from '@/app/lib/queueSearch';
+import { collapsePaidAttempts } from '@/app/lib/paymentAttemptHistory';
 
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
@@ -836,8 +837,12 @@ export async function GET(request: NextRequest) {
     // Persisted rows are authoritative because agents report results to the DB.
     mergedById.set(item.id, item);
   }
-  // Search the complete, deduplicated queue before counting and paging it.
-  const mergedItems = Array.from(mergedById.values()).filter(item => matchesQueueSearch(item, searchField, search));
+  const visibleItems = sessionToken ? collapsePaidAttempts(mergedById) : Array.from(mergedById.values());
+  const mergedItems = visibleItems.filter(item => matchesQueueSearch(item, searchField, search)
+    || item.previousAttempts?.some(attempt => {
+      const previous = mergedById.get(attempt.id);
+      return previous ? matchesQueueSearch(previous, searchField, search) : false;
+    }));
 
   // sort by updatedAt descending for sensible paging order
   mergedItems.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
