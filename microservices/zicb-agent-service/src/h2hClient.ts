@@ -76,11 +76,13 @@ export class H2hClient {
   private async http(url: string, init: RequestInit, context: Record<string, string> = {}): Promise<HttpResult> {
     const controller = new AbortController();
     const started = Date.now();
-    const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
-    const systemHttpLogging = Boolean((globalThis as any)[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
-    const accountLookup = metadata.endpoint.endsWith('/name-lookup');
-    const httpDiagnostics = !accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+    const endpoint = new URL(url).pathname;
+    const accountLookup = endpoint.endsWith('/name-lookup');
     const exchangeId = randomUUID();
+    const metadata = { ...context, method: init.method, endpoint, ...(accountLookup ? { exchangeId } : {}) };
+    const systemHttpLogging = Boolean((globalThis as any)[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
+    const httpDiagnostics = !accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+    if (accountLookup) this.log('bank_request', metadata);
     const headerLines = (headers: Headers) => Array.from(headers.entries()).map(([name, value]) =>
       `${name}: ${/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? '[REDACTED]' : value}`);
     const label = `[ZICB HTTP ${exchangeId}] profile=${context.profileId || '-'} reference=${context.reference || '-'}`;
@@ -189,11 +191,11 @@ export class H2hClient {
     this.refreshing.set(id, promise);
     try { return await promise; } finally { this.refreshing.delete(id); }
   }
-  private async authenticated(id: string, url: string, method: string, body?: unknown): Promise<HttpResult> {
+  private async authenticated(id: string, url: string, method: string, body?: unknown, correlation?: { reference: string; prcn: string }): Promise<HttpResult> {
     let token = await this.token(id);
     const payload = body as { reference?: string; ext_batch_ref_no?: string } | undefined;
     const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) },
-      { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
+      { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '', ...correlation });
     let result = await send();
     if (result.status === 401 && result.body?.error === 'invalid_token') {
       // Only a definite authentication rejection can replay this request.
@@ -216,7 +218,7 @@ export class H2hClient {
       const correction = `Payment ${item.prcn_number}: Confirm the beneficiary’s 13-digit ZICB account number and branch in Bank Details, correct the details, then submit a new attempt.`;
       const result = await this.lookup(id, 'INTERNAL', 'name-lookup', {
         account_no: accountNumber, branch_code: String(item.branch_code).trim(),
-      });
+      }, { reference: batch.reference, prcn: item.prcn_number });
       if (result.body?.error === 'account_number_invalid') return correction;
       if (result.body?.error === 'permission_error') {
         throw new Error('Ask ZICB to enable Internal FT name lookup for this profile');
@@ -285,8 +287,8 @@ export class H2hClient {
   async verifyToken(id: string) {
     return this.authenticated(id, this.url(this.profile(id).authUrl, '/h2h/auth/grant-type/client-credentials/verify-token'), 'GET');
   }
-  async lookup(id: string, channel: Channel, operation: 'name-lookup' | 'show/other-banks-details' | 'show/currencies' | 'show/currency-holidays', body?: unknown) {
+  async lookup(id: string, channel: Channel, operation: 'name-lookup' | 'show/other-banks-details' | 'show/currencies' | 'show/currency-holidays', body?: unknown, correlation?: { reference: string; prcn: string }) {
     if ((channel === 'INTERNAL') !== (operation === 'name-lookup')) throw new Error('Lookup is not supported by this channel');
-    return this.authenticated(id, this.businessUrl(id, channel, operation), ['name-lookup', 'show/currency-holidays'].includes(operation) ? 'POST' : 'GET', body);
+    return this.authenticated(id, this.businessUrl(id, channel, operation), ['name-lookup', 'show/currency-holidays'].includes(operation) ? 'POST' : 'GET', body, correlation);
   }
 }

@@ -97,11 +97,14 @@ class H2hClient {
     async http(url, init, context = {}) {
         const controller = new AbortController();
         const started = Date.now();
-        const metadata = { ...context, method: init.method, endpoint: new URL(url).pathname };
-        const systemHttpLogging = Boolean(globalThis[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
-        const accountLookup = metadata.endpoint.endsWith('/name-lookup');
-        const httpDiagnostics = !accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+        const endpoint = new URL(url).pathname;
+        const accountLookup = endpoint.endsWith('/name-lookup');
         const exchangeId = (0, node_crypto_1.randomUUID)();
+        const metadata = { ...context, method: init.method, endpoint, ...(accountLookup ? { exchangeId } : {}) };
+        const systemHttpLogging = Boolean(globalThis[Symbol.for('idc.httpLogging')]?.enabled) || process.env.HTTP_LOG_ENABLED === 'false';
+        const httpDiagnostics = !accountLookup && !systemHttpLogging && process.env.ZICB_H2H_LOG_HTTP !== 'false' && !metadata.endpoint.includes('/auth/');
+        if (accountLookup)
+            this.log('bank_request', metadata);
         const headerLines = (headers) => Array.from(headers.entries()).map(([name, value]) => `${name}: ${/^(authorization|proxy-authorization|cookie|set-cookie)$/i.test(name) ? '[REDACTED]' : value}`);
         const label = `[ZICB HTTP ${exchangeId}] profile=${context.profileId || '-'} reference=${context.reference || '-'}`;
         if (httpDiagnostics) {
@@ -233,10 +236,10 @@ class H2hClient {
             this.refreshing.delete(id);
         }
     }
-    async authenticated(id, url, method, body) {
+    async authenticated(id, url, method, body, correlation) {
         let token = await this.token(id);
         const payload = body;
-        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '' });
+        const send = () => this.http(url, { method, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, { profileId: id, reference: payload?.reference ?? payload?.ext_batch_ref_no ?? '', ...correlation });
         let result = await send();
         if (result.status === 401 && result.body?.error === 'invalid_token') {
             // Only a definite authentication rejection can replay this request.
@@ -260,7 +263,7 @@ class H2hClient {
             const correction = `Payment ${item.prcn_number}: Confirm the beneficiary’s 13-digit ZICB account number and branch in Bank Details, correct the details, then submit a new attempt.`;
             const result = await this.lookup(id, 'INTERNAL', 'name-lookup', {
                 account_no: accountNumber, branch_code: String(item.branch_code).trim(),
-            });
+            }, { reference: batch.reference, prcn: item.prcn_number });
             if (result.body?.error === 'account_number_invalid')
                 return correction;
             if (result.body?.error === 'permission_error') {
@@ -341,10 +344,10 @@ class H2hClient {
     async verifyToken(id) {
         return this.authenticated(id, this.url(this.profile(id).authUrl, '/h2h/auth/grant-type/client-credentials/verify-token'), 'GET');
     }
-    async lookup(id, channel, operation, body) {
+    async lookup(id, channel, operation, body, correlation) {
         if ((channel === 'INTERNAL') !== (operation === 'name-lookup'))
             throw new Error('Lookup is not supported by this channel');
-        return this.authenticated(id, this.businessUrl(id, channel, operation), ['name-lookup', 'show/currency-holidays'].includes(operation) ? 'POST' : 'GET', body);
+        return this.authenticated(id, this.businessUrl(id, channel, operation), ['name-lookup', 'show/currency-holidays'].includes(operation) ? 'POST' : 'GET', body, correlation);
     }
 }
 exports.H2hClient = H2hClient;
