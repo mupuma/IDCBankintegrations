@@ -6,10 +6,13 @@ import { PERMISSIONS, ROLES, ROLE_LABELS, normalizeRole } from '@/app/lib/permis
 import { isAuthError, requirePermission } from '@/app/lib/rbac';
 import { User } from '@/app/models/internal/User';
 
+import { normalizeEmail } from '@/app/lib/loginSmtp';
+
 function serializeUser(user: User) {
   return {
     id: user.id,
     username: user.username,
+    email: user.email,
     role: user.role,
     roleLabel: ROLE_LABELS[normalizeRole(user.role)],
     isActive: user.isActive !== false,
@@ -33,6 +36,13 @@ export async function PUT(
 
   const body = await request.json();
   const changes: Record<string, unknown> = {};
+
+  if (body?.email !== undefined) {
+    const email = normalizeEmail(body.email);
+    if (!email) return NextResponse.json({ error: 'A valid email address is required.' }, { status: 400 });
+    user.email = email;
+    changes.emailUpdated = true;
+  }
 
   if (body?.role !== undefined) {
     const role = normalizeRole(body.role);

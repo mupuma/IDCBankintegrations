@@ -72,7 +72,10 @@ async function persist(row: ZicbH2hPayment, doc: LedgerDocument, transaction: Tr
   } as any, { where: { queueId: row.queueId }, transaction });
 }
 
-export async function enqueueH2h(payment: any, sourceBank: string) {
+type QueueApproval = { status: string; approvalSnapshot: string };
+
+export async function enqueueH2h(payment: any, sourceBank: string, approval?: QueueApproval) {
+  const status = approval?.status ?? 'queued';
   const profile = sourceProfile(sourceBank);
   const channel = channelFor(payment.transactionType);
   if (!profile.channels?.includes(channel)) throw new LedgerError('This H2H channel is not enabled for the selected source account');
@@ -96,12 +99,12 @@ export async function enqueueH2h(payment: any, sourceBank: string) {
         accountingAttempts: 0, submissionAttempts: 0,
       };
       const row = await ZicbH2hPayment.create({ queueId, paymentKey: hash(paymentId), reference, prcn,
-        channel, state: 'queued', document: JSON.stringify(doc), nextRun: new Date() }, { transaction });
+        channel, state: status, document: JSON.stringify(doc), nextRun: approval ? null : new Date() }, { transaction });
       await PaymentQueueRequest.create({ queueId, paymentId, bankCode: 'ZICB', sourceBank,
-        paymentPayload: JSON.stringify(doc.payment), status: 'queued', attempts: 0 }, { transaction });
+        paymentPayload: JSON.stringify(doc.payment), ...approval, status, attempts: 0 }, { transaction });
       await event(row, 'created', { channel, reference, prcn, profileId: profile.profileId }, transaction);
       await persist(row, doc, transaction);
-      return { queueId, paymentId, status: 'queued', reference, prcn_number: prcn };
+      return { queueId, paymentId, status, reference, prcn_number: prcn };
     });
   } catch (error: any) {
     if (error?.name === 'SequelizeUniqueConstraintError') throw new LedgerError('This payment already has an H2H instruction', 409);
@@ -136,7 +139,8 @@ export async function recoverH2hInstruction(queueId: string, action: 'check_stat
 
 // Called only by the authorised recovery transaction after it has locked and
 // verified the predecessor and its shared dispatch reservation.
-export async function createH2hRecoveryAttempt(payment: any, sourceBank: string, recoveryOf: string, transaction: Transaction) {
+export async function createH2hRecoveryAttempt(payment: any, sourceBank: string, recoveryOf: string, transaction: Transaction, approval?: QueueApproval) {
+  const status = approval?.status ?? 'queued';
   const profile = sourceProfile(sourceBank);
   const channel = channelFor(payment.transactionType);
   if (!profile.channels?.includes(channel)) throw new LedgerError('This H2H channel is not enabled for the selected source account');
@@ -153,9 +157,9 @@ export async function createH2hRecoveryAttempt(payment: any, sourceBank: string,
     accountingAttempts: 0, submissionAttempts: 0, recoveryOf,
   };
   const row = await ZicbH2hPayment.create({ queueId, paymentKey: hash(identity), reference, prcn,
-    channel, state: 'queued', document: JSON.stringify(doc), nextRun: new Date() }, { transaction });
+    channel, state: status, document: JSON.stringify(doc), nextRun: approval ? null : new Date() }, { transaction });
   await PaymentQueueRequest.create({ queueId, paymentId: payment.paymentId, bankCode: 'ZICB', sourceBank,
-    paymentPayload: JSON.stringify(doc.payment), status: 'queued', attempts: 0 }, { transaction });
+    paymentPayload: JSON.stringify(doc.payment), ...approval, status, attempts: 0 }, { transaction });
   await event(row, 'recovery_created', { recoveryOf, reference, prcn }, transaction);
   await persist(row, doc, transaction);
   return queueId;

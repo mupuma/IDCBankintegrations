@@ -7,6 +7,7 @@ import Modal from '@/app/components/Modal';
 interface PortalUserRow {
   id: number;
   username: string;
+  email: string | null;
   role: Role;
   roleLabel: string;
   isActive: boolean;
@@ -24,6 +25,8 @@ export default function UsersPage() {
   const [saving, setSaving] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [editEmail, setEditEmail] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [newRole, setNewRole] = useState<Role>(ROLES.OPERATOR);
@@ -53,6 +56,7 @@ export default function UsersPage() {
 
   function openCreate() {
     setNewUsername('');
+    setNewEmail('');
     setNewPassword('');
     setNewRole(ROLES.OPERATOR);
     setFormError(null);
@@ -69,6 +73,7 @@ export default function UsersPage() {
   function openEdit(user: PortalUserRow) {
     setEditingUser(user);
     setEditRole(user.role);
+    setEditEmail(user.email ?? '');
     setEditPassword('');
     setFormError(null);
   }
@@ -92,6 +97,7 @@ export default function UsersPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           username: newUsername,
+          email: newEmail,
           password: newPassword,
           role: newRole,
         }),
@@ -125,6 +131,7 @@ export default function UsersPage() {
     setSaving(true);
 
     const body: Record<string, unknown> = { role: editRole, isActive: user.isActive };
+    if (editEmail.trim()) body.email = editEmail;
     if (editPassword.trim()) body.password = editPassword;
 
     try {
@@ -248,6 +255,7 @@ export default function UsersPage() {
           <thead className="bg-slate-50">
             <tr>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Username</th>
+              <th className="px-4 py-3 text-left font-semibold text-slate-600">Email</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Role</th>
               <th className="px-4 py-3 text-left font-semibold text-slate-600">Status</th>
               <th className="px-4 py-3 text-right font-semibold text-slate-600">Actions</th>
@@ -256,13 +264,13 @@ export default function UsersPage() {
           <tbody className="divide-y divide-slate-100">
             {loading ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                   Loading users…
                 </td>
               </tr>
             ) : users.length === 0 ? (
               <tr>
-                <td colSpan={4} className="px-4 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-4 py-8 text-center text-slate-500">
                   No users found.
                 </td>
               </tr>
@@ -270,6 +278,7 @@ export default function UsersPage() {
               users.map((user) => (
                 <tr key={user.id} className="hover:bg-slate-50/80">
                   <td className="px-4 py-3 font-medium text-slate-900">{user.username}</td>
+                  <td className="px-4 py-3 text-slate-700">{user.email ?? 'Email needed'}</td>
                   <td className="whitespace-nowrap px-4 py-3 text-slate-700">{user.roleLabel}</td>
                   <td className="px-4 py-3">
                     <span
@@ -339,6 +348,11 @@ export default function UsersPage() {
             />
           </label>
           <label className="block text-sm">
+            Email
+            <input type="email" value={newEmail} onChange={event => setNewEmail(event.target.value)}
+              maxLength={254} required className={fieldClass} />
+          </label>
+          <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">Password</span>
             <input
               type="password"
@@ -380,6 +394,11 @@ export default function UsersPage() {
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">Role</span>
             {roleSelect(editRole, setEditRole)}
+          </label>
+          <label className="block text-sm">
+            Email
+            <input type="email" value={editEmail} onChange={event => setEditEmail(event.target.value)}
+              maxLength={254} required className={fieldClass} />
           </label>
           <label className="block text-sm">
             <span className="mb-1 block font-medium text-slate-700">New password (optional)</span>

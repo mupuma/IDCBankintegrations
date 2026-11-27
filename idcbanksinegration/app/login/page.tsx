@@ -9,6 +9,8 @@ export default function LoginPage() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [challengeId, setChallengeId] = useState<string | null>(null);
+  const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -21,13 +23,19 @@ export default function LoginPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(challengeId ? { username, challengeId, code } : { username, password }),
       });
 
       const data = await response.json();
 
       if (!response.ok) {
         setError(data?.error || "Login failed. Please try again.");
+        return;
+      }
+
+      if (data.challengeId) {
+        setChallengeId(data.challengeId);
+        setPassword('');
         return;
       }
 
@@ -72,7 +80,14 @@ export default function LoginPage() {
           </div>
 
           <form className="space-y-5" onSubmit={handleSubmit}>
-            <div className="space-y-4">
+            {challengeId ? (
+              <label className="block text-sm font-medium">
+                Enter the six-digit code sent to your email
+                <input className="mt-2 w-full rounded-lg border border-slate-300 px-4 py-2"
+                  inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6}
+                  required value={code} onChange={event => setCode(event.target.value)} />
+              </label>
+            ) : <div className="space-y-4">
               <label className="block">
                 <span className="mb-1.5 block text-sm font-medium text-slate-700">
                   Username
@@ -125,7 +140,15 @@ export default function LoginPage() {
                   />
                 </div>
               </label>
-            </div>
+            </div>}
+
+            {challengeId && (
+              <button className="text-sm underline" type="button" disabled={loading} onClick={() => {
+                setChallengeId(null);
+                setCode('');
+                setError(null);
+              }}>Start over or request another code</button>
+            )}
 
             {error ? (
               <div
@@ -158,7 +181,7 @@ export default function LoginPage() {
                   Signing in…
                 </span>
               ) : (
-                "Sign in"
+                challengeId ? "Verify code" : "Sign in"
               )}
             </button>
           </form>

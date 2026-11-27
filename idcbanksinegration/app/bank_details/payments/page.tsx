@@ -23,7 +23,7 @@ const BANK_TRANSACTION_TYPES: Record<BankCode, PaymentsResponse['transactionType
   ZICB: ['RTGS', 'DDACCT', 'INT'],
 };
 const BANKS_WITH_BULK_UPLOAD = new Set<BankCode>();
-const ACTIVE_POST_STATUSES = new Set(['queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
+const ACTIVE_POST_STATUSES = new Set(['awaiting_approval', 'approval_rejected', 'queued', 'processing', 'success', 'pulled', 'submitting', 'accepted', 'unknown', 'paid', 'rejected', 'needs_review']);
 const BANK_PROCESSED_STATUSES = new Set(['success', 'paid']);
 const preventsPosting = (status: string, bank: string) => ACTIVE_POST_STATUSES.has(status) || bank === 'ZICB';
 const IZB_DDACC_LIMIT = 500000;
@@ -896,11 +896,12 @@ export default function PaymentQueueDashboard() {
 
       const queueId = String(result.queueId || '');
       const queueItem = result.item;
+      const status = (result.status ?? 'awaiting_approval') as QueueStatus;
       const statusKey = postKey(payment.paymentId, bankCode);
       const postedRecord: PostedPaymentRecord = {
         bankCode,
         queueId,
-        status: 'queued',
+        status,
         response: queueItem?.response,
       };
       setPostedPayments((prev) => ({ ...prev, [payment.paymentId]: postedRecord }));
@@ -908,7 +909,7 @@ export default function PaymentQueueDashboard() {
         ...prev,
         [statusKey]: {
           queueId,
-          status: 'queued',
+          status,
           lastError: undefined,
           response: queueItem?.response,
         },
@@ -919,7 +920,7 @@ export default function PaymentQueueDashboard() {
       }
 
       void refreshQueueItems();
-      setMessage('Payment queued for async processing.');
+      setMessage('Payment submitted for approval.');
     } catch (error: any) {
       const reason = error?.message || 'Failed to push payment.';
       setMessage(reason);
@@ -1059,7 +1060,7 @@ export default function PaymentQueueDashboard() {
           queuedCount += affectedPaymentIds.length;
 
           const queueId = String(result.queueId || '');
-          const queueStatus = (result.status as QueueStatus | undefined) || 'queued';
+          const queueStatus = (result.status as QueueStatus | undefined) || 'awaiting_approval';
           for (const paymentId of affectedPaymentIds) {
             const statusKey = postKey(String(paymentId), group.bankCode);
             const postedRecord: PostedPaymentRecord = {
@@ -1091,7 +1092,7 @@ export default function PaymentQueueDashboard() {
       const errorSummary = submissionErrors.length
         ? ` ${submissionErrors.slice(0, 2).join(' | ')}${submissionErrors.length > 2 ? ` and ${submissionErrors.length - 2} more` : ''}`
         : '';
-      setMessage(`Queued ${queuedCount} payment${queuedCount === 1 ? '' : 's'}${failedCount ? `; ${failedCount} failed to queue.${errorSummary}` : '.'}`);
+      setMessage(`Submitted ${queuedCount} payment${queuedCount === 1 ? '' : 's'}${failedCount ? `; ${failedCount} failed to submit.${errorSummary}` : '.'}`);
     } catch (error: any) {
       setMessage(error?.message || 'Failed to send selected payments.');
     } finally {
@@ -1294,7 +1295,7 @@ export default function PaymentQueueDashboard() {
                       ? queueStatuses[statusKey]
                       : undefined;
                   const selectedType = transactionOverrides[payment.paymentId] ?? payment.transactionType;
-                  const isQueued = queueStatus?.status === 'queued' || queueStatus?.status === 'processing';
+                  const isQueued = queueStatus?.status === 'awaiting_approval' || queueStatus?.status === 'queued' || queueStatus?.status === 'processing';
                   const isAlreadyPosted = Boolean(
                     posted && preventsPosting(posted.status, posted.bankCode),
                   );

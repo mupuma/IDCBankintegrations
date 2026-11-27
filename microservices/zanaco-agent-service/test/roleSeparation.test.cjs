@@ -29,6 +29,7 @@ function fixture(role, fail = false) {
     'next/server': { NextResponse },
     '../api/auth/login/middleware/auth': { verifySessionToken: async () => ({ sub: '1', username: 'test', role: 'ADMIN' }) },
     './db': { connectDatabase: async () => { if (fail) throw new Error('Database unavailable'); } },
+    '../models/internal/LoginOtp': { LoginSmtpSettings: { findByPk: async () => null } },
     './auditLog': { logAuditEvent: async () => {} },
     '../models/internal/User': { User: { findByPk: async () => ({ id: 1, username: 'test', role, isActive: true }) } },
     './permissions': permissions,
@@ -58,7 +59,11 @@ test('legacy Sage queue endpoint also rejects makers before reading or enqueuing
     '../../../lib/banks': { BANK_CODES: ['IZB', 'ZICB', 'ZANACO'] },
     '../../../lib/bankQueue': { enqueuePayment: () => assert.fail('A maker cannot enqueue') },
     '../../../lib/db': {}, '../../../models/internal/PaymentQueueRequest': {},
-    '../../../lib/paymentPostGuard': {},
+    '../posted_payments/route': { POST: async request => {
+      const user = await f.rbac.requirePermission(request, P.PAYMENTS_POST);
+      if (f.rbac.isAuthError(user)) return user;
+      return assert.fail('A maker cannot submit a payment');
+    } },
   });
   const response = await route.POST({ ...f.request, json: () => assert.fail('Must authorize before reading payment') });
   assert.equal(response.status, 403);

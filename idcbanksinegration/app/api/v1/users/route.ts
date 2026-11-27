@@ -6,10 +6,13 @@ import { PERMISSIONS, ROLES, ROLE_LABELS, normalizeRole } from '@/app/lib/permis
 import { isAuthError, requirePermission } from '@/app/lib/rbac';
 import { User } from '@/app/models/internal/User';
 
+import { normalizeEmail } from '@/app/lib/loginSmtp';
+
 function serializeUser(user: User) {
   return {
     id: user.id,
     username: user.username,
+    email: user.email,
     role: user.role,
     roleLabel: ROLE_LABELS[normalizeRole(user.role)],
     isActive: user.isActive !== false,
@@ -38,6 +41,9 @@ export async function POST(request: NextRequest) {
   const password = String(body?.password ?? '');
   const role = normalizeRole(body?.role);
 
+  const email = normalizeEmail(body?.email);
+  if (!email) return NextResponse.json({ error: 'A valid email address is required.' }, { status: 400 });
+
   if (!username || !password) {
     return NextResponse.json(
       { error: 'Username and password are required.' },
@@ -58,6 +64,7 @@ export async function POST(request: NextRequest) {
 
   const user = await User.create({
     username,
+    email,
     password,
     role,
     isActive: true,

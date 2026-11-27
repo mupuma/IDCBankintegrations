@@ -1,0 +1,15 @@
+ALTER TABLE users ADD COLUMN email VARCHAR(254) NULL;
+
+CREATE TABLE IF NOT EXISTS login_smtp_settings (
+  id BIGINT NOT NULL PRIMARY KEY,
+  configuration TEXT NOT NULL,
+  enabled BOOLEAN NOT NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS login_otp_challenges (
+  user_id BIGINT NOT NULL PRIMARY KEY,
+  challenge_id VARCHAR(36) NOT NULL,
+  digest VARCHAR(64) NOT NULL,
+  issued_at DATETIME NOT NULL,
+  attempts INTEGER NOT NULL
+) ENGINE=InnoDB;

@@ -2,7 +2,7 @@ import { Op, type Transaction } from 'sequelize';
 import type { BankCode } from '@/app/models/dtos';
 import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 
-const ACTIVE_QUEUE_STATUSES = ['queued', 'processing', 'success', 'submitting', 'accepted', 'unknown', 'paid', 'needs_review'];
+const ACTIVE_QUEUE_STATUSES = ['awaiting_approval', 'approval_rejected', 'queued', 'processing', 'success', 'submitting', 'accepted', 'unknown', 'paid', 'needs_review'];
 
 export interface ExistingPaymentPost {
   source: 'bank_queue';
@@ -19,6 +19,8 @@ export function buildAlreadyPostedMessage(
   existingPost: ExistingPaymentPost,
   requestedBankCode?: BankCode,
 ): string {
+  if (existingPost.status === 'awaiting_approval') return 'This payment is already awaiting approval.';
+  if (existingPost.status === 'approval_rejected') return 'This payment was rejected in the approval workflow.';
   const postedBank = existingPost.bankCode;
   const target = `${postedBank} queue`;
 

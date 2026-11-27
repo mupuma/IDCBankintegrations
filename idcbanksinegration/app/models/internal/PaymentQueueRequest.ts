@@ -15,6 +15,7 @@ interface PaymentQueueRequestAttributes {
   bankCode: string;
   sourceBank?: string | null;
   paymentPayload: string;
+  approvalSnapshot?: string | null;
   status: string;
   attempts: number;
   lastError?: string;
@@ -83,6 +84,9 @@ export class PaymentQueueRequest extends Model<PaymentQueueRequest, PaymentQueue
     allowNull: false,
   })
   declare paymentPayload: string;
+
+  @Column({ type: DataType.TEXT('long'), allowNull: true })
+  declare approvalSnapshot: string | null;
 
   @Column({
     type: DataType.STRING(32),

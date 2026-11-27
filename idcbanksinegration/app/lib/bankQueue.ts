@@ -5,7 +5,7 @@ import { PaymentQueueRequest } from '@/app/models/internal/PaymentQueueRequest';
 import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 import { processedAtWrite, processedAtIso } from './paymentProcessedAt';
 
-export type QueueStatus = 'queued' | 'pulled' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
+export type QueueStatus = 'awaiting_approval' | 'approval_rejected' | 'queued' | 'pulled' | 'processing' | 'success' | 'failed' | 'submitting' | 'accepted' | 'unknown' | 'paid' | 'rejected' | 'needs_review';
 
 export type PreviousPaymentAttempt = Pick<BankQueueItem, 'id' | 'status' | 'lastError' | 'processedAt' | 'updatedAt'>;
 
@@ -98,12 +98,25 @@ export async function processQueueItem(queueId: string) {
   }
 
   processing.add(queueId);
+  try {
+    await connectDatabase();
+    const [claimed] = await PaymentQueueRequest.update(
+      { status: 'processing', attempts: item.attempts + 1 },
+      { where: { queueId, status: 'queued', paymentPayload: JSON.stringify(item.payment) } },
+    );
+    if (!claimed) {
+      processing.delete(queueId);
+      return null;
+    }
+  } catch (error) {
+    processing.delete(queueId);
+    throw error;
+  }
   item.attempts += 1;
   item.status = 'processing';
   item.updatedAt = new Date().toISOString();
   queue.set(queueId, item);
 
-  await persistQueueRecord(item);
   terminalLog('queue.process.started', {
     queueId,
     paymentId: item.paymentId,
@@ -215,6 +228,7 @@ export async function ensureQueueItemProcessing(queueId: string) {
 }
 
 export async function rehydrateAndProcessQueueRecord(record: PaymentQueueRequest) {
+  if (record.status !== 'queued' || processing.has(record.queueId)) return null;
   if (record.bankCode === 'IZB') {
     terminalLog('queue.rehydrate.skipped_izb_pull_only', { queueId: record.queueId, paymentId: record.paymentId });
     return null;

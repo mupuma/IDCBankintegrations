@@ -49,9 +49,9 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
   const ledger = {
     documentOf: row => JSON.parse(row.document),
     recoverH2hInstruction: async () => {},
-    createH2hRecoveryAttempt: async (row, sourceBank, recoveryOf) => {
+    createH2hRecoveryAttempt: async (row, sourceBank, recoveryOf, transaction, approval) => {
       const queueId = 'new-h2h-instruction';
-      await queueModel.create({ queueId, paymentId: row.paymentId, bankCode: bank, sourceBank, status: 'queued', paymentPayload: JSON.stringify({ ...row, recoveryOf }) });
+      await queueModel.create({ queueId, paymentId: row.paymentId, bankCode: bank, sourceBank, ...approval, paymentPayload: JSON.stringify({ ...row, recoveryOf }) });
       return queueId;
     },
   };
@@ -67,6 +67,10 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     './sourceAccounts': { resolveSourceBank: async () => source },
     './banks/payloadBuilders': builders,
     './paymentRecoveryPolicy': policy,
+    './paymentApprovals': {
+      AWAITING_APPROVAL: 'awaiting_approval', APPROVAL_REJECTED: 'approval_rejected',
+      preparePaymentApproval: async () => ({ status: 'awaiting_approval', approvalSnapshot: '{}' }),
+    },
     './zicb/config': { sourceProfile: () => ({ profileId: 'test', regionCode: '101', currency: 'ZMW', amountScale: 2, channels: ['RTGS'] }) },
   });
   const forbidden = { denied: true, status: 403 };
@@ -80,7 +84,7 @@ function fixture({ bank = 'ZANACO', status = 'failed', evidence = { confirmedRej
     '@/app/lib/bankIntegrations': { getBankIntegration: () => ({ dispatchStrategy: 'agent-pull' }) },
   });
   const input = { queueId: 'original', action: 'new_attempt', actionId: id, reason: 'Bank confirmed rejection REF123', confirmed: true,
-    corrections: {}, username: 'tester' };
+    corrections: {}, username: 'tester', userId: 10 };
   return { core, queues, actions, audits, failAudit: () => { failAudit = true; }, reservation, payment, h2h, input, post: body => route.POST({ json: async () => body }) };
 }
 
@@ -227,7 +231,7 @@ test('IZB corrected attempts use a fresh bank reference while retaining the orig
   const f = fixture({ bank: 'IZB' });
   const result = await f.core.requestPaymentRecovery(f.input);
   const successor = f.queues.get(result.queueId), payment = JSON.parse(successor.paymentPayload);
-  assert.equal(successor.status, 'queued'); assert.equal(successor.bankCode, 'IZB');
+  assert.equal(successor.status, 'awaiting_approval'); assert.equal(successor.bankCode, 'IZB');
   assert.equal(successor.paymentId, f.payment.paymentId);
   assert.match(payment.izbAttemptReference, /^IDC[A-Z0-9]{9}$/);
   assert.equal(payment.transactionId, payment.izbAttemptReference);

@@ -10,6 +10,8 @@ import {
   type Permission,
 } from './permissions';
 
+import { LoginSmtpSettings } from '../models/internal/LoginOtp';
+
 export interface SessionUser {
   id: number;
   username: string;
@@ -41,6 +43,8 @@ export async function getSessionUser(request: NextRequest): Promise<SessionUser 
 
   try {
     await connectDatabase();
+    const settings = await LoginSmtpSettings.findByPk(1);
+    if (settings?.enabled && payload?.emailOtp !== true) return null;
     const user = await User.findByPk(fromToken.id);
     if (user?.isActive === false) return null;
     if (user) {

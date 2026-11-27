@@ -15,6 +15,7 @@ import * as bcrypt from 'bcrypt';
 interface UserAttributes {
   id: number;
   username: string;
+  email?: string | null;
   password: string;
   role: string;
   isActive: boolean;
@@ -49,6 +50,9 @@ export class User extends Model<User, UserCreationAttributes> {
     unique: true
   })
   declare username: string;
+
+  @Column({ type: DataType.STRING(254), allowNull: true })
+  declare email: string | null;
 
   @Column({
     type: DataType.STRING(255),

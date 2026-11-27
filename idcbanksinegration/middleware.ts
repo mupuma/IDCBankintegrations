@@ -31,6 +31,7 @@ export async function middleware(request: NextRequest) {
         sub: payload.sub,
         username: payload.username,
         role: payload.role,
+        emailOtp: payload.emailOtp === true,
       }),
       sessionCookieOptions(getSessionMaxAgeSeconds()),
     );

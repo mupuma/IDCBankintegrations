@@ -791,6 +791,7 @@ async function markPaymentQueueFromCashbook(
           id: {
             [Op.in]: matched.map((record) => record.id),
           },
+          status: { [Op.in]: ['queued', 'pulled', 'processing', 'failed'] },
         },
       },
     );

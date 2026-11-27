@@ -100,7 +100,7 @@ export async function reportBankQueueResult(
   const sequelize = await getSequelize();
   return sequelize.transaction(async (transaction) => {
     const existing = await PaymentQueueRequest.findOne({ where: { queueId }, transaction, lock: transaction.LOCK.UPDATE });
-    if (!existing) return false;
+    if (!existing || ['awaiting_approval', 'approval_rejected'].includes(existing.status)) return false;
     // Stalled workers or delayed reports must not downgrade confirmed settlement.
     if (existing.bankCode === 'ZANACO' && ['success', 'paid'].includes(existing.status)
       && !['success', 'paid'].includes(updates.status)) return true;
