@@ -13,6 +13,8 @@ type NavItem = {
 };
 
 const coreNavItems: NavItem[] = [
+  { name: 'Payment Approvals', href: '/bank_details/payment_approvals', permission: PERMISSIONS.QUEUES_READ,
+    icon: <span aria-hidden="true">?</span> },
   {
     name: 'Transaction Reports',
     href: '/bank_details/reports',
@@ -62,6 +64,8 @@ const coreNavItems: NavItem[] = [
 ];
 
 const adminNavItems: NavItem[] = [
+  { name: 'Approval Workflows', href: '/bank_details/approval_workflows', permission: PERMISSIONS.USERS_MANAGE,
+    icon: <span aria-hidden="true">?</span> },
   {
     name: 'Audit Logs',
     href: '/bank_details/audit_logs',

@@ -6,7 +6,6 @@ import { isAuthError, requirePermission } from '../../../lib/rbac';
 import { PERMISSIONS } from '../../../lib/permissions';
 import { logAuditEvent } from '../../../lib/auditLog';
 import {
-  enqueuePayment,
   getQueueItem,
   getAllQueueItems,
   getQueueItemsByBank,
@@ -30,9 +29,20 @@ import { terminalLog, terminalError } from '@/app/lib/terminalLog';
 import { isQueueSearchField, matchesQueueSearch } from '@/app/lib/queueSearch';
 import { collapsePaidAttempts } from '@/app/lib/paymentAttemptHistory';
 
+import { APPROVAL_REJECTED, AWAITING_APPROVAL, ApprovalError, preparePaymentApproval } from '@/app/lib/paymentApprovals';
+
 const BANK_PULL_API_KEY = process.env.BANK_PULL_API_KEY || null;
 
 export async function POST(request: NextRequest) {
+  try {
+    return await submitPayment(request);
+  } catch (error) {
+    if (error instanceof ApprovalError) return NextResponse.json({ success: false, error: error.message }, { status: error.status });
+    throw error;
+  }
+}
+
+async function submitPayment(request: NextRequest) {
   const auth = await requirePermission(request, PERMISSIONS.PAYMENTS_POST);
   if (isAuthError(auth)) return auth;
 
@@ -116,7 +126,9 @@ export async function POST(request: NextRequest) {
         transactionType: payment.transactionType,
         currency: payment.currency || payment.currencyCode,
       });
-      const result = await enqueueH2h(payment, sourceBankCode);
+      await connectDatabase();
+      const approval = await preparePaymentApproval(bankCode, sourceBankCode, auth.id);
+      const result = await enqueueH2h(payment, sourceBankCode, approval);
       terminalLog('posted_payments.zicb.enqueue_succeeded', {
         paymentId: result.paymentId,
         queueId: result.queueId,
@@ -124,11 +136,12 @@ export async function POST(request: NextRequest) {
         reference: result.reference,
         prcn: result.prcn_number,
       });
-      await logAuditEvent({ userId: auth.id, username: auth.username, action: 'PAYMENT_POSTED', resourceType: 'payment',
-        resourceId: result.paymentId, correlationId: result.queueId, summary: `${auth.username} queued a ZICB H2H payment`,
+      await logAuditEvent({ userId: auth.id, username: auth.username, action: 'PAYMENT_APPROVAL_REQUESTED', resourceType: 'payment',
+        resourceId: result.paymentId, correlationId: result.queueId, summary: `${auth.username} submitted a ZICB H2H payment for approval`,
         details: { reference: result.reference, prcn: result.prcn_number }, request });
       return NextResponse.json({ success: true, ...result, dispatchStrategy: 'h2h-ledger' }, { status: 202 });
     } catch (error) {
+      if (error instanceof ApprovalError) throw error;
       terminalError('posted_payments.zicb.enqueue_failed', {
         paymentId: payment.paymentId,
         bankCode,
@@ -239,12 +252,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const approval = await preparePaymentApproval(bankCode, sourceBankCode, auth.id);
+  let heldRecord: PaymentQueueRequest;
   try {
     const db = await getSequelize();
-    await db.transaction(async transaction => {
+    heldRecord = await db.transaction(async transaction => {
       await PaymentDispatchReservation.create({ paymentKey: createHash('sha256').update(paymentId).digest('hex'), queueId, bankCode }, { transaction });
-      await PaymentQueueRequest.create({ queueId, paymentId, bankCode, sourceBank: sourceBankCode,
-        paymentPayload: JSON.stringify(paymentToQueue), status: 'queued', attempts: 0 }, { transaction });
+      return PaymentQueueRequest.create({ queueId, paymentId, bankCode, sourceBank: sourceBankCode,
+        paymentPayload: JSON.stringify(paymentToQueue), ...approval, attempts: 0 }, { transaction });
     });
     terminalLog('posted_payments.queue.persisted', { queueId, paymentId, bankCode, sourceBank: sourceBankCode });
   } catch (error: any) {
@@ -262,22 +277,6 @@ export async function POST(request: NextRequest) {
     throw error;
   }
 
-  const queueItem = enqueuePayment(bankCode, paymentToQueue, queueId, sourceBankCode);
-  const integration = getBankIntegration(bankCode);
-  let latestQueueItem = queueItem;
-  if (integration.dispatchStrategy === 'portal-push') {
-    latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
-  }
-  terminalLog('posted_payments.queue.response', {
-    queueId: latestQueueItem.id,
-    paymentId,
-    bankCode,
-    status: latestQueueItem.status,
-    attempts: latestQueueItem.attempts,
-    lastError: latestQueueItem.lastError,
-    dispatchStrategy: integration.dispatchStrategy,
-  });
-
   const paymentRef =
     (payment as { paymentId?: string; transactionReference?: string; vendorName?: string }).paymentId ||
     (payment as { transactionReference?: string }).transactionReference ||
@@ -286,11 +285,11 @@ export async function POST(request: NextRequest) {
   await logAuditEvent({
     userId: auth.id,
     username: auth.username,
-    action: 'PAYMENT_POSTED',
+    action: 'PAYMENT_APPROVAL_REQUESTED',
     resourceType: 'payment',
     resourceId: paymentId,
     correlationId: queueId,
-    summary: `${auth.username} posted payment ${paymentRef} to ${bankCode}`,
+    summary: `${auth.username} submitted payment ${paymentRef} for ${bankCode} approval`,
     details: {
       queueId,
       paymentId,
@@ -302,35 +301,10 @@ export async function POST(request: NextRequest) {
     request,
   });
 
-  // If this is a successful call to enqueue a payment, also create a cashbook record
-  // in the central portal database for later processing by the Sage connector.
-  // We'll insert a simple cashbook task into the DB if payment looks like a receipt.
-  try {
-    const isReceipt = (payment?.transactionType || '').toLowerCase().includes('rec') || 
-                      (payment?.transactionReference || '').toLowerCase().includes('receipt') || false;
-    if (isReceipt) {
-      await PaymentQueueRequest.create({
-        queueId: `${queueId}-cb`,
-        paymentId: String((payment as any).paymentId || `${queueId}-cb`),
-          bankCode,
-          sourceBank: sourceBankCode,
-        paymentPayload: JSON.stringify({ type: 'cashbook', originalQueueId: queueId, payment }),
-        status: 'queued',
-        attempts: 0,
-      });
-    }
-  } catch (err) {
-    // don't fail enqueue if cashbook logging fails
-    console.error('Failed to queue cashbook placeholder', err);
-  }
-
   return NextResponse.json({
-    success: true,
-    queueId: latestQueueItem.id,
-    status: latestQueueItem.status,
-    item: latestQueueItem,
-    dispatchStrategy: integration.dispatchStrategy,
-  });
+    success: true, queueId, status: approval.status, item: mapQueueRecordToItem(heldRecord),
+    dispatchStrategy: getBankIntegration(bankCode).dispatchStrategy,
+  }, { status: 202 });
 }
 
 async function requeueFailedReservedPayment(input: {
@@ -382,41 +356,28 @@ async function requeueFailedReservedPayment(input: {
     );
   }
 
-  await PaymentQueueRequest.update(
+  const approval = await preparePaymentApproval(bankCode, sourceBankCode, auth.id);
+  const [updated] = await PaymentQueueRequest.update(
     ({
       sourceBank: sourceBankCode,
       paymentPayload: JSON.stringify(payment),
-      status: 'queued',
+      ...approval,
       attempts: 0,
       lastError: null,
       responsePayload: null,
     } as any),
-    { where: { queueId: queueRecord.queueId } },
+    { where: { queueId: queueRecord.queueId, status: 'failed' } },
   );
-  terminalLog('posted_payments.retry.requeued', { paymentId, bankCode, queueId: queueRecord.queueId, sourceBank: sourceBankCode });
-
-  const queueItem = enqueuePayment(bankCode, payment, queueRecord.queueId, sourceBankCode);
-  const integration = getBankIntegration(bankCode);
-  const latestQueueItem = integration.dispatchStrategy === 'portal-push'
-    ? await ensureQueueItemProcessing(queueItem.id) ?? queueItem
-    : queueItem;
-  terminalLog('posted_payments.retry.response', {
-    paymentId,
-    bankCode,
-    queueId: latestQueueItem.id,
-    status: latestQueueItem.status,
-    attempts: latestQueueItem.attempts,
-    lastError: latestQueueItem.lastError,
-  });
+  if (!updated) return NextResponse.json({ success: false, error: 'The payment status changed. Refresh and try again.' }, { status: 409 });
 
   await logAuditEvent({
     userId: auth.id,
     username: auth.username,
-    action: 'PAYMENT_POSTED',
+    action: 'PAYMENT_APPROVAL_REQUESTED',
     resourceType: 'payment',
     resourceId: paymentId,
     correlationId: queueRecord.queueId,
-    summary: `${auth.username} retried failed payment ${paymentId} to ${bankCode}`,
+    summary: `${auth.username} submitted failed payment ${paymentId} for ${bankCode} approval`,
     details: {
       queueId: queueRecord.queueId,
       paymentId,
@@ -430,11 +391,10 @@ async function requeueFailedReservedPayment(input: {
   return NextResponse.json({
     success: true,
     retried: true,
-    queueId: latestQueueItem.id,
-    status: latestQueueItem.status,
-    item: latestQueueItem,
-    dispatchStrategy: integration.dispatchStrategy,
-  });
+    queueId: queueRecord.queueId,
+    status: approval.status,
+    dispatchStrategy: getBankIntegration(bankCode).dispatchStrategy,
+  }, { status: 202 });
 }
 
 async function postManyPayments(input: {
@@ -585,16 +545,18 @@ async function postManyPayments(input: {
     return NextResponse.json({ success: false, error: 'Invalid Zanaco bulk transfer', validationErrors: bulkValidationErrors }, { status: 400 });
   }
 
+  const approval = await preparePaymentApproval(bankCode, sourceBankCode, auth.id);
+  let heldRecord: PaymentQueueRequest;
   try {
     const db = await getSequelize();
-    await db.transaction(async transaction => {
-      await PaymentQueueRequest.create({
+    heldRecord = await db.transaction(async transaction => {
+      const record = await PaymentQueueRequest.create({
         queueId,
         paymentId: batchPaymentId,
         bankCode,
         sourceBank: sourceBankCode,
         paymentPayload: JSON.stringify(bulkPayload),
-        status: 'queued',
+        ...approval,
         attempts: 0,
       }, { transaction });
 
@@ -606,6 +568,7 @@ async function postManyPayments(input: {
           bankCode,
         }, { transaction });
       }
+      return record;
     });
     terminalLog('posted_payments.bulk.persisted', {
       queueId,
@@ -628,30 +591,14 @@ async function postManyPayments(input: {
     throw error;
   }
 
-  const queueItem = enqueuePayment(bankCode, bulkPayload as unknown as PaymentsResponse, queueId, sourceBankCode);
-  const integration = getBankIntegration(bankCode);
-  let latestQueueItem = queueItem;
-  if (integration.dispatchStrategy === 'portal-push') {
-    latestQueueItem = await ensureQueueItemProcessing(queueItem.id) ?? queueItem;
-  }
-  terminalLog('posted_payments.bulk.response', {
-    queueId,
-    paymentId: batchPaymentId,
-    bankCode,
-    status: latestQueueItem.status,
-    attempts: latestQueueItem.attempts,
-    lastError: latestQueueItem.lastError,
-    dispatchStrategy: integration.dispatchStrategy,
-  });
-
   await logAuditEvent({
     userId: auth.id,
     username: auth.username,
-    action: 'PAYMENT_POSTED',
+    action: 'PAYMENT_APPROVAL_REQUESTED',
     resourceType: 'payment',
     resourceId: batchPaymentId,
     correlationId: queueId,
-    summary: `${auth.username} queued ${payments.length} payments to ${bankCode} as ${effectiveType} bulk batch`,
+    summary: `${auth.username} submitted ${payments.length} payments for ${bankCode} approval as ${effectiveType} bulk batch`,
     details: {
       queueId,
       paymentIds: bulkPayload.meta.paymentIds,
@@ -670,10 +617,10 @@ async function postManyPayments(input: {
     bulk: true,
     queueId,
     paymentId: batchPaymentId,
-    status: latestQueueItem.status,
-    item: latestQueueItem,
+    status: approval.status,
+    item: mapQueueRecordToItem(heldRecord),
     paymentIds: bulkPayload.meta.paymentIds,
-    dispatchStrategy: integration.dispatchStrategy,
+    dispatchStrategy: getBankIntegration(bankCode).dispatchStrategy,
   }, { status: 202 });
 }
 
@@ -787,7 +734,7 @@ export async function GET(request: NextRequest) {
             lockedBy: null,
             lockedAt: null,
           } as any,
-          { where: { queueId: record.queueId } },
+          { where: { queueId: record.queueId, status: 'processing' } },
         );
       }
     }));
@@ -796,6 +743,9 @@ export async function GET(request: NextRequest) {
   if (queueId) {
     const record = await PaymentQueueRequest.findOne({ where: { queueId } });
     if (record) {
+      if (!sessionToken && (record.bankCode !== bankCode || [AWAITING_APPROVAL, APPROVAL_REJECTED].includes(record.status))) {
+        return NextResponse.json({ success: false, error: 'Queue item not found' }, { status: 404 });
+      }
       const item = mapQueueRecordToItem(record);
       if (!item) {
         return NextResponse.json({ success: false, error: 'Invalid saved queue payload' }, { status: 500 });
@@ -804,7 +754,7 @@ export async function GET(request: NextRequest) {
     }
 
     const queueItem = getQueueItem(queueId);
-    if (queueItem) {
+    if (queueItem && (sessionToken || queueItem.bankCode === bankCode)) {
       const integration = getBankIntegration(queueItem.bankCode);
       if (integration.dispatchStrategy === 'portal-push') {
         await ensureQueueItemProcessing(queueId);
@@ -837,7 +787,8 @@ export async function GET(request: NextRequest) {
     // Persisted rows are authoritative because agents report results to the DB.
     mergedById.set(item.id, item);
   }
-  const visibleItems = sessionToken ? collapsePaidAttempts(mergedById) : Array.from(mergedById.values());
+  const visibleItems = sessionToken ? collapsePaidAttempts(mergedById) : Array.from(mergedById.values())
+    .filter(item => ![AWAITING_APPROVAL, APPROVAL_REJECTED].includes(item.status));
   const mergedItems = visibleItems.filter(item => matchesQueueSearch(item, searchField, search)
     || item.previousAttempts?.some(attempt => {
       const previous = mergedById.get(attempt.id);

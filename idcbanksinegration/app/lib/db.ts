@@ -68,6 +68,7 @@ import { AuditLog } from '../models/internal/AuditLog';
 import { SourceAccount } from '../models/internal/SourceAccount';
 import { VendorBankDetail } from '../models/internal/VendorBankDetail';
 import { PaymentRecoveryAction } from '../models/internal/PaymentRecoveryAction';
+import { ApprovalWorkflow } from '../models/internal/ApprovalWorkflow';
 import { syncSchemaAddOnly } from './schemaSync';
 import { widenPortalVendorStorage } from './portalVendorSchema';
 import { BACKFILL_PAYMENT_PROCESSED_AT_SQL } from './paymentProcessedAt';
@@ -76,6 +77,7 @@ import { ZicbH2hPayment, ZicbH2hEvent, PaymentDispatchReservation, ZicbPrcnSeque
 dotenv.config();
 
 const INTERNAL_MODELS = [
+  ApprovalWorkflow,
   VendorBankDetail,
   PaymentRecoveryAction,
   ZicbH2hPayment,

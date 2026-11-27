@@ -67,6 +67,20 @@ In Source Accounts, assign each existing Sage account code to its processing
 bank. Multiple source codes may belong to one bank. See
 [Source account selection](source-account-selection.md).
 
+## Payment approvals
+
+Apply `sql/add_payment_approvals.sql` on installations with `DB_SYNC=false`.
+Before submitting new payments, an administrator must save a matching workflow
+under **Approval Workflows**. A default workflow covers every bank without a more
+specific workflow. Each stage names its eligible users and required approval
+count. The creator can approve only when the workflow has one stage and lists
+that user as an approver.
+
+Operators submit payments for approval, and assigned users act from
+**Payment Approvals**. A rejected instruction remains in approval history.
+New workflow versions apply to future submissions. Instructions already queued
+before deployment continue through their current dispatch path.
+
 ## ZICB
 
 The portal maps each Sage source code to a profile, bank-confirmed region,

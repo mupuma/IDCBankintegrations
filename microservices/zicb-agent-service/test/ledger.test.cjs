@@ -300,3 +300,13 @@ test('paid items cannot retry Sage accounting or submit another bank payment', a
   assert.equal(await f.ledger.claimH2hWork(), null);
   assert.equal(f.payments.get(send.queueId).state, 'paid');
 });
+
+test('H2H agents cannot claim a payment awaiting portal approval', async () => {
+  const f = fixture();
+  const payment = await f.ledger.enqueueH2h(f.payment, 'SOURCE', {
+    status: 'awaiting_approval', approvalSnapshot: '{"stage":0}',
+  });
+  assert.equal(f.queue.get(payment.queueId).status, 'awaiting_approval');
+  assert.equal(f.payments.get(payment.queueId).nextRun, null);
+  assert.equal(await f.ledger.claimH2hWork(), null);
+});

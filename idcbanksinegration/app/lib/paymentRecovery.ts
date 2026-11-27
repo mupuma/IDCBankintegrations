@@ -12,6 +12,8 @@ import { recoveryActions, correctedPayment, paymentDetailChanges, type RecoveryA
 import { sourceProfile } from './zicb/config';
 import { buildBatch, channelFor } from '../../../shared/zicb-h2h';
 
+import { APPROVAL_REJECTED, AWAITING_APPROVAL, preparePaymentApproval } from './paymentApprovals';
+
 export class RecoveryError extends Error { constructor(message: string, public status = 409) { super(message); } }
 const parse = (value?: string | null) => value ? JSON.parse(value) : {};
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -30,6 +32,7 @@ function evidenceOf(row: PaymentQueueRequest, h2h?: ZicbH2hPayment | null) {
   }
   const evidence = parse(row.responsePayload).recovery as RecoveryEvidence | undefined;
   if (row.bankCode === 'IZB') {
+    if ([AWAITING_APPROVAL, APPROVAL_REJECTED].includes(row.status)) throw new RecoveryError('Payment is held by the approval workflow');
     const response = parse(row.responsePayload);
     return { protocol: 'izb-bank-status-v1', confirmedRejected: response.protocol === 'izb-bank-status-v1'
       && ['failed', 'rejected'].includes(response.bankStatus) && Boolean(response.eventId) };
@@ -118,6 +121,8 @@ export async function requestPaymentRecovery(input: {
             previousRevision: draft?.actionId ?? null, revision: input.actionId }), ipAddress: input.ipAddress ?? null, userAgent: input.userAgent ?? null }, { transaction });
       } else {
         if (!source?.accountNumber || !row.sourceBank) throw new RecoveryError('The original source account is incomplete', 400);
+        if (!input.userId) throw new RecoveryError('An authenticated payment creator is required', 403);
+        const approval = await preparePaymentApproval(row.bankCode, row.sourceBank, input.userId);
         const payment = { ...current };
         payment.recoveryOf = row.queueId;
         let queueId: string;
@@ -127,7 +132,7 @@ export async function requestPaymentRecovery(input: {
           const channel = channelFor(payment.transactionType);
           if (!profile.channels?.includes(channel)) throw new RecoveryError('Source profile does not permit this channel', 400);
           buildBatch(payment, { reference: randomUUID(), prcn: 'RECOVERY_VALIDATION', regionCode: profile.regionCode, amountScale: profile.amountScale });
-          queueId = await createH2hRecoveryAttempt(payment, row.sourceBank, row.queueId, transaction);
+          queueId = await createH2hRecoveryAttempt(payment, row.sourceBank, row.queueId, transaction, approval);
         } else if (row.bankCode === 'IZB') {
           queueId = randomUUID();
           payment.izbAttemptReference = `IDC${randomBytes(8).readBigUInt64BE().toString(36).padStart(13, '0').slice(-9).toUpperCase()}`;
@@ -135,17 +140,17 @@ export async function requestPaymentRecovery(input: {
           if (!payment.accountName?.trim() || !payment.accountNumber?.trim() || !payment.transactionType || !Number.isFinite(Number(payment.amount)) || Number(payment.amount) <= 0) throw new RecoveryError('Correct the beneficiary name, account and payment details before submitting', 400);
           if (await PaymentQueueRequest.findOne({ where: { bankCode: 'IZB', paymentPayload: { [Op.like]: `%${payment.izbAttemptReference}%` } }, transaction })) throw new RecoveryError('Unable to allocate a unique bank attempt reference. Retry the request.');
           await PaymentQueueRequest.create({ queueId, paymentId: row.paymentId, bankCode: 'IZB', sourceBank: row.sourceBank,
-            paymentPayload: JSON.stringify(payment), status: 'queued', attempts: 0 }, { transaction });
+            paymentPayload: JSON.stringify(payment), ...approval, attempts: 0 }, { transaction });
         } else {
           queueId = randomUUID(); payment.recoveryAttemptId = queueId;
           payment.srcAcc = source.accountNumber; payment.srcBranch = source.transit; payment.srcName = source.name;
           const errors = validateZanacoPayload(buildZanacoPayload(payment as any, payment.transactionType, source));
           if (errors.length) throw new RecoveryError(errors.join('; '), 400);
           await PaymentQueueRequest.create({ queueId, paymentId: row.paymentId, bankCode: 'ZANACO', sourceBank: row.sourceBank,
-            paymentPayload: JSON.stringify(payment), status: 'queued', attempts: 0 }, { transaction });
+            paymentPayload: JSON.stringify(payment), ...approval, attempts: 0 }, { transaction });
         }
         await reservation.update({ queueId }, { transaction });
-        result = { queueId, message: 'A new instruction was created; the original instruction and its history are preserved.' };
+        result = { queueId, message: 'The new instruction is awaiting approval.' };
         await AuditLog.create({ userId: input.userId ?? null, username: input.username, action: 'PAYMENT_CORRECTED_ATTEMPT',
           resourceType: 'payment_queue', resourceId: queueId, correlationId: input.actionId,
           summary: `${input.username} submitted a new ${row.bankCode} attempt for ${row.paymentId}`.slice(0, 500),

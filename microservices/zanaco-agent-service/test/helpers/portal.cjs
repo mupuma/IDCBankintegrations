@@ -39,7 +39,10 @@ function routeFixture({ source = { bank: 'SOURCE1', processingBank: 'ZANACO', ac
       findOne: async () => ({ queueId: 'old-queue' }),
     } },
     '../../../models/internal/PaymentQueueRequest': { PaymentQueueRequest: {
-      create: async record => records.push(record),
+      create: async record => {
+        records.push(record);
+        return { ...record, createdAt: new Date(), updatedAt: new Date() };
+      },
       findOne: async () => queueRecord,
       findAll: async ({ where = {} } = {}) => savedRecords.filter(row => Object.entries(where).every(([key, value]) => row[key] === value)),
       update: async record => { updates.push(record); return [1]; },
@@ -51,6 +54,12 @@ function routeFixture({ source = { bank: 'SOURCE1', processingBank: 'ZANACO', ac
     '@/app/lib/bankIntegrations': { getBankIntegration: () => ({ dispatchStrategy: 'agent-pull' }) },
     '@/app/lib/zicb/ledger': { LedgerError: class extends Error {} },
     '@/app/lib/zicb/config': {},
+    '@/app/lib/paymentApprovals': {
+      AWAITING_APPROVAL: 'awaiting_approval', APPROVAL_REJECTED: 'approval_rejected',
+      ApprovalError: class extends Error {},
+      preparePaymentApproval: async () => ({ status: 'awaiting_approval', approvalSnapshot: '{}' }),
+    },
+    '@/app/lib/paymentAttemptHistory': load('idcbanksinegration/app/lib/paymentAttemptHistory.ts'),
     '@/app/lib/terminalLog': { terminalLog: () => {}, terminalError: () => {} },
     '@/app/lib/queueSearch': load('idcbanksinegration/app/lib/queueSearch.ts', { './bankResponseDetails': load('idcbanksinegration/app/lib/bankResponseDetails.ts') }),
   });

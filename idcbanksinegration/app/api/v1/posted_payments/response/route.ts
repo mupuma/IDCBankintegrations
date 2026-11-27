@@ -26,6 +26,9 @@ export async function POST(request: NextRequest) {
 
   await connectDatabase();
   const saved = await PaymentQueueRequest.findOne({ where: { queueId } });
+  if (saved && ['awaiting_approval', 'approval_rejected'].includes(saved.status)) {
+    return NextResponse.json({ error: 'Payment is held by the approval workflow' }, { status: 409 });
+  }
   if (saved && JSON.parse(saved.paymentPayload)?.h2hProtocol === 'h2h-v1') {
     return NextResponse.json({ error: 'Use the H2H callback contract' }, { status: 409 });
   }

@@ -109,7 +109,8 @@ test('valid single POST preserves validated debit details for agent-pull', async
   for (const [type, retry] of [['INT', false], ['RTGS', false], ['DDACCT', false], ['DDAC', false], ['TT', false], ['SWIFT', false]]) {
     const f = routeFixture({ retry });
     const response = await f.post(body({ ...payment, transactionType: type }));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 202);
+    assert.equal(response.body.status, 'awaiting_approval');
     const record = retry ? f.updates[0] : f.records[0];
     const queued = JSON.parse(record.paymentPayload);
     assert.equal(queued.srcAcc, source.accountNumber);
@@ -150,6 +151,7 @@ test('valid bulk POST queues one batch accepted by agent validation', async () =
   const response = await f.post(bulkBody([payment, { ...payment, paymentId: 'SAGE2' }]));
   assert.equal(response.status, 202, JSON.stringify(response.body));
   assert.equal(f.records.length, 1);
+  assert.equal(f.records[0].status, 'awaiting_approval');
   const queued = JSON.parse(f.records[0].paymentPayload);
   assert.deepEqual(validateBulkPayload(prepareBulkPayload(queued.service, queued.request)), []);
   assert.equal(queued.request.totalAmount, 251);
